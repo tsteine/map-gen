@@ -1,10 +1,11 @@
 use anyhow::{Result, bail};
 use bitvec::vec::BitVec;
 use hashbrown::HashMap;
-use numpy::PyReadonlyArray1;
+use numpy::{PyArray2, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use rand::RngExt;
+use rand::prelude::*;
+use rand::{RngExt, SeedableRng};
 use serde::Deserialize;
 
 type RoomIdx = u8;
@@ -54,7 +55,7 @@ impl Direction {
 }
 
 // Action: a placement of a room. The top-left corner is placed at (x, y) on the map.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Action {
     room_idx: RoomIdx,
     x: Coord,
@@ -62,6 +63,7 @@ pub struct Action {
 }
 
 // Frontier: location of an unconnected door on the map.
+#[derive(Debug)]
 pub struct Frontier {
     dir_door_idx: DirDoorIdx,
     direction: Direction,
@@ -209,7 +211,7 @@ impl CommonData {
 // DoorLocation: used as the key in the frontier hashmap to identify unconnected doors on the map.
 // These are designed to match between the two sides of a door. A right-facing door gives the same
 // DoorLocation as a left-facing door on the other side, and similarly for up/down doors.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct DoorLocation {
     x: Coord,
     y: Coord,
@@ -241,9 +243,9 @@ pub struct Environment {
 }
 
 impl Environment {
-    fn new(rooms: &[Room], common: &CommonData) -> Self {
+    fn new(rooms: &[Room], common: &CommonData, seed: u64) -> Self {
         let mut env = Self {
-            rng: rand::make_rng(),
+            rng: rand::rngs::StdRng::seed_from_u64(seed),
             actions: vec![],
             frontier: HashMap::new(),
             door_matches: std::array::from_fn(|i| vec![DoorIdx::MAX; common.dir_door[i].len()]),
@@ -427,13 +429,18 @@ pub struct Engine {
 #[pymethods]
 impl Engine {
     #[new]
-    fn new(rooms_json: &str, map_size: (Coord, Coord), batch_size: usize) -> PyResult<Self> {
+    fn new(
+        rooms_json: &str,
+        map_size: (Coord, Coord),
+        num_environments: usize,
+        seed: u64,
+    ) -> PyResult<Self> {
         let rooms: Vec<Room> = serde_json::from_str(rooms_json)
             .map_err(|err| PyValueError::new_err(format!("failed to parse rooms JSON: {err}")))?;
         let common_data = CommonData::new(rooms.clone(), map_size)?;
-        let mut environments = Vec::with_capacity(batch_size);
-        for _ in 0..batch_size {
-            environments.push(Environment::new(&rooms, &common_data));
+        let mut environments = Vec::with_capacity(num_environments);
+        for i in 0..num_environments {
+            environments.push(Environment::new(&rooms, &common_data, seed ^ i as u64));
         }
         Ok(Self {
             common_data,
@@ -441,8 +448,35 @@ impl Engine {
         })
     }
 
+    fn actions<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<(
+        Bound<'py, PyArray2<RoomIdx>>,
+        Bound<'py, PyArray2<Coord>>,
+        Bound<'py, PyArray2<Coord>>,
+    )> {
+        let mut room_idx = Vec::with_capacity(self.environments.len());
+        let mut room_x = Vec::with_capacity(self.environments.len());
+        let mut room_y = Vec::with_capacity(self.environments.len());
+        for env in &self.environments {
+            room_idx.push(env.actions.iter().map(|action| action.room_idx).collect());
+            room_x.push(env.actions.iter().map(|action| action.x).collect());
+            room_y.push(env.actions.iter().map(|action| action.y).collect());
+        }
+        Ok((
+            PyArray2::from_vec2(py, &room_idx)
+                .map_err(|_| PyValueError::new_err("environment action histories are ragged"))?,
+            PyArray2::from_vec2(py, &room_x)
+                .map_err(|_| PyValueError::new_err("environment action histories are ragged"))?,
+            PyArray2::from_vec2(py, &room_y)
+                .map_err(|_| PyValueError::new_err("environment action histories are ragged"))?,
+        ))
+    }
+
     fn step<'py>(
         &mut self,
+        start: usize,
         room_idx: PyReadonlyArray1<'py, RoomIdx>,
         room_x: PyReadonlyArray1<'py, Coord>,
         room_y: PyReadonlyArray1<'py, Coord>,
@@ -466,26 +500,17 @@ impl Engine {
             )));
         }
 
-        if room_idx.len() != self.environments.len() {
+        let end = start + room_idx.len();
+        if end > self.environments.len() {
             return Err(PyValueError::new_err(format!(
-                "action arrays must have length equal to batch_size {}; got {}",
+                "action arrays with length {} starting at {} exceed num_environments {}",
+                room_idx.len(),
+                start,
                 self.environments.len(),
-                room_idx.len()
             )));
         }
 
-        for &idx in room_idx {
-            if idx as usize >= self.common_data.room.len() {
-                return Err(PyValueError::new_err(format!(
-                    "room_idx {} is out of range for {} rooms",
-                    idx,
-                    self.common_data.room.len()
-                )));
-            }
-        }
-
-        for (((env, &room_idx), &x), &y) in self
-            .environments
+        for (((env, &room_idx), &x), &y) in self.environments[start..end]
             .iter_mut()
             .zip(room_idx.iter())
             .zip(room_x.iter())
@@ -497,34 +522,36 @@ impl Engine {
         Ok(())
     }
 
-    // fn get_candidates(&self, start: usize, end: usize) -> Vec<()> {
-    //     let mut candidates = vec![];
-    //     // for (i, frontier) in self.frontier.iter().enumerate() {
-    //     //     for room_id in start as RoomIdx..end as RoomIdx {
-    //     //         if !self.room_used[room_id as usize] {
-    //     //             for x in -10..=10 {
-    //     //                 for y in -10..=10 {
-    //     //                     if !IntersectionChecker::new(&self.rooms, (100, 100)).has_intersection(
-    //     //                         frontier.candidates[0].room,
-    //     //                         frontier.candidates[0].x,
-    //     //                         frontier.candidates[0].y,
-    //     //                         room_id,
-    //     //                         x,
-    //     //                         y,
-    //     //                     ) {
-    //     //                         candidates[i].push(Action {
-    //     //                             room_idx: room_id,
-    //     //                             x,
-    //     //                             y,
-    //     //                         });
-    //     //                     }
-    //     //                 }
-    //     //             }
-    //     //         }
-    //     //     }
-    //     // }
-    //     candidates
-    // }
+    fn get_candidates(&self, max_candidates: usize, start: usize, end: usize) -> Vec<()> {
+        let mut all_candidates = vec![];
+        for env in self.environments[start..end].iter() {
+            let candidates = if env.frontier.is_empty() {
+                // if there are no frontiers, there are no candidates.
+                vec![]
+            } else {
+                let smallest_frontier_size = env
+                    .frontier
+                    .values()
+                    .map(|frontier| frontier.candidates.len())
+                    .min()
+                    .expect("frontier should never be empty since we checked");
+                let eligible_frontiers: Vec<&Frontier> = env
+                    .frontier
+                    .values()
+                    .filter(|frontier| frontier.candidates.len() == smallest_frontier_size)
+                    .collect();
+                let frontier = eligible_frontiers
+                    .choose(&mut env.rng)
+                    .expect("eligible_frontiers should never be empty");
+                let mut candidates = frontier.candidates.clone();
+                candidates.shuffle(&mut env.rng);
+                candidates.truncate(max_candidates);
+                candidates
+            };
+            all_candidates.push(candidates);
+        }
+        all_candidates
+    }
 }
 
 #[pymodule]

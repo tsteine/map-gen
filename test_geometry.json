@@ -1,0 +1,67 @@
+[
+    {
+        "room_id": 7,
+        "name": "The Moat",
+        "map": [
+            [1, 1],
+            [1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 9,
+        "name": "Crateria Tube",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 13,
+        "name": "Flyway",
+        "map": [
+            [1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 15,
+        "name": "Crateria Map Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 16,
+        "name": "Crateria Save Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    }
+]
