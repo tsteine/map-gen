@@ -1,6 +1,7 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use bitvec::vec::BitVec;
 use hashbrown::HashMap;
+use numpy::PyReadonlyArray1;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rand::RngExt;
@@ -440,10 +441,60 @@ impl Engine {
         })
     }
 
-    fn step(&mut self, actions: Vec<Action>) {
-        for (env, action) in self.environments.iter_mut().zip(actions.into_iter()) {
+    fn step<'py>(
+        &mut self,
+        room_idx: PyReadonlyArray1<'py, RoomIdx>,
+        room_x: PyReadonlyArray1<'py, Coord>,
+        room_y: PyReadonlyArray1<'py, Coord>,
+    ) -> PyResult<()> {
+        let room_idx = room_idx
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_idx must be a contiguous 1D numpy array"))?;
+        let room_x = room_x
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_x must be a contiguous 1D numpy array"))?;
+        let room_y = room_y
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_y must be a contiguous 1D numpy array"))?;
+
+        if room_idx.len() != room_x.len() || room_idx.len() != room_y.len() {
+            return Err(PyValueError::new_err(format!(
+                "room_idx, room_x, and room_y must have the same length; got {}, {}, and {}",
+                room_idx.len(),
+                room_x.len(),
+                room_y.len()
+            )));
+        }
+
+        if room_idx.len() != self.environments.len() {
+            return Err(PyValueError::new_err(format!(
+                "action arrays must have length equal to batch_size {}; got {}",
+                self.environments.len(),
+                room_idx.len()
+            )));
+        }
+
+        for &idx in room_idx {
+            if idx as usize >= self.common_data.room.len() {
+                return Err(PyValueError::new_err(format!(
+                    "room_idx {} is out of range for {} rooms",
+                    idx,
+                    self.common_data.room.len()
+                )));
+            }
+        }
+
+        for (((env, &room_idx), &x), &y) in self
+            .environments
+            .iter_mut()
+            .zip(room_idx.iter())
+            .zip(room_x.iter())
+            .zip(room_y.iter())
+        {
+            let action = Action { room_idx, x, y };
             env.step(action, &self.common_data);
         }
+        Ok(())
     }
 
     // fn get_candidates(&self, start: usize, end: usize) -> Vec<()> {

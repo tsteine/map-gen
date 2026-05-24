@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 anyhow = "1.0.102"
 bitvec = "1.0.1"
 hashbrown = "0.17.1"
+numpy = "0.23"
 pyo3 = { version = "0.23", features = ["extension-module", "anyhow"] }
 rand = "0.10.1"
 serde = { version = "1.0.228", features = ["derive"] }
