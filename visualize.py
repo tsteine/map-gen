@@ -1,3 +1,4 @@
+# Vibe-coded throwaway visualization code for debugging and demos.
 from __future__ import annotations
 
 from typing import Any, List, Optional, Sequence, Tuple

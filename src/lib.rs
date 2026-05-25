@@ -337,7 +337,7 @@ impl Environment {
             }
         }
 
-        // Filter existing frontiers to remove those blocked by the new room
+        // Filter existing frontiers to remove those blocked by the new room or identical to it
         for frontier in self.frontier.values_mut() {
             frontier.candidates.retain(|cand| {
                 !common.has_intersection(
@@ -347,7 +347,7 @@ impl Environment {
                     cand.room_idx,
                     cand.x,
                     cand.y,
-                )
+                ) && action.room_idx != cand.room_idx
             });
         }
     }
@@ -561,6 +561,7 @@ impl Engine {
                     .frontier
                     .values()
                     .map(|frontier| frontier.candidates.len())
+                    .filter(|&x| x > 0)
                     .min()
                     .expect("frontier should never be empty since we checked");
                 let eligible_frontiers: Vec<&Frontier> = env

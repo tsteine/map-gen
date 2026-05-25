@@ -11,6 +11,10 @@ num_environments = 1
 map_size = (72, 72)
 engine = map_gen.Engine(rooms, map_size, num_environments, seed=2)
 
+plt.ion()
+fig, ax = plt.subplots()
+plt.show(block=False)
+
 for _ in range(260):
     cand_room_idx, cand_x, cand_y = engine.get_candidates(max_candidates=8, start=0, end=1)
     selected_cand_room_idx = cand_room_idx[:, 0]
@@ -19,8 +23,13 @@ for _ in range(260):
     engine.step(selected_cand_room_idx, selected_cand_x, selected_cand_y, start=0)
 
     action_room_idx, action_x, action_y = engine.get_actions()
-    display_map(room_data, (action_room_idx[0, :], action_x[0, :], action_y[0, :]))
-    plt.show()
+    ax.clear()
+    display_map(room_data, (action_room_idx[0, :], action_x[0, :], action_y[0, :]), ax=ax, show_names=False)
+    fig.canvas.draw_idle()
+    plt.pause(0.2)
+
+plt.ioff()
+plt.show()
 
 action_room_idx, action_x, action_y = engine.get_actions()
 for room_idx in action_room_idx[0, :]:
