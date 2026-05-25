@@ -153,6 +153,7 @@ impl CommonData {
         }
 
         'outer: for door1 in room1.doors.iter() {
+            let loc1 = DoorLocation::new(door1, x1, y1);
             let (door_x1, door_y1) =
                 get_behind_door_position(door1.direction, x1 + door1.x, y1 + door1.y);
             let other_x = door_x1 - x2;
@@ -164,10 +165,8 @@ impl CommonData {
                 && room2.map[other_y as usize][other_x as usize] != 0
             {
                 for door2 in room2.doors.iter() {
-                    let (door_x2, door_y2) =
-                        get_behind_door_position(door2.direction, x2 + door2.x, y2 + door2.y);
-                    if door_x1 == door_x2
-                        && door_y1 == door_y2
+                    let loc2 = DoorLocation::new(door2, x2, y2);
+                    if loc1 == loc2
                         && door1.direction == door2.direction.opposite()
                         && door1.kind == door2.kind
                     {
@@ -179,6 +178,7 @@ impl CommonData {
         }
 
         'outer: for door2 in room2.doors.iter() {
+            let loc2 = DoorLocation::new(door2, x2, y2);
             let (door_x2, door_y2) =
                 get_behind_door_position(door2.direction, x2 + door2.x, y2 + door2.y);
             let other_x = door_x2 - x1;
@@ -190,10 +190,8 @@ impl CommonData {
                 && room1.map[other_y as usize][other_x as usize] != 0
             {
                 for door1 in room1.doors.iter() {
-                    let (door_x1, door_y1) =
-                        get_behind_door_position(door1.direction, x1 + door1.x, y1 + door1.y);
-                    if door_x1 == door_x2
-                        && door_y1 == door_y2
+                    let loc1 = DoorLocation::new(door1, x1, y1);
+                    if loc1 == loc2
                         && door1.direction == door2.direction.opposite()
                         && door1.kind == door2.kind
                     {
@@ -270,6 +268,10 @@ impl Environment {
 
     fn step(&mut self, action: Action, common: &CommonData) {
         self.actions.push(action);
+        if action.room_idx >= common.room.len() as RoomIdx {
+            // Dummy/invalid action: do nothing more.
+            return;
+        }
         self.room_used.set(action.room_idx as usize, true);
         let room = &common.room[action.room_idx as usize];
 
@@ -305,6 +307,7 @@ impl Environment {
                         // The room cannot be placed at this position due to map boundaries.
                         continue;
                     }
+
                     for a in &self.actions {
                         if common.has_intersection(
                             a.room_idx,
@@ -448,7 +451,8 @@ impl Engine {
         })
     }
 
-    fn actions<'py>(
+    #[allow(clippy::type_complexity)]
+    fn get_actions<'py>(
         &self,
         py: Python<'py>,
     ) -> PyResult<(
@@ -476,10 +480,10 @@ impl Engine {
 
     fn step<'py>(
         &mut self,
-        start: usize,
         room_idx: PyReadonlyArray1<'py, RoomIdx>,
         room_x: PyReadonlyArray1<'py, Coord>,
         room_y: PyReadonlyArray1<'py, Coord>,
+        start: usize,
     ) -> PyResult<()> {
         let room_idx = room_idx
             .as_slice()
@@ -522,10 +526,34 @@ impl Engine {
         Ok(())
     }
 
-    fn get_candidates(&self, max_candidates: usize, start: usize, end: usize) -> Vec<()> {
-        let mut all_candidates = vec![];
-        for env in self.environments[start..end].iter() {
-            let candidates = if env.frontier.is_empty() {
+    #[allow(clippy::type_complexity)]
+    fn get_candidates<'py>(
+        &mut self,
+        py: Python<'py>,
+        max_candidates: usize,
+        start: usize,
+        end: usize,
+    ) -> PyResult<(
+        Bound<'py, PyArray2<RoomIdx>>,
+        Bound<'py, PyArray2<Coord>>,
+        Bound<'py, PyArray2<Coord>>,
+    )> {
+        if start > end || end > self.environments.len() {
+            return Err(PyValueError::new_err(format!(
+                "environment range [{}, {}) is invalid for num_environments {}",
+                start,
+                end,
+                self.environments.len()
+            )));
+        }
+
+        let num_environments = end - start;
+        let mut room_idx = Vec::with_capacity(num_environments);
+        let mut room_x = Vec::with_capacity(num_environments);
+        let mut room_y = Vec::with_capacity(num_environments);
+
+        for env in self.environments[start..end].iter_mut() {
+            let mut candidates = if env.frontier.is_empty() {
                 // if there are no frontiers, there are no candidates.
                 vec![]
             } else {
@@ -548,9 +576,28 @@ impl Engine {
                 candidates.truncate(max_candidates);
                 candidates
             };
-            all_candidates.push(candidates);
+            let dummy_candidate = Action {
+                room_idx: self.common_data.room.len() as RoomIdx, // an invalid room index to indicate no-op
+                x: 0,
+                y: 0,
+            };
+            candidates.resize(max_candidates, dummy_candidate);
+
+            room_idx.push(
+                candidates
+                    .iter()
+                    .map(|candidate| candidate.room_idx)
+                    .collect(),
+            );
+            room_x.push(candidates.iter().map(|candidate| candidate.x).collect());
+            room_y.push(candidates.iter().map(|candidate| candidate.y).collect());
         }
-        all_candidates
+
+        Ok((
+            PyArray2::from_vec2(py, &room_idx)?,
+            PyArray2::from_vec2(py, &room_x)?,
+            PyArray2::from_vec2(py, &room_y)?,
+        ))
     }
 }
 
