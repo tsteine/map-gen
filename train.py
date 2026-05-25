@@ -15,17 +15,7 @@ plt.ion()
 fig, ax = plt.subplots()
 visualizer = MapVisualizer(room_data, ax=ax, map_size=map_size, show_names=False)
 plt.show(block=False)
-
-action_room_idx, action_x, action_y = engine.get_actions()
-placements = list(
-    zip(
-        action_room_idx[0, :].tolist(),
-        action_x[0, :].tolist(),
-        action_y[0, :].tolist(),
-    )
-)
-visualizer.add_placements(placements)
-visualizer.sync_artists()
+visualizer.add_engine_actions(engine.get_actions())
 
 for _ in range(260):
     cand_room_idx, cand_x, cand_y = engine.get_candidates(max_candidates=8, start=0, end=1)
@@ -33,17 +23,12 @@ for _ in range(260):
     selected_cand_x = cand_x[:, 0]
     selected_cand_y = cand_y[:, 0]
     engine.step(selected_cand_room_idx, selected_cand_x, selected_cand_y, start=0)
-    placement = (
-        int(selected_cand_room_idx[0]),
-        int(selected_cand_x[0]),
-        int(selected_cand_y[0]),
+    visualizer.add_selected_candidate(
+        selected_cand_room_idx,
+        selected_cand_x,
+        selected_cand_y,
     )
-    placements.append(placement)
-    visualizer.add_placement(placement)
-
-    visualizer.sync_artists()
-    fig.canvas.draw_idle()
-    plt.pause(0.1)
+    visualizer.update(pause=0.1)
 
 plt.ioff()
 plt.show()

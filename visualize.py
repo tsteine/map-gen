@@ -228,6 +228,26 @@ class MapVisualizer:
         for action in _normalize_actions(actions, environment_index):
             self.add_placement(action)
 
+    def add_engine_actions(self, actions: Any, *, environment_index: int = 0) -> None:
+        self.add_placements(actions, environment_index=environment_index)
+        self.sync_artists()
+
+    def add_selected_candidate(
+        self,
+        room_idx: Any,
+        room_x: Any,
+        room_y: Any,
+        *,
+        environment_index: int = 0,
+    ) -> Action:
+        action = (
+            int(room_idx[environment_index]),
+            int(room_x[environment_index]),
+            int(room_y[environment_index]),
+        )
+        self.add_placement(action)
+        return action
+
     def add_placement(self, action: Action) -> None:
         room_idx, room_x, room_y = action
         if not 0 <= room_idx < len(self.rooms):
@@ -269,6 +289,14 @@ class MapVisualizer:
         self.room_collection.set_facecolors(self.room_colors)
         self.wall_collection.set_segments(self.wall_segments)
         self.dirty = False
+
+    def update(self, pause: float = 0.0) -> None:
+        self.sync_artists()
+        self.ax.figure.canvas.draw_idle()
+        if pause > 0:
+            import matplotlib.pyplot as plt
+
+            plt.pause(pause)
 
     def _update_bounds(self, room_idx: int, room_x: int, room_y: int) -> None:
         if self.map_size is not None:
