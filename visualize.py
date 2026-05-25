@@ -6,6 +6,16 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 Action = Tuple[int, int, int]
 _ROOM_GEOMETRY_CACHE: Dict[int, List[dict]] = {}
+_COLORS = [
+    "#8ecae6",
+    "#ffb703",
+    "#90be6d",
+    "#f28482",
+    "#b8a1ff",
+    "#f4a261",
+    "#7bdff2",
+    "#cdb4db",
+]
 
 
 def _as_list(values: Any) -> List[Any]:
@@ -111,6 +121,184 @@ def _add_wall_segments(
     segments.append(((x2 - dx * trim, y2 - dy * trim), (x2, y2)))
 
 
+def _placement_elements(
+    geometry: dict,
+    room_x: int,
+    room_y: int,
+    fill: str,
+) -> Tuple[List[Tuple[Tuple[int, int], ...]], List[str], List[Tuple[Tuple[float, float], Tuple[float, float]]]]:
+    room_polygons = []
+    room_colors = []
+    wall_segments = []
+    cells = geometry["cells"]
+    doors = geometry["doors"]
+
+    for cell_x, cell_y in cells:
+        x = room_x + cell_x
+        y = room_y + cell_y
+        room_polygons.append(((x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1)))
+        room_colors.append(fill)
+
+        sides = {
+            "left": ((x, y), (x, y + 1), (cell_x - 1, cell_y)),
+            "right": ((x + 1, y), (x + 1, y + 1), (cell_x + 1, cell_y)),
+            "up": ((x, y), (x + 1, y), (cell_x, cell_y - 1)),
+            "down": ((x, y + 1), (x + 1, y + 1), (cell_x, cell_y + 1)),
+        }
+        for direction, (start, end, neighbor) in sides.items():
+            if neighbor in cells:
+                continue
+            _add_wall_segments(
+                wall_segments,
+                start[0],
+                start[1],
+                end[0],
+                end[1],
+                (cell_x, cell_y, direction) in doors,
+            )
+
+    return room_polygons, room_colors, wall_segments
+
+
+class MapVisualizer:
+    """Incrementally update a map plot as rooms are placed."""
+
+    def __init__(
+        self,
+        rooms: Sequence[dict],
+        *,
+        ax: Optional[Any] = None,
+        map_size: Optional[Tuple[int, int]] = None,
+        show_names: bool = False,
+        show_count: bool = True,
+    ) -> None:
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.collections import LineCollection, PolyCollection
+        except ImportError as exc:
+            raise ImportError("MapVisualizer requires matplotlib") from exc
+
+        self.LineCollection = LineCollection
+        self.PolyCollection = PolyCollection
+        self.rooms = rooms
+        self.geometries = _room_geometries(rooms)
+        self.ax = ax if ax is not None else plt.subplots()[1]
+        self.map_size = map_size
+        self.show_names = show_names
+        self.show_count = show_count
+        self.placement_count = 0
+        self.room_polygons: List[Tuple[Tuple[int, int], ...]] = []
+        self.room_colors: List[str] = []
+        self.wall_segments: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
+        self.label_artists = []
+        self.dirty = False
+        self.room_collection = PolyCollection(
+            [],
+            edgecolors="none",
+            alpha=0.45,
+        )
+        self.wall_collection = LineCollection(
+            [],
+            colors="black",
+            linewidths=2.0,
+            capstyle="butt",
+        )
+        self.ax.add_collection(self.room_collection)
+        self.ax.add_collection(self.wall_collection)
+        self.count_text = None
+        if show_count:
+            self.count_text = self.ax.text(
+                0.01,
+                0.99,
+                "Rooms: 0",
+                transform=self.ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=10,
+                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75},
+            )
+
+        self.min_x: Optional[int] = None
+        self.max_x: Optional[int] = None
+        self.min_y: Optional[int] = None
+        self.max_y: Optional[int] = None
+        self._configure_axes()
+
+    def add_placements(self, actions: Any, *, environment_index: int = 0) -> None:
+        for action in _normalize_actions(actions, environment_index):
+            self.add_placement(action)
+
+    def add_placement(self, action: Action) -> None:
+        room_idx, room_x, room_y = action
+        if not 0 <= room_idx < len(self.rooms):
+            return
+
+        geometry = self.geometries[room_idx]
+        fill = _COLORS[self.placement_count % len(_COLORS)]
+        polygons, colors, segments = _placement_elements(geometry, room_x, room_y, fill)
+        self.room_polygons.extend(polygons)
+        self.room_colors.extend(colors)
+        self.wall_segments.extend(segments)
+        self.placement_count += 1
+        self.dirty = True
+
+        if self.show_names:
+            cells = geometry["cells"]
+            xs = [room_x + x for x, _ in cells]
+            ys = [room_y + y for _, y in cells]
+            self.label_artists.append(
+                self.ax.text(
+                    (min(xs) + max(xs) + 1) / 2,
+                    (min(ys) + max(ys) + 1) / 2,
+                    geometry["label"],
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    clip_on=True,
+                )
+            )
+
+        self._update_bounds(room_idx, room_x, room_y)
+        if self.count_text is not None:
+            self.count_text.set_text(f"Rooms: {self.placement_count}")
+
+    def sync_artists(self) -> None:
+        if not self.dirty:
+            return
+        self.room_collection.set_verts(self.room_polygons)
+        self.room_collection.set_facecolors(self.room_colors)
+        self.wall_collection.set_segments(self.wall_segments)
+        self.dirty = False
+
+    def _update_bounds(self, room_idx: int, room_x: int, room_y: int) -> None:
+        if self.map_size is not None:
+            return
+
+        geometry = self.geometries[room_idx]
+        min_x = room_x + geometry["min_x"]
+        max_x = room_x + geometry["max_x"]
+        min_y = room_y + geometry["min_y"]
+        max_y = room_y + geometry["max_y"]
+        self.min_x = min_x if self.min_x is None else min(self.min_x, min_x)
+        self.max_x = max_x if self.max_x is None else max(self.max_x, max_x)
+        self.min_y = min_y if self.min_y is None else min(self.min_y, min_y)
+        self.max_y = max_y if self.max_y is None else max(self.max_y, max_y)
+        self.ax.set_xlim(self.min_x - 1, self.max_x + 1)
+        self.ax.set_ylim(self.max_y + 1, self.min_y - 1)
+
+    def _configure_axes(self) -> None:
+        self.ax.set_aspect("equal")
+        self.ax.grid(color="#dddddd", linewidth=0.6)
+        self.ax.set_xlabel("x")
+        self.ax.set_ylabel("y")
+        if self.map_size is not None:
+            width, height = self.map_size
+            self.ax.set_xlim(-1, width + 1)
+            self.ax.set_ylim(height + 1, -1)
+            self.ax.set_xticks(range(0, width + 1, 4))
+            self.ax.set_yticks(range(0, height + 1, 4))
+
+
 def display_map(
     rooms: Sequence[dict],
     actions: Any,
@@ -118,6 +306,7 @@ def display_map(
     environment_index: int = 0,
     ax: Optional[Any] = None,
     show_names: bool = True,
+    show_count: bool = True,
 ) -> Any:
     """Display room placements returned by ``engine.get_actions()``.
 
@@ -151,17 +340,6 @@ def display_map(
     min_y = min(y + geometries[room_idx]["min_y"] for room_idx, _, y in placements)
     max_y = max(y + geometries[room_idx]["max_y"] for room_idx, _, y in placements)
 
-    colors = [
-        "#8ecae6",
-        "#ffb703",
-        "#90be6d",
-        "#f28482",
-        "#b8a1ff",
-        "#f4a261",
-        "#7bdff2",
-        "#cdb4db",
-    ]
-
     room_polygons = []
     room_colors = []
     wall_segments = []
@@ -170,34 +348,15 @@ def display_map(
     for placement_index, (room_idx, room_x, room_y) in enumerate(placements):
         geometry = geometries[room_idx]
         cells = geometry["cells"]
-        doors = geometry["doors"]
-        fill = colors[placement_index % len(colors)]
-
-        for cell_x, cell_y in cells:
-            x = room_x + cell_x
-            y = room_y + cell_y
-            room_polygons.append(
-                ((x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1))
-            )
-            room_colors.append(fill)
-
-            sides = {
-                "left": ((x, y), (x, y + 1), (cell_x - 1, cell_y)),
-                "right": ((x + 1, y), (x + 1, y + 1), (cell_x + 1, cell_y)),
-                "up": ((x, y), (x + 1, y), (cell_x, cell_y - 1)),
-                "down": ((x, y + 1), (x + 1, y + 1), (cell_x, cell_y + 1)),
-            }
-            for direction, (start, end, neighbor) in sides.items():
-                if neighbor in cells:
-                    continue
-                _add_wall_segments(
-                    wall_segments,
-                    start[0],
-                    start[1],
-                    end[0],
-                    end[1],
-                    (cell_x, cell_y, direction) in doors,
-                )
+        polygons, colors, segments = _placement_elements(
+            geometry,
+            room_x,
+            room_y,
+            _COLORS[placement_index % len(_COLORS)],
+        )
+        room_polygons.extend(polygons)
+        room_colors.extend(colors)
+        wall_segments.extend(segments)
 
         if show_names:
             xs = [room_x + x for x, _ in cells]
@@ -236,6 +395,18 @@ def display_map(
             va="center",
             fontsize=8,
             clip_on=True,
+        )
+
+    if show_count:
+        ax.text(
+            0.01,
+            0.99,
+            f"Rooms: {len(placements)}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=10,
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75},
         )
 
     ax.set_xlim(min_x - 1, max_x + 1)
