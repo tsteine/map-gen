@@ -119,7 +119,7 @@ struct CommonData {
     room: Vec<RoomData>,
     // set of pairs of room placements that would cause an intersection
     // intersection_set: HashSet<(RoomIdx, RoomIdx, Coord, Coord)>,
-    intersection_idx: HashMap<(RoomIdx, RoomIdx), usize>, // maps a pair of room ids to the index of their intersection bit in the intersection_bitvec
+    intersection_idx: Vec<u32>, // maps a pair of room ids to the index of their intersection bits in the intersection_bitvec
     intersection_bitvec: BitVec,
     // for each direction, a list of all doors in that direction across all rooms
     dir_door: [Vec<DirDoorData>; NUM_DIRS],
@@ -192,7 +192,7 @@ impl CommonData {
         let mut common = Self {
             room: room_data,
             dir_door,
-            intersection_idx: HashMap::new(),
+            intersection_idx: vec![],
             intersection_bitvec: BitVec::new(),
         };
         common.build_intersection_set();
@@ -200,6 +200,8 @@ impl CommonData {
     }
 
     fn build_intersection_set(&mut self) {
+        self.intersection_idx
+            .resize(self.room.len() * self.room.len(), 0);
         for room_idx1 in 0..self.room.len() {
             let room1 = &self.room[room_idx1];
             for room_idx2 in room_idx1..self.room.len() {
@@ -209,8 +211,7 @@ impl CommonData {
                 let y0 = -room2.max_y + room1.min_y;
                 let y1 = room1.max_y - room2.min_y;
                 let bit_idx = self.intersection_bitvec.len();
-                self.intersection_idx
-                    .insert((room_idx1 as RoomIdx, room_idx2 as RoomIdx), bit_idx);
+                self.intersection_idx[room_idx1 * self.room.len() + room_idx2] = bit_idx as u32;
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let b = self.slow_has_intersection(
@@ -256,11 +257,8 @@ impl CommonData {
             return false;
         }
         let w = x1 - x0 + 1;
-        let i = self
-            .intersection_idx
-            .get(&(room_id1, room_id2))
-            .expect("intersection_idx should contain all pairs of room ids");
-        let bit_idx = i + (y - y0) as usize * w as usize + (x - x0) as usize;
+        let i = self.intersection_idx[room_id1 as usize * self.room.len() + room_id2 as usize];
+        let bit_idx = i as usize + (y - y0) as usize * w as usize + (x - x0) as usize;
         self.intersection_bitvec[bit_idx]
     }
 
