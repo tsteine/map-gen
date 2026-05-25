@@ -35,12 +35,10 @@ impl<T> OutputShard<T> {
         }
     }
 
-    unsafe fn as_mut_slice<'a>(self) -> &'a mut [T] {
+    unsafe fn into_mut_slice<'a>(self) -> &'a mut [T] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
 }
-
-type ActionRows = Vec<(Vec<RoomIdx>, Vec<Coord>, Vec<Coord>)>;
 
 enum WorkerCommand {
     Clear,
@@ -57,13 +55,20 @@ enum WorkerCommand {
         room_x: OutputShard<Coord>,
         room_y: OutputShard<Coord>,
     },
-    GetActions,
+    GetActionCounts {
+        counts: OutputShard<usize>,
+    },
+    GetActions {
+        action_count: usize,
+        room_idx: OutputShard<RoomIdx>,
+        room_x: OutputShard<Coord>,
+        room_y: OutputShard<Coord>,
+    },
     Shutdown,
 }
 
 enum WorkerResponse {
     Done,
-    Actions(ActionRows),
 }
 
 struct WorkerHandle {
@@ -94,9 +99,6 @@ impl WorkerHandle {
     fn recv_done(&self) -> PyResult<()> {
         match self.recv()? {
             WorkerResponse::Done => Ok(()),
-            WorkerResponse::Actions(_) => Err(PyRuntimeError::new_err(
-                "engine worker returned an unexpected response",
-            )),
         }
     }
 
@@ -155,9 +157,9 @@ fn worker_loop(
             } => {
                 let local_end = local_start + local_len;
                 debug_assert!(local_end <= environments.len());
-                let room_idx = unsafe { room_idx.as_mut_slice() };
-                let room_x = unsafe { room_x.as_mut_slice() };
-                let room_y = unsafe { room_y.as_mut_slice() };
+                let room_idx = unsafe { room_idx.into_mut_slice() };
+                let room_x = unsafe { room_x.into_mut_slice() };
+                let room_y = unsafe { room_y.into_mut_slice() };
                 debug_assert_eq!(room_idx.len(), local_len * max_candidates);
                 debug_assert_eq!(room_x.len(), local_len * max_candidates);
                 debug_assert_eq!(room_y.len(), local_len * max_candidates);
@@ -174,16 +176,39 @@ fn worker_loop(
                 }
                 WorkerResponse::Done
             }
-            WorkerCommand::GetActions => {
-                let mut rows = Vec::with_capacity(environments.len());
-                for env in &environments {
-                    rows.push((
-                        env.actions.iter().map(|action| action.room_idx).collect(),
-                        env.actions.iter().map(|action| action.x).collect(),
-                        env.actions.iter().map(|action| action.y).collect(),
-                    ));
+            WorkerCommand::GetActionCounts { counts } => {
+                let counts = unsafe { counts.into_mut_slice() };
+                debug_assert_eq!(counts.len(), environments.len());
+
+                for (count, env) in counts.iter_mut().zip(&environments) {
+                    *count = env.actions.len();
                 }
-                WorkerResponse::Actions(rows)
+                WorkerResponse::Done
+            }
+            WorkerCommand::GetActions {
+                action_count,
+                room_idx,
+                room_x,
+                room_y,
+            } => {
+                let room_idx = unsafe { room_idx.into_mut_slice() };
+                let room_x = unsafe { room_x.into_mut_slice() };
+                let room_y = unsafe { room_y.into_mut_slice() };
+                debug_assert_eq!(room_idx.len(), environments.len() * action_count);
+                debug_assert_eq!(room_x.len(), environments.len() * action_count);
+                debug_assert_eq!(room_y.len(), environments.len() * action_count);
+
+                for (env_idx, env) in environments.iter().enumerate() {
+                    debug_assert_eq!(env.actions.len(), action_count);
+                    let row_start = env_idx * action_count;
+                    for (action_idx, action) in env.actions.iter().enumerate() {
+                        let idx = row_start + action_idx;
+                        room_idx[idx] = action.room_idx;
+                        room_x[idx] = action.x;
+                        room_y[idx] = action.y;
+                    }
+                }
+                WorkerResponse::Done
             }
             WorkerCommand::Shutdown => break,
         };
@@ -363,55 +388,71 @@ impl Engine {
         Bound<'py, PyArray2<Coord>>,
         Bound<'py, PyArray2<Coord>>,
     )> {
-        let rows = py.allow_threads(|| {
+        let mut action_counts = vec![0; self.num_environments];
+        py.allow_threads(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
-                if let Err(err) = worker.send(WorkerCommand::GetActions) {
+                let start = worker.start;
+                let end = worker.end();
+                if let Err(err) = worker.send(WorkerCommand::GetActionCounts {
+                    counts: OutputShard::from_slice(&mut action_counts[start..end]),
+                }) {
                     set_first_error(&mut first_error, err);
                     break;
                 }
                 sent_workers.push(worker_idx);
             }
 
-            let mut rows = Vec::with_capacity(self.num_environments);
-            for worker_idx in sent_workers {
-                match self.workers[worker_idx].recv() {
-                    Ok(WorkerResponse::Actions(worker_rows)) => rows.extend(worker_rows),
-                    Ok(WorkerResponse::Done) => {
-                        set_first_error(
-                            &mut first_error,
-                            PyRuntimeError::new_err(
-                                "engine worker returned an unexpected response",
-                            ),
-                        );
-                    }
-                    Err(err) => set_first_error(&mut first_error, err),
-                }
-            }
-
-            if let Some(err) = first_error {
-                Err(err)
-            } else {
-                Ok(rows)
-            }
+            wait_for_done_responses(&self.workers, sent_workers, first_error)
         })?;
 
-        let mut room_idx = Vec::with_capacity(rows.len());
-        let mut room_x = Vec::with_capacity(rows.len());
-        let mut room_y = Vec::with_capacity(rows.len());
-        for (idx_row, x_row, y_row) in rows {
-            room_idx.push(idx_row);
-            room_x.push(x_row);
-            room_y.push(y_row);
+        let action_count = action_counts.first().copied().unwrap_or(0);
+        if !action_counts.iter().all(|&count| count == action_count) {
+            return Err(PyValueError::new_err(
+                "environment action histories are ragged",
+            ));
         }
+
+        let output_len = self
+            .num_environments
+            .checked_mul(action_count)
+            .ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "action output shape ({}, {}) is too large",
+                    self.num_environments, action_count
+                ))
+            })?;
+        let mut room_idx = vec![0; output_len];
+        let mut room_x = vec![0; output_len];
+        let mut room_y = vec![0; output_len];
+
+        py.allow_threads(|| {
+            let mut sent_workers = Vec::with_capacity(self.workers.len());
+            let mut first_error = None;
+            for (worker_idx, worker) in self.workers.iter().enumerate() {
+                let output_start = worker.start * action_count;
+                let output_end = output_start + worker.len * action_count;
+
+                if let Err(err) = worker.send(WorkerCommand::GetActions {
+                    action_count,
+                    room_idx: OutputShard::from_slice(&mut room_idx[output_start..output_end]),
+                    room_x: OutputShard::from_slice(&mut room_x[output_start..output_end]),
+                    room_y: OutputShard::from_slice(&mut room_y[output_start..output_end]),
+                }) {
+                    set_first_error(&mut first_error, err);
+                    break;
+                }
+                sent_workers.push(worker_idx);
+            }
+
+            wait_for_done_responses(&self.workers, sent_workers, first_error)
+        })?;
+
         Ok((
-            PyArray2::from_vec2(py, &room_idx)
-                .map_err(|_| PyValueError::new_err("environment action histories are ragged"))?,
-            PyArray2::from_vec2(py, &room_x)
-                .map_err(|_| PyValueError::new_err("environment action histories are ragged"))?,
-            PyArray2::from_vec2(py, &room_y)
-                .map_err(|_| PyValueError::new_err("environment action histories are ragged"))?,
+            pyarray2_from_flat_vec(py, room_idx, self.num_environments, action_count)?,
+            pyarray2_from_flat_vec(py, room_x, self.num_environments, action_count)?,
+            pyarray2_from_flat_vec(py, room_y, self.num_environments, action_count)?,
         ))
     }
 
