@@ -1,3 +1,6 @@
+/// The `engine` module exposes the map generation environment to Python through the Engine and
+/// EnvironmentGroup classes. It handles the creation and management of worker threads that run
+/// environment simulations in parallel.
 use crate::{Action, CommonData, Coord, Environment, Room, RoomIdx};
 use crossbeam_channel as channel;
 use numpy::{Element, IntoPyArray, PyArray2, PyArrayMethods, PyReadonlyArray1};
@@ -17,6 +20,17 @@ fn pyarray2_from_flat_vec<'py, T: Element>(
     data.into_pyarray(py).reshape([rows, cols])
 }
 
+// We use OutputShard to share mutable slices of memory between the main thread and worker threads.
+// This allows us to avoid copying data back and forth through channels. The raw pointers are
+// necessary because the worker threads are long-lived while the shared memory is short-lived,
+// making it difficult to convince the Rust borrow checker that the mutable references are valid.
+// We ensure safety by using the raw pointers only within the scope of a single command;
+// in every case, the main thread waits for a "done" response from the worker thread before
+// relinquishing ownership of the shared memory.
+//
+// An alternative approach would be to use scoped threads to allow safely borrowing the output slices
+// directly, but that would less performant because it would break the affinity of worker threads
+// to their environment shards.
 #[derive(Clone, Copy)]
 struct OutputShard<T> {
     ptr: *mut T,
@@ -44,19 +58,13 @@ enum WorkerCommand {
     Clear,
     InitialStep,
     Step {
-        local_start: usize,
         actions: Vec<Action>,
     },
     GetCandidates {
-        local_start: usize,
-        local_len: usize,
         max_candidates: usize,
         room_idx: OutputShard<RoomIdx>,
         room_x: OutputShard<Coord>,
         room_y: OutputShard<Coord>,
-    },
-    GetActionCounts {
-        counts: OutputShard<usize>,
     },
     GetActions {
         action_count: usize,
@@ -67,6 +75,9 @@ enum WorkerCommand {
     Shutdown,
 }
 
+// For now we only need a "done" response to indicate that the worker has finished processing a command,
+// since all other communication is done through shared memory. In the future, we could extend this
+// to include error reporting or other types of responses if needed.
 enum WorkerResponse {
     Done,
 }
@@ -136,35 +147,29 @@ fn worker_loop(
                 }
                 WorkerResponse::Done
             }
-            WorkerCommand::Step {
-                local_start,
-                actions,
-            } => {
-                let local_end = local_start + actions.len();
-                debug_assert!(local_end <= environments.len());
-                for (env, action) in environments[local_start..local_end].iter_mut().zip(actions) {
+            WorkerCommand::Step { actions } => {
+                debug_assert_eq!(actions.len(), environments.len());
+                for (env, action) in environments.iter_mut().zip(actions) {
                     env.step(action, &common_data);
                 }
                 WorkerResponse::Done
             }
             WorkerCommand::GetCandidates {
-                local_start,
-                local_len,
                 max_candidates,
                 room_idx,
                 room_x,
                 room_y,
             } => {
-                let local_end = local_start + local_len;
-                debug_assert!(local_end <= environments.len());
+                // SAFETY: The main thread guarantees that for the duration of this command,
+                // the output slices remain valid and that no other thread accesses them.
                 let room_idx = unsafe { room_idx.into_mut_slice() };
                 let room_x = unsafe { room_x.into_mut_slice() };
                 let room_y = unsafe { room_y.into_mut_slice() };
-                debug_assert_eq!(room_idx.len(), local_len * max_candidates);
-                debug_assert_eq!(room_x.len(), local_len * max_candidates);
-                debug_assert_eq!(room_y.len(), local_len * max_candidates);
+                debug_assert_eq!(room_idx.len(), environments.len() * max_candidates);
+                debug_assert_eq!(room_x.len(), environments.len() * max_candidates);
+                debug_assert_eq!(room_y.len(), environments.len() * max_candidates);
 
-                for (env_idx, env) in environments[local_start..local_end].iter_mut().enumerate() {
+                for (env_idx, env) in environments.iter_mut().enumerate() {
                     let candidates = env.get_candidates(&common_data, max_candidates);
                     let row_start = env_idx * max_candidates;
                     for (candidate_idx, candidate) in candidates.iter().enumerate() {
@@ -176,21 +181,14 @@ fn worker_loop(
                 }
                 WorkerResponse::Done
             }
-            WorkerCommand::GetActionCounts { counts } => {
-                let counts = unsafe { counts.into_mut_slice() };
-                debug_assert_eq!(counts.len(), environments.len());
-
-                for (count, env) in counts.iter_mut().zip(&environments) {
-                    *count = env.actions.len();
-                }
-                WorkerResponse::Done
-            }
             WorkerCommand::GetActions {
                 action_count,
                 room_idx,
                 room_x,
                 room_y,
             } => {
+                // SAFETY: The main thread guarantees that for the duration of this command,
+                // the output slices remain valid and that no other thread accesses them.
                 let room_idx = unsafe { room_idx.into_mut_slice() };
                 let room_x = unsafe { room_x.into_mut_slice() };
                 let room_y = unsafe { room_y.into_mut_slice() };
@@ -252,14 +250,6 @@ fn requested_num_threads(num_threads: Option<usize>) -> PyResult<usize> {
     }
 }
 
-fn checked_range_end(start: usize, len: usize) -> PyResult<usize> {
-    start.checked_add(len).ok_or_else(|| {
-        PyValueError::new_err(format!(
-            "range start {start} with length {len} overflows usize"
-        ))
-    })
-}
-
 fn set_first_error(first_error: &mut Option<PyErr>, err: PyErr) {
     if first_error.is_none() {
         *first_error = Some(err);
@@ -287,11 +277,16 @@ fn wait_for_done_responses(
 #[pyclass]
 pub struct Engine {
     common_data: Arc<CommonData>, // pre-computed data that can be shared across environments
-    workers: Vec<WorkerHandle>,   // fixed worker-owned environment shards
+}
+
+#[pyclass]
+pub struct EnvironmentGroup {
+    common_data: Arc<CommonData>,
+    workers: Vec<WorkerHandle>, // fixed worker-owned environment shards
     num_environments: usize,
 }
 
-impl Drop for Engine {
+impl Drop for EnvironmentGroup {
     fn drop(&mut self) {
         for worker in &mut self.workers {
             worker.shutdown();
@@ -302,9 +297,36 @@ impl Drop for Engine {
 #[pymethods]
 impl Engine {
     #[new]
-    #[pyo3(signature = (rooms_json, map_size, num_environments, seed, num_threads=None))]
+    #[pyo3(signature = (rooms_json))]
+    fn new(rooms_json: &str) -> PyResult<Self> {
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json)
+            .map_err(|err| PyValueError::new_err(format!("failed to parse rooms JSON: {err}")))?;
+        let common_data = Arc::new(CommonData::new(rooms)?);
+
+        Ok(Self { common_data })
+    }
+
+    #[pyo3(signature = (map_size, num_environments, seed, num_threads=None))]
+    fn create_environment_group(
+        &self,
+        map_size: (Coord, Coord),
+        num_environments: usize,
+        seed: u64,
+        num_threads: Option<usize>,
+    ) -> PyResult<EnvironmentGroup> {
+        EnvironmentGroup::new(
+            Arc::clone(&self.common_data),
+            map_size,
+            num_environments,
+            seed,
+            num_threads,
+        )
+    }
+}
+
+impl EnvironmentGroup {
     fn new(
-        rooms_json: &str,
+        common_data: Arc<CommonData>,
         map_size: (Coord, Coord),
         num_environments: usize,
         seed: u64,
@@ -312,9 +334,6 @@ impl Engine {
     ) -> PyResult<Self> {
         let requested_threads = requested_num_threads(num_threads)?;
         let worker_count = min(requested_threads, max(num_environments, 1));
-        let rooms: Vec<Room> = serde_json::from_str(rooms_json)
-            .map_err(|err| PyValueError::new_err(format!("failed to parse rooms JSON: {err}")))?;
-        let common_data = Arc::new(CommonData::new(rooms)?);
 
         let base_shard_len = num_environments / worker_count;
         let remainder = num_environments % worker_count;
@@ -346,7 +365,10 @@ impl Engine {
             num_environments,
         })
     }
+}
 
+#[pymethods]
+impl EnvironmentGroup {
     fn clear(&mut self, py: Python<'_>) -> PyResult<()> {
         py.allow_threads(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
@@ -462,7 +484,6 @@ impl Engine {
         room_idx: PyReadonlyArray1<'py, RoomIdx>,
         room_x: PyReadonlyArray1<'py, Coord>,
         room_y: PyReadonlyArray1<'py, Coord>,
-        start: usize,
     ) -> PyResult<()> {
         let room_idx = room_idx
             .as_slice()
@@ -483,13 +504,11 @@ impl Engine {
             )));
         }
 
-        let end = checked_range_end(start, room_idx.len())?;
-        if end > self.num_environments {
+        if room_idx.len() != self.num_environments {
             return Err(PyValueError::new_err(format!(
-                "action arrays with length {} starting at {} exceed num_environments {}",
-                room_idx.len(),
-                start,
+                "action arrays must have length num_environments {}; got {}",
                 self.num_environments,
+                room_idx.len(),
             )));
         }
 
@@ -504,15 +523,9 @@ impl Engine {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
-                let overlap_start = max(start, worker.start);
-                let overlap_end = min(end, worker.end());
-                if overlap_start >= overlap_end {
-                    continue;
-                }
-                let action_start = overlap_start - start;
-                let action_end = overlap_end - start;
+                let action_start = worker.start;
+                let action_end = worker.end();
                 if let Err(err) = worker.send(WorkerCommand::Step {
-                    local_start: overlap_start - worker.start,
                     actions: actions[action_start..action_end].to_vec(),
                 }) {
                     set_first_error(&mut first_error, err);
@@ -530,28 +543,12 @@ impl Engine {
         &mut self,
         py: Python<'py>,
         max_candidates: usize,
-        start: usize,
-        end: usize,
     ) -> PyResult<(
         Bound<'py, PyArray2<RoomIdx>>,
         Bound<'py, PyArray2<Coord>>,
         Bound<'py, PyArray2<Coord>>,
     )> {
-        if start > end || end > self.num_environments {
-            return Err(PyValueError::new_err(format!(
-                "environment range [{}, {}) is invalid for num_environments {}",
-                start, end, self.num_environments
-            )));
-        }
-
-        let num_environments = end - start;
-        let output_len = num_environments
-            .checked_mul(max_candidates)
-            .ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "candidate output shape ({num_environments}, {max_candidates}) is too large"
-                ))
-            })?;
+        let output_len = self.num_environments * max_candidates;
         let dummy_candidate = Action {
             room_idx: self.common_data.room.len() as RoomIdx, // an invalid room index to indicate no-op
             x: 0,
@@ -566,20 +563,10 @@ impl Engine {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
-                let overlap_start = max(start, worker.start);
-                let overlap_end = min(end, worker.end());
-                if overlap_start >= overlap_end {
-                    continue;
-                }
-
-                let output_row_start = overlap_start - start;
-                let local_len = overlap_end - overlap_start;
-                let output_start = output_row_start * max_candidates;
-                let output_end = output_start + local_len * max_candidates;
+                let output_start = worker.start * max_candidates;
+                let output_end = output_start + worker.len * max_candidates;
 
                 if let Err(err) = worker.send(WorkerCommand::GetCandidates {
-                    local_start: overlap_start - worker.start,
-                    local_len,
                     max_candidates,
                     room_idx: OutputShard::from_slice(&mut room_idx[output_start..output_end]),
                     room_x: OutputShard::from_slice(&mut room_x[output_start..output_end]),
@@ -595,9 +582,9 @@ impl Engine {
         })?;
 
         Ok((
-            pyarray2_from_flat_vec(py, room_idx, num_environments, max_candidates)?,
-            pyarray2_from_flat_vec(py, room_x, num_environments, max_candidates)?,
-            pyarray2_from_flat_vec(py, room_y, num_environments, max_candidates)?,
+            pyarray2_from_flat_vec(py, room_idx, self.num_environments, max_candidates)?,
+            pyarray2_from_flat_vec(py, room_x, self.num_environments, max_candidates)?,
+            pyarray2_from_flat_vec(py, room_y, self.num_environments, max_candidates)?,
         ))
     }
 }

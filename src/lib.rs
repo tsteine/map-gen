@@ -7,7 +7,7 @@ use rand::{RngExt, SeedableRng};
 use serde::Deserialize;
 
 mod engine;
-use engine::Engine;
+use engine::{Engine, EnvironmentGroup};
 
 type RoomIdx = u8;
 type GeometryIdx = u8;
@@ -740,5 +740,6 @@ impl Environment {
 #[pymodule]
 fn map_gen(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Engine>()?;
+    m.add_class::<EnvironmentGroup>()?;
     Ok(())
 }
