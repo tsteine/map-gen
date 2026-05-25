@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use bitvec::vec::BitVec;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use numpy::{PyArray2, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -117,14 +117,140 @@ struct DirDoorData {
 
 struct CommonData {
     room: Vec<RoomData>,
+    // set of pairs of room placements that would cause an intersection
+    intersection_set: HashSet<(RoomIdx, RoomIdx, Coord, Coord)>,
     // for each direction, a list of all doors in that direction across all rooms
     dir_door: [Vec<DirDoorData>; NUM_DIRS],
 }
 
 impl CommonData {
+    fn new(rooms: Vec<Room>) -> Result<Self> {
+        let mut room_data = vec![];
+        let mut dir_door: [Vec<DirDoorData>; NUM_DIRS] = std::array::from_fn(|_| vec![]);
+        for (room_idx, room) in rooms.iter().enumerate() {
+            let mut door_data = vec![];
+            for (door_idx, door) in room.doors.iter().flatten().enumerate() {
+                let dir_door_idx = dir_door[door.direction as usize].len() as DirDoorIdx;
+                dir_door[door.direction as usize].push(DirDoorData {
+                    room_idx: room_idx as RoomIdx,
+                    door_idx: door_idx as DoorIdx,
+                    x: door.x,
+                    y: door.y,
+                });
+                door_data.push(RoomDoorData {
+                    x: door.x,
+                    y: door.y,
+                    direction: door.direction,
+                    kind: door.kind,
+                    dir_door_idx,
+                });
+            }
+
+            let mut min_x = Coord::MAX;
+            let mut max_x = Coord::MIN;
+            let mut min_y = Coord::MAX;
+            let mut max_y = Coord::MIN;
+            let room_width = room.map[0].len() as Coord;
+            let room_height = room.map.len() as Coord;
+            for y in 0..room_height {
+                for x in 0..room_width {
+                    if room.map[y as usize][x as usize] != 0 {
+                        min_x = min_x.min(x as Coord);
+                        max_x = max_x.max(x as Coord);
+                        min_y = min_y.min(y as Coord);
+                        max_y = max_y.max(y as Coord);
+                    }
+                }
+            }
+            for door in room.doors.iter().flatten() {
+                let (door_x, door_y) = get_behind_door_position(door.direction, door.x, door.y);
+                min_x = min_x.min(door_x);
+                max_x = max_x.max(door_x);
+                min_y = min_y.min(door_y);
+                max_y = max_y.max(door_y);
+            }
+            if min_x > max_x || min_y > max_y {
+                bail!(
+                    "Room id {} (index {}) cannot fit within the map boundaries",
+                    room.room_id,
+                    room_idx
+                );
+            }
+
+            room_data.push(RoomData {
+                map: room.map.clone(),
+                doors: door_data,
+                min_x,
+                max_x,
+                min_y,
+                max_y,
+            });
+        }
+
+        let mut common = Self {
+            room: room_data,
+            dir_door,
+            intersection_set: HashSet::new(),
+        };
+        common.build_intersection_set();
+        Ok(common)
+    }
+
+    fn build_intersection_set(&mut self) {
+        for room_idx1 in 0..self.room.len() {
+            let room1 = &self.room[room_idx1];
+            for room_idx2 in (room_idx1 + 1)..self.room.len() {
+                let room2 = &self.room[room_idx2];
+                let x0 = -room2.max_x + room1.min_x;
+                let x1 = room1.max_x - room2.min_x;
+                let y0 = -room2.max_y + room1.min_y;
+                let y1 = room1.max_y - room2.min_y;
+                for x in x0..=x1 {
+                    for y in y0..=y1 {
+                        if self.slow_has_intersection(
+                            room_idx1 as RoomIdx,
+                            0,
+                            0,
+                            room_idx2 as RoomIdx,
+                            x,
+                            y,
+                        ) {
+                            self.intersection_set.insert((
+                                room_idx1 as RoomIdx,
+                                room_idx2 as RoomIdx,
+                                x,
+                                y,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fast method using the pre-computed intersection_set:
+    fn has_intersection(
+        &self,
+        room_id1: RoomIdx,
+        x1: Coord,
+        y1: Coord,
+        room_id2: RoomIdx,
+        x2: Coord,
+        y2: Coord,
+    ) -> bool {
+        if room_id1 < room_id2 {
+            self.intersection_set
+                .contains(&(room_id1, room_id2, x2 - x1, y2 - y1))
+        } else {
+            self.intersection_set
+                .contains(&(room_id2, room_id1, x1 - x2, y1 - y2))
+        }
+    }
+
     // Check if placing room1 at (x1, y1) and room2 at (x2, y2) would cause an intersection.
     // This includes overlapping tiles or blocked or mismatched doors.
-    fn has_intersection(
+    // Slow method for computing the intersection_set, used during start-up.
+    fn slow_has_intersection(
         &self,
         room_id1: RoomIdx,
         x1: Coord,
@@ -233,7 +359,8 @@ impl DoorLocation {
 
 pub struct Environment {
     rng: rand::rngs::StdRng, // for randomly choosing the initial room placement
-    actions: Vec<Action>,    // history of room placements so far
+    map_size: (Coord, Coord),
+    actions: Vec<Action>, // history of room placements so far
     frontier: HashMap<DoorLocation, Frontier>, // info about each unconnected door on the map
     // Grouped by door direction: for each door, the index of the matching door on the other side (or DoorIdx::MAX if none):
     door_matches: [Vec<DirDoorIdx>; NUM_DIRS],
@@ -241,15 +368,15 @@ pub struct Environment {
 }
 
 impl Environment {
-    fn new(rooms: &[Room], common: &CommonData, seed: u64) -> Self {
-        let mut env = Self {
+    fn new(rooms: &[Room], common: &CommonData, map_size: (Coord, Coord), seed: u64) -> Self {
+        Self {
             rng: rand::rngs::StdRng::seed_from_u64(seed),
+            map_size,
             actions: vec![],
             frontier: HashMap::new(),
             door_matches: std::array::from_fn(|i| vec![DoorIdx::MAX; common.dir_door[i].len()]),
             room_used: BitVec::repeat(false, rooms.len()),
-        };
-        env
+        }
     }
 
     fn clear(&mut self) {
@@ -269,10 +396,10 @@ impl Environment {
     fn get_initial_action(&mut self, common: &CommonData) -> Action {
         // Select a room and position uniformly at random.
         let room_idx = self.rng.random_range(0..common.room.len() as RoomIdx);
-        let min_x = common.room[room_idx as usize].min_x;
-        let max_x = common.room[room_idx as usize].max_x;
-        let min_y = common.room[room_idx as usize].min_y;
-        let max_y = common.room[room_idx as usize].max_y;
+        let min_x = -common.room[room_idx as usize].min_x;
+        let max_x = self.map_size.0 - 1 - common.room[room_idx as usize].max_x;
+        let min_y = -common.room[room_idx as usize].min_y;
+        let max_y = self.map_size.1 - 1 - common.room[room_idx as usize].max_y;
         let x = self.rng.random_range(min_x..=max_x);
         let y = self.rng.random_range(min_y..=max_y);
         Action { room_idx, x, y }
@@ -311,10 +438,10 @@ impl Environment {
                     let room_x = x1 - opp_door.x;
                     let room_y = y1 - opp_door.y;
                     let room = &common.room[opp_door.room_idx as usize];
-                    if room_x < room.min_x
-                        || room_x > room.max_x
-                        || room_y < room.min_y
-                        || room_y > room.max_y
+                    if room_x < -room.min_x
+                        || room_x > self.map_size.0 - 1 - room.max_x
+                        || room_y < -room.min_y
+                        || room_y > self.map_size.1 - 1 - room.max_y
                     {
                         // The room cannot be placed at this position due to map boundaries.
                         continue;
@@ -365,76 +492,6 @@ impl Environment {
     }
 }
 
-impl CommonData {
-    fn new(rooms: Vec<Room>, map_size: (Coord, Coord)) -> Result<Self> {
-        let mut room_data = vec![];
-        let mut dir_door: [Vec<DirDoorData>; NUM_DIRS] = std::array::from_fn(|_| vec![]);
-        for (room_idx, room) in rooms.iter().enumerate() {
-            let mut door_data = vec![];
-            for (door_idx, door) in room.doors.iter().flatten().enumerate() {
-                let dir_door_idx = dir_door[door.direction as usize].len() as DirDoorIdx;
-                dir_door[door.direction as usize].push(DirDoorData {
-                    room_idx: room_idx as RoomIdx,
-                    door_idx: door_idx as DoorIdx,
-                    x: door.x,
-                    y: door.y,
-                });
-                door_data.push(RoomDoorData {
-                    x: door.x,
-                    y: door.y,
-                    direction: door.direction,
-                    kind: door.kind,
-                    dir_door_idx,
-                });
-            }
-
-            let mut min_x = Coord::MAX;
-            let mut max_x = Coord::MIN;
-            let mut min_y = Coord::MAX;
-            let mut max_y = Coord::MIN;
-            let room_width = room.map[0].len() as Coord;
-            let room_height = room.map.len() as Coord;
-            for y in 0..room_height {
-                for x in 0..room_width {
-                    if room.map[y as usize][x as usize] != 0 {
-                        min_x = min_x.min(x as Coord);
-                        max_x = max_x.max(x as Coord);
-                        min_y = min_y.min(y as Coord);
-                        max_y = max_y.max(y as Coord);
-                    }
-                }
-            }
-            for door in room.doors.iter().flatten() {
-                let (door_x, door_y) = get_behind_door_position(door.direction, door.x, door.y);
-                min_x = min_x.min(door_x);
-                max_x = max_x.max(door_x);
-                min_y = min_y.min(door_y);
-                max_y = max_y.max(door_y);
-            }
-            if min_x > max_x || min_y > max_y {
-                bail!(
-                    "Room id {} (index {}) cannot fit within the map boundaries",
-                    room.room_id,
-                    room_idx
-                );
-            }
-
-            room_data.push(RoomData {
-                map: room.map.clone(),
-                doors: door_data,
-                min_x: -min_x,
-                max_x: map_size.0 - 1 - max_x,
-                min_y: -min_y,
-                max_y: map_size.1 - 1 - max_y,
-            });
-        }
-        Ok(Self {
-            room: room_data,
-            dir_door,
-        })
-    }
-}
-
 #[pyclass]
 pub struct Engine {
     common_data: CommonData, // pre-computed data that can be shared across environments
@@ -452,10 +509,15 @@ impl Engine {
     ) -> PyResult<Self> {
         let rooms: Vec<Room> = serde_json::from_str(rooms_json)
             .map_err(|err| PyValueError::new_err(format!("failed to parse rooms JSON: {err}")))?;
-        let common_data = CommonData::new(rooms.clone(), map_size)?;
+        let common_data = CommonData::new(rooms.clone())?;
         let mut environments = Vec::with_capacity(num_environments);
         for i in 0..num_environments {
-            environments.push(Environment::new(&rooms, &common_data, seed ^ i as u64));
+            environments.push(Environment::new(
+                &rooms,
+                &common_data,
+                map_size,
+                seed ^ i as u64,
+            ));
         }
         Ok(Self {
             common_data,
