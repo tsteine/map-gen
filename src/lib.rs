@@ -196,6 +196,10 @@ impl CommonData {
             intersection_bitvec: BitVec::new(),
         };
         common.build_intersection_set();
+        println!(
+            "Finished building intersection set with {} bits",
+            common.intersection_bitvec.len()
+        );
         Ok(common)
     }
 

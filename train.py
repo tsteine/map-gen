@@ -9,7 +9,7 @@ rooms = open("room_geometry.json", "r").read()
 # rooms = open("test_geometry.json", "r").read()
 room_data = json.loads(rooms)
 num_environments = 1
-max_candidates = 8
+max_candidates = 128
 map_size = (72, 72)
 
 start = time.perf_counter()
@@ -25,7 +25,7 @@ print(f"Elapsed time: {end - start:.2f} seconds to create the engine")
 # )
 
 
-for _ in range(100):
+for _ in range(1000):
     start = time.perf_counter()
     engine.clear()
     engine.initial_step()
@@ -49,5 +49,5 @@ for _ in range(100):
     room_idx, x, y = engine.get_actions()
     dummy_cnt = np.count_nonzero(room_idx == 253)
     end = time.perf_counter()
-    print(f"Elapsed time: {end - start:.3f} seconds, placed {dummy_cnt} dummy rooms")
+    # print(f"Elapsed time: {end - start:.3f} seconds, placed {dummy_cnt} dummy rooms")
     # visualizer.show()

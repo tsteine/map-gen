@@ -1,1 +1,7 @@
 /target
+__pycache__/
+flamegraph.svg
+perf.data
+perf.data.old
+perf.script
+profile.json.gz
