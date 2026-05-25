@@ -169,6 +169,7 @@ class MapVisualizer:
         *,
         ax: Optional[Any] = None,
         map_size: Optional[Tuple[int, int]] = None,
+        interactive: bool = False,
         show_names: bool = False,
         show_count: bool = True,
     ) -> None:
@@ -180,9 +181,14 @@ class MapVisualizer:
 
         self.LineCollection = LineCollection
         self.PolyCollection = PolyCollection
+        self.plt = plt
+        self.interactive = interactive
+        if interactive:
+            plt.ion()
         self.rooms = rooms
         self.geometries = _room_geometries(rooms)
         self.ax = ax if ax is not None else plt.subplots()[1]
+        self.fig = self.ax.figure
         self.map_size = map_size
         self.show_names = show_names
         self.show_count = show_count
@@ -223,6 +229,8 @@ class MapVisualizer:
         self.min_y: Optional[int] = None
         self.max_y: Optional[int] = None
         self._configure_axes()
+        if interactive:
+            plt.show(block=False)
 
     def add_placements(self, actions: Any, *, environment_index: int = 0) -> None:
         for action in _normalize_actions(actions, environment_index):
@@ -292,11 +300,14 @@ class MapVisualizer:
 
     def update(self, pause: float = 0.0) -> None:
         self.sync_artists()
-        self.ax.figure.canvas.draw_idle()
+        self.fig.canvas.draw_idle()
         if pause > 0:
-            import matplotlib.pyplot as plt
+            self.plt.pause(pause)
 
-            plt.pause(pause)
+    def show(self, *, block: bool = True) -> None:
+        if self.interactive:
+            self.plt.ioff()
+        self.plt.show(block=block)
 
     def _update_bounds(self, room_idx: int, room_x: int, room_y: int) -> None:
         if self.map_size is not None:

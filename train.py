@@ -1,6 +1,5 @@
 import map_gen
 import json
-import matplotlib.pyplot as plt
 
 from visualize import MapVisualizer
 
@@ -11,10 +10,12 @@ num_environments = 1
 map_size = (72, 72)
 engine = map_gen.Engine(rooms, map_size, num_environments, seed=2)
 
-plt.ion()
-fig, ax = plt.subplots()
-visualizer = MapVisualizer(room_data, ax=ax, map_size=map_size, show_names=False)
-plt.show(block=False)
+visualizer = MapVisualizer(
+    room_data,
+    map_size=map_size,
+    interactive=True,
+    show_names=False,
+)
 visualizer.add_engine_actions(engine.get_actions())
 
 for _ in range(260):
@@ -30,5 +31,4 @@ for _ in range(260):
     )
     visualizer.update(pause=0.1)
 
-plt.ioff()
-plt.show()
+visualizer.show()
