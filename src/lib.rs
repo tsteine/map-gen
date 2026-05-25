@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use bitvec::vec::BitVec;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use numpy::{PyArray2, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -78,16 +78,6 @@ fn get_behind_door_position(direction: Direction, x: Coord, y: Coord) -> (Coord,
         Direction::Up => (x, y - 1),
         Direction::Down => (x, y + 1),
     }
-}
-
-struct IntersectionChecker {
-    rooms: Vec<Room>,
-    map_size: (Coord, Coord),
-    // For each room, the min/max x/y coordinate where room can be placed without going out of bounds:
-    min_x_cand: Vec<Coord>,
-    max_x_cand: Vec<Coord>,
-    min_y_cand: Vec<Coord>,
-    max_y_cand: Vec<Coord>,
 }
 
 struct RoomDoorData {
