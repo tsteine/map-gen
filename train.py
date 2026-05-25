@@ -24,9 +24,10 @@ print(f"Elapsed time: {end - start:.2f} seconds to create the engine")
 #     show_names=False,
 # )
 
-
-for _ in range(1000):
-    start = time.perf_counter()
+start = time.perf_counter()
+num_rounds = 500
+for _ in range(num_rounds):
+    # start = time.perf_counter()
     engine.clear()
     engine.initial_step()
     # visualizer.add_engine_actions(engine.get_actions())
@@ -46,8 +47,12 @@ for _ in range(1000):
         # )
         # visualizer.update(pause=0.1)
 
-    room_idx, x, y = engine.get_actions()
-    dummy_cnt = np.count_nonzero(room_idx == 253)
-    end = time.perf_counter()
-    # print(f"Elapsed time: {end - start:.3f} seconds, placed {dummy_cnt} dummy rooms")
+    # room_idx, x, y = engine.get_actions()
+    # dummy_cnt = np.count_nonzero(room_idx == 253)
+    # end = time.perf_counter()
+    # print(f"Elapsed time: {end - start:.4f} seconds, placed {dummy_cnt} dummy rooms")
     # visualizer.show()
+
+end = time.perf_counter()
+print(f"Elapsed time: {(end - start)/num_rounds:.4f} seconds per round")
+    
