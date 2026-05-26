@@ -12,7 +12,7 @@ pub type RoomPartIdx = u16; // flat index of part across all rooms
 pub type DoorKind = u8; // distinguishes different types of "doors", e.g. regular, elevator, and sand.
 pub type DirDoorIdx = u8; // index of a door among all doors with the given direction, across all rooms
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 #[repr(i8)]
 pub enum DoorValidOutcome {
     Unknown = -1,
@@ -131,6 +131,12 @@ pub struct RoomDirDoorData {
     pub direction: Direction,
 }
 
+pub struct RoomConnectionData {
+    pub room_idx: RoomIdx,
+    pub from_part: PartIdx,
+    pub to_part: PartIdx,
+}
+
 pub struct RoomData {
     pub geometry_idx: GeometryIdx,
     pub connection_variant_idx: ConnectionVariantIdx,
@@ -188,6 +194,7 @@ pub struct CommonData {
     // for each direction, number of room doors in that direction across all rooms
     pub room_dir_door: [Vec<RoomDirDoorData>; NUM_DIRS],
     pub room_part: Vec<(RoomIdx, PartIdx)>,
+    pub room_connection: Vec<RoomConnectionData>,
 }
 
 impl GeometryKey {
@@ -262,6 +269,7 @@ impl CommonData {
         let mut connection_variant_rooms = vec![];
         let mut door_group_count = 0;
         let mut room_part = vec![];
+        let mut room_connection = vec![];
         let mut geometry_by_key = HashMap::new();
         let mut connection_variant_by_key = HashMap::new();
         let mut geometry_dir_door: [Vec<GeometryDirDoorData>; NUM_DIRS] =
@@ -354,6 +362,13 @@ impl CommonData {
             for part_idx in 0..room.doors.len() {
                 room_part.push((room_idx as RoomIdx, part_idx as PartIdx));
             }
+            for &(from_part, to_part) in &room.connections {
+                room_connection.push(RoomConnectionData {
+                    room_idx: room_idx as RoomIdx,
+                    from_part,
+                    to_part,
+                });
+            }
             room_data.push(RoomData {
                 geometry_idx,
                 connection_variant_idx,
@@ -376,6 +391,7 @@ impl CommonData {
             geometry_dir_door,
             room_dir_door,
             room_part,
+            room_connection,
         };
         common.build_intersection_set();
         println!(

@@ -28,6 +28,8 @@ struct GeometryAction {
 pub struct Outcomes {
     // For each door, whether it is connected to another door.
     pub door_valid: Vec<DoorValidOutcome>,
+    // For each connection, whether its destination can reach its source.
+    pub connections_valid: Vec<DoorValidOutcome>,
 }
 
 pub struct Environment {
@@ -383,7 +385,32 @@ impl Environment {
                 door_valid.push(outcome);
             }
         }
-        Outcomes { door_valid }
+
+        let mut connections_valid = Vec::with_capacity(common.room_connection.len());
+        for connection in &common.room_connection {
+            let mut outcome = if self.room_used[connection.room_idx as usize] {
+                let from_component =
+                    self.room_part_component(common, connection.room_idx, connection.from_part);
+                let to_component =
+                    self.room_part_component(common, connection.room_idx, connection.to_part);
+                if self.scc_dag.can_reach(to_component, from_component) {
+                    DoorValidOutcome::Valid
+                } else {
+                    DoorValidOutcome::Unknown
+                }
+            } else {
+                DoorValidOutcome::Unknown
+            };
+            if self.actions.len() == common.room.len() && outcome != DoorValidOutcome::Valid {
+                outcome = DoorValidOutcome::Invalid;
+            }
+            connections_valid.push(outcome);
+        }
+
+        Outcomes {
+            door_valid,
+            connections_valid,
+        }
     }
 }
 
@@ -450,5 +477,75 @@ mod tests {
                 .iter()
                 .all(|&component| component == NO_COMPONENT)
         );
+    }
+
+    #[test]
+    fn connection_outcome_is_valid_when_destination_reaches_source() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [[0, 1], [1, 0]]
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (4, 4), 0);
+
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+
+        let outcomes = env.outcomes(&common);
+        assert_eq!(outcomes.connections_valid.len(), 2);
+        assert!(matches!(
+            outcomes.connections_valid.as_slice(),
+            [DoorValidOutcome::Valid, DoorValidOutcome::Valid]
+        ));
+    }
+
+    #[test]
+    fn connection_outcome_is_invalid_at_episode_end_without_return_path() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [[0, 1]]
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (4, 4), 0);
+
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+
+        let outcomes = env.outcomes(&common);
+        assert_eq!(outcomes.connections_valid.len(), 1);
+        assert!(matches!(
+            outcomes.connections_valid.as_slice(),
+            [DoorValidOutcome::Invalid]
+        ));
     }
 }
