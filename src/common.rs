@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use bitvec::vec::BitVec;
 use hashbrown::HashMap;
 use serde::Deserialize;
@@ -119,6 +119,7 @@ pub struct RoomDoorData {
     pub y: Coord,
     pub direction: Direction,
     pub dir_door_idx: DirDoorIdx,
+    pub part_idx: PartIdx,
 }
 
 pub struct RoomDirDoorData {
@@ -132,6 +133,9 @@ pub struct RoomData {
     pub geometry_idx: GeometryIdx,
     pub connection_variant_idx: ConnectionVariantIdx,
     pub doors: Vec<RoomDoorData>,
+    pub door_group_offset: usize,
+    pub door_group_count: usize,
+    pub connections: Vec<(PartIdx, PartIdx)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -253,6 +257,7 @@ impl CommonData {
         let mut geometry_rooms = vec![];
         let mut geometry_connection_variants = vec![];
         let mut connection_variant_rooms = vec![];
+        let mut door_group_count = 0;
         let mut geometry_by_key = HashMap::new();
         let mut connection_variant_by_key = HashMap::new();
         let mut geometry_dir_door: [Vec<GeometryDirDoorData>; NUM_DIRS] =
@@ -260,22 +265,41 @@ impl CommonData {
         let mut room_dir_door: [Vec<RoomDirDoorData>; NUM_DIRS] = std::array::from_fn(|_| vec![]);
 
         for (room_idx, room) in rooms.iter().enumerate() {
+            if room.doors.len() > PartIdx::MAX as usize {
+                bail!(
+                    "room {room_idx} has {} door groups, exceeding the maximum {}",
+                    room.doors.len(),
+                    PartIdx::MAX
+                );
+            }
+            for &(from_part, to_part) in &room.connections {
+                if from_part as usize >= room.doors.len() || to_part as usize >= room.doors.len() {
+                    bail!(
+                        "room {room_idx} has connection ({from_part}, {to_part}) outside its {} door groups",
+                        room.doors.len()
+                    );
+                }
+            }
+
             let mut door_data = vec![];
-            for door in room.doors.iter().flatten() {
-                let dir_idx = door.direction as usize;
-                let dir_door_idx = room_dir_door[dir_idx].len() as DirDoorIdx;
-                room_dir_door[dir_idx].push(RoomDirDoorData {
-                    room_idx: room_idx as RoomIdx,
-                    x: door.x,
-                    y: door.y,
-                    direction: door.direction,
-                });
-                door_data.push(RoomDoorData {
-                    x: door.x,
-                    y: door.y,
-                    direction: door.direction,
-                    dir_door_idx,
-                });
+            for (part_idx, door_group) in room.doors.iter().enumerate() {
+                for door in door_group {
+                    let dir_idx = door.direction as usize;
+                    let dir_door_idx = room_dir_door[dir_idx].len() as DirDoorIdx;
+                    room_dir_door[dir_idx].push(RoomDirDoorData {
+                        room_idx: room_idx as RoomIdx,
+                        x: door.x,
+                        y: door.y,
+                        direction: door.direction,
+                    });
+                    door_data.push(RoomDoorData {
+                        x: door.x,
+                        y: door.y,
+                        direction: door.direction,
+                        dir_door_idx,
+                        part_idx: part_idx as PartIdx,
+                    });
+                }
             }
 
             let geometry_key = GeometryKey::from_room(room);
@@ -318,7 +342,11 @@ impl CommonData {
                 geometry_idx,
                 connection_variant_idx,
                 doors: door_data,
+                door_group_offset: door_group_count,
+                door_group_count: room.doors.len(),
+                connections: room.connections.clone(),
             });
+            door_group_count += room.doors.len();
         }
 
         let mut common = Self {
