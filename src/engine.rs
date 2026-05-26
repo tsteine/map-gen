@@ -1,7 +1,7 @@
 /// The `engine` module exposes the map generation environment to Python through the Engine and
 /// EnvironmentGroup classes. It handles the creation and management of worker threads that run
 /// environment simulations in parallel.
-use crate::common::{Action, CommonData, Coord, Room, RoomIdx};
+use crate::common::{Action, CommonData, Coord, DoorValidOutcome, Room, RoomIdx};
 use crate::environment::Environment;
 use crossbeam_channel as channel;
 use numpy::{Element, IntoPyArray, PyArray2, PyArrayMethods, PyReadonlyArray1};
@@ -96,6 +96,10 @@ enum WorkerCommand {
         room_idx: OutputShard<RoomIdx>,
         room_x: OutputShard<Coord>,
         room_y: OutputShard<Coord>,
+    },
+    GetOutcomes {
+        outcome_count: usize,
+        door_valid: OutputShard<i8>,
     },
     Shutdown,
 }
@@ -248,6 +252,29 @@ fn worker_loop(
                         room_idx[idx] = action.room_idx;
                         room_x[idx] = action.x;
                         room_y[idx] = action.y;
+                    }
+                }
+                WorkerResponse::Done
+            }
+            WorkerCommand::GetOutcomes {
+                outcome_count,
+                door_valid,
+            } => {
+                // SAFETY: The main thread guarantees that for the duration of this command,
+                // the output slice remains valid and that no other thread accesses it.
+                let door_valid = unsafe { door_valid.into_mut_slice() };
+                debug_assert_eq!(door_valid.len(), environments.len() * outcome_count);
+
+                for (env_idx, env) in environments.iter().enumerate() {
+                    let outcomes = env.outcomes(&common_data);
+                    debug_assert_eq!(outcomes.door_valid.len(), outcome_count);
+                    let row_start = env_idx * outcome_count;
+                    for (outcome_idx, outcome) in outcomes.door_valid.iter().enumerate() {
+                        door_valid[row_start + outcome_idx] = match outcome {
+                            DoorValidOutcome::Unknown => -1,
+                            DoorValidOutcome::Valid => 0,
+                            DoorValidOutcome::Invalid => 1,
+                        };
                     }
                 }
                 WorkerResponse::Done
@@ -603,5 +630,38 @@ impl EnvironmentGroup {
             pyarray2_from_flat_vec(py, room_x, self.num_environments, max_candidates)?,
             pyarray2_from_flat_vec(py, room_y, self.num_environments, max_candidates)?,
         ))
+    }
+
+    fn get_outcomes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<i8>>> {
+        let outcome_count: usize = self
+            .common_data
+            .room_dir_door
+            .iter()
+            .map(|doors| doors.len())
+            .sum();
+        let output_len = self.num_environments * outcome_count;
+        let mut door_valid = vec![DoorValidOutcome::Unknown as i8; output_len];
+
+        py.allow_threads(|| {
+            let mut sent_workers = Vec::with_capacity(self.workers.len());
+            let mut first_error = None;
+            for (worker_idx, worker) in self.workers.iter().enumerate() {
+                let output_start = worker.start * outcome_count;
+                let output_end = output_start + worker.len * outcome_count;
+
+                if let Err(err) = worker.send(WorkerCommand::GetOutcomes {
+                    outcome_count,
+                    door_valid: OutputShard::from_slice(&mut door_valid[output_start..output_end]),
+                }) {
+                    set_first_error(&mut first_error, err);
+                    break;
+                }
+                sent_workers.push(worker_idx);
+            }
+
+            wait_for_done_responses(&self.workers, sent_workers, first_error)
+        })?;
+
+        pyarray2_from_flat_vec(py, door_valid, self.num_environments, outcome_count)
     }
 }

@@ -11,6 +11,7 @@ pub type PartIdx = u8;
 type DoorKind = u8;
 pub type DirDoorIdx = u8; // index of a door among all doors with the given direction, across all rooms
 
+#[derive(Clone, Copy)]
 #[repr(i8)]
 pub enum DoorValidOutcome {
     Unknown = -1,

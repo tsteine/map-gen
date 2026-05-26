@@ -24,7 +24,7 @@ struct GeometryAction {
 
 pub struct Outcomes {
     // For each door, whether it is connected to another door.
-    door_valid: Vec<DoorValidOutcome>,
+    pub door_valid: Vec<DoorValidOutcome>,
 }
 
 pub struct Environment {
@@ -290,13 +290,18 @@ impl Environment {
         for dir in 0..NUM_DIRS {
             let matches = &self.door_matches[dir];
             for (i, &m) in matches.iter().enumerate() {
-                if m != DirDoorIdx::MAX {
-                    door_valid.push(DoorValidOutcome::Valid);
+                let outcome = if m != DirDoorIdx::MAX {
+                    DoorValidOutcome::Valid
+                } else if self.actions.len() == common.room.len() {
+                    // The episode is ended, so any unmatched door is invalid.
+                    DoorValidOutcome::Invalid
                 } else {
+                    // The door is not yet matched. It is invalid if there is no candidate that could connect to it,
+                    // otherwise it is unknown.
                     let room_dir_door = &common.room_dir_door[dir][i];
                     let room_idx = room_dir_door.room_idx;
                     if self.room_used[room_idx as usize] {
-                        let outcome = match self.frontier.get(&DoorLocation::from_room_dir_door(
+                        match self.frontier.get(&DoorLocation::from_room_dir_door(
                             room_dir_door,
                             self.room_x[room_idx as usize],
                             self.room_y[room_idx as usize],
@@ -306,10 +311,12 @@ impl Environment {
                                 DoorValidOutcome::Invalid
                             }
                             Some(_) => DoorValidOutcome::Unknown,
-                        };
-                        door_valid.push(outcome);
+                        }
+                    } else {
+                        DoorValidOutcome::Unknown
                     }
-                }
+                };
+                door_valid.push(outcome);
             }
         }
         Outcomes { door_valid }
