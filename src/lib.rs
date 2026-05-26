@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 mod common;
 mod engine;
 mod environment;
+mod scc_dag;
 
 use engine::{Engine, EnvironmentGroup};
 
