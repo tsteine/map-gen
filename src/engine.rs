@@ -488,22 +488,19 @@ impl EnvironmentGroup {
             )));
         }
 
-        let actions: Vec<_> = room_idx
-            .iter()
-            .zip(room_x.iter())
-            .zip(room_y.iter())
-            .map(|((&room_idx, &x), &y)| Action { room_idx, x, y })
-            .collect();
-
         py.allow_threads(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
                 let action_start = worker.start;
                 let action_end = worker.end();
-                if let Err(err) = worker.send(WorkerCommand::Step {
-                    actions: actions[action_start..action_end].to_vec(),
-                }) {
+                let actions: Vec<_> = room_idx[action_start..action_end]
+                    .iter()
+                    .zip(room_x[action_start..action_end].iter())
+                    .zip(room_y[action_start..action_end].iter())
+                    .map(|((&room_idx, &x), &y)| Action { room_idx, x, y })
+                    .collect();
+                if let Err(err) = worker.send(WorkerCommand::Step { actions }) {
                     set_first_error(&mut first_error, err);
                     break;
                 }
