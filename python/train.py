@@ -2,11 +2,12 @@ import map_gen
 import json
 import time
 import numpy as np
+import torch
 
-from visualize import MapVisualizer
+from model import CausalTransformerModel
 
-# rooms_str = open("room_geometry/crateria.json", "r").read()
-rooms_str = open("room_geometry/zebes.json", "r").read()
+# rooms_str = open("room_definitions/crateria.json", "r").read()
+rooms_str = open("room_definitions/zebes.json", "r").read()
 rooms = json.loads(rooms_str)
 num_environments = 4096
 num_rounds = 1
@@ -17,6 +18,34 @@ map_size = (72, 72)
 
 engine = map_gen.Engine(rooms_str)
 env = engine.create_environment_group(map_size, num_environments, seed=6)
+
+
+
+
+
+embedding_width = 256
+key_width = 64
+value_width = 64
+attn_heads = 16
+head_groups = 4
+hidden_width = 512
+num_layers = 4
+
+main_model = CausalTransformerModel(
+    map_x=map_size[0],
+    map_y=map_size[1],
+    num_outputs=3,  # room_idx, x, y
+    embedding_width=embedding_width,
+    key_width=key_width,
+    value_width=value_width,
+    attn_heads=attn_heads,
+    head_groups=head_groups,
+    hidden_width=hidden_width,
+    num_layers=num_layers,
+)
+
+
+
 
 # visualizer = MapVisualizer(
 #     rooms,
