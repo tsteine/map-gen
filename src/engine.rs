@@ -80,6 +80,7 @@ impl<T> OutputShard<T> {
 enum WorkerCommand {
     Clear,
     InitialStep,
+    Finish,
     Step {
         room_idx: InputShard<RoomIdx>,
         room_x: InputShard<Coord>,
@@ -175,6 +176,12 @@ fn worker_loop(
             WorkerCommand::InitialStep => {
                 for env in &mut environments {
                     env.initial_step(&common_data);
+                }
+                WorkerResponse::Done
+            }
+            WorkerCommand::Finish => {
+                for env in &mut environments {
+                    env.finish();
                 }
                 WorkerResponse::Done
             }
@@ -510,6 +517,22 @@ impl EnvironmentGroup {
 
         self.action_count += 1;
         Ok(())
+    }
+
+    fn finish(&mut self, py: Python<'_>) -> PyResult<()> {
+        py.allow_threads(|| {
+            let mut sent_workers = Vec::with_capacity(self.workers.len());
+            let mut first_error = None;
+            for (worker_idx, worker) in self.workers.iter().enumerate() {
+                if let Err(err) = worker.send(WorkerCommand::Finish) {
+                    set_first_error(&mut first_error, err);
+                    break;
+                }
+                sent_workers.push(worker_idx);
+            }
+
+            wait_for_done_responses(&self.workers, sent_workers, first_error)
+        })
     }
 
     #[allow(clippy::type_complexity)]

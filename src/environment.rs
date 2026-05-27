@@ -36,6 +36,7 @@ pub struct Environment {
     rng: rand::rngs::StdRng, // for randomly choosing the initial room placement
     map_size: (Coord, Coord),
     actions: Vec<Action>, // history of room placements so far
+    finished: bool,
     frontier: HashMap<DoorLocation, Frontier>, // info about each unconnected door on the map
     // Grouped by door direction: for each door, the index of the matching door on the other side (or DirDoorIdx::MAX if none):
     door_matches: [Vec<DirDoorIdx>; NUM_DIRS],
@@ -54,6 +55,7 @@ impl Environment {
             rng: rand::rngs::StdRng::seed_from_u64(seed),
             map_size,
             actions: vec![],
+            finished: false,
             frontier: HashMap::new(),
             door_matches: std::array::from_fn(|i| {
                 vec![DirDoorIdx::MAX; common.room_dir_door[i].len()]
@@ -78,6 +80,7 @@ impl Environment {
 
     pub fn clear(&mut self, common: &CommonData) {
         self.actions.clear();
+        self.finished = false;
         self.frontier.clear();
         self.door_matches
             .iter_mut()
@@ -163,6 +166,9 @@ impl Environment {
     }
 
     pub fn step(&mut self, action: Action, common: &CommonData) {
+        if self.finished {
+            return;
+        }
         self.actions.push(action);
         if action.room_idx >= common.room.len() as RoomIdx {
             // Dummy/invalid action: do nothing more.
@@ -270,6 +276,10 @@ impl Environment {
                     )
             });
         }
+    }
+
+    pub fn finish(&mut self) {
+        self.finished = true;
     }
 
     fn add_room_components_and_edges(&mut self, action: Action, common: &CommonData) {
@@ -383,7 +393,7 @@ impl Environment {
             for (i, &m) in matches.iter().enumerate() {
                 let outcome = if m != DirDoorIdx::MAX {
                     DoorValidOutcome::Valid
-                } else if self.actions.len() == common.room.len() {
+                } else if self.finished {
                     // The episode is ended, so any unmatched door is invalid.
                     DoorValidOutcome::Invalid
                 } else {
@@ -426,7 +436,7 @@ impl Environment {
             } else {
                 DoorValidOutcome::Unknown
             };
-            if self.actions.len() == common.room.len() && outcome != DoorValidOutcome::Valid {
+            if self.finished && outcome != DoorValidOutcome::Valid {
                 outcome = DoorValidOutcome::Invalid;
             }
             connections_valid.push(outcome);
@@ -541,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_outcome_is_invalid_at_episode_end_without_return_path() {
+    fn finish_marks_unresolved_connection_outcomes_invalid() {
         let rooms_json = r#"
         [
             {
@@ -569,6 +579,13 @@ mod tests {
 
         let outcomes = env.outcomes(&common);
         assert_eq!(outcomes.connections_valid.len(), 1);
+        assert!(matches!(
+            outcomes.connections_valid.as_slice(),
+            [DoorValidOutcome::Unknown]
+        ));
+
+        env.finish();
+        let outcomes = env.outcomes(&common);
         assert!(matches!(
             outcomes.connections_valid.as_slice(),
             [DoorValidOutcome::Invalid]
