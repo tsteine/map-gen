@@ -71,7 +71,10 @@ for _ in range(num_rounds):
         selected_cand_x = np.ascontiguousarray(cand_x[:, 0])
         selected_cand_y = np.ascontiguousarray(cand_y[:, 0])
         env.step(selected_cand_room_idx, selected_cand_x, selected_cand_y)
-        
+    
+    env.finish()
+    
+    
         # print(outcomes)
         # visualizer.add_selected_candidate(
         #     selected_cand_room_idx,
