@@ -413,6 +413,10 @@ impl Engine {
         Ok(Self { common_data })
     }
 
+    fn num_rooms(&self) -> usize {
+        self.common_data.room.len()
+    }
+
     #[pyo3(signature = (map_size, num_environments, seed, num_threads=None))]
     fn create_environment_group(
         &self,

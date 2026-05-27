@@ -45,12 +45,14 @@ def compute_expected_reward(preds, config: GenerationConfig):
 
 
 def generate(env: EnvironmentGroup, model, config: GenerationConfig, device):
-    engine = env.get_engine()
     num_envs = env.num_environments()
+    engine = env.get_engine()
+    num_rooms = engine.num_rooms()
+    output_sizes = engine.get_output_sizes()
+
     kv_cache = model.get_initial_kv_cache(num_envs, device)
     env.clear()
     env.initial_step()
-    output_sizes = engine.get_output_sizes()
     
     for _ in range(config.episode_length - 1):
         # Get candidate actions from environment, and load them to device (e.g. GPU)
@@ -65,7 +67,7 @@ def generate(env: EnvironmentGroup, model, config: GenerationConfig, device):
         
         # Compute expected reward and sample to select an action (per environment)
         expected_reward = compute_expected_reward(preds, config)
-        expected_reward = torch.where(cand_room_idx == num_rooms, 
+        expected_reward = torch.where(cand_room_idx == num_rooms, # dummy action should only be selected if no other choice
                                       torch.full_like(expected_reward, float('-inf')),
                                       expected_reward)
         probs = torch.softmax(expected_reward / torch.unsqueeze(config.temperature, 1), dim=1)
