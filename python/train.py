@@ -8,9 +8,9 @@ import os
 
 from aim import Run
 
-from env import Engine, GenerationConfig
+from env import Engine, GenerationConfig, Outcomes
 from model import CausalTransformerModel
-from loss import compute_loss
+from loss import LossConfig, compute_loss
 from generate import generate
 
 start_time = datetime.now()
@@ -21,15 +21,16 @@ logging.basicConfig(format='%(asctime)s %(message)s',
                               logging.StreamHandler()])
 
 
-# rooms_str = open("room_definitions/crateria.json", "r").read()
-rooms_str = open("room_definitions/zebes.json", "r").read()
+rooms_str = open("room_definitions/crateria.json", "r").read()
+# rooms_str = open("room_definitions/zebes.json", "r").read()
 rooms = json.loads(rooms_str)
-num_environments = 4
-num_rounds = 10
-max_candidates = 32
+episode_length = len(rooms)
+num_environments = 512
+num_rounds = 10000
+max_candidates = 16
 map_size = (72, 72)
-temperature = 1.0
-device = torch.device("cpu")
+temperature = 0.03
+device = torch.device("cuda:0")
 
 engine = Engine(rooms)
 env = engine.create_environment_group(map_size, num_environments, seed=6)
@@ -55,7 +56,7 @@ main_model = CausalTransformerModel(
     head_groups=head_groups,
     hidden_width=hidden_width,
     num_layers=num_layers,
-)
+).to(device)
 
 # Log experiment using Aim
 run = Run(experiment="initial testing")
@@ -74,46 +75,57 @@ run["model"] = {
 }
 
 
-config = GenerationConfig(
+gen_config = GenerationConfig(
     episode_length=len(rooms),
     max_candidates=max_candidates,
-    temperature=torch.full([num_environments], temperature, dtype=torch.float32),
+    temperature=torch.full([num_environments], temperature, dtype=torch.float32, device=device),
 )
 
-def log_outcomes(outcomes, round):
-    door_invalid = np.count_nonzero(outcomes.door_invalid, axis=1)
-    avg_door = np.mean(door_invalid)
-    min_door = np.min(door_invalid)
+loss_config = LossConfig(
+    door_weight=1.0,
+    connection_weight=1.0,
+)
+
+def log_outcomes(outcomes, loss, round):
+    door_invalid = torch.sum(outcomes.door_invalid != 0, dim=1)
+    avg_door = torch.mean(door_invalid.to(torch.float32))
+    min_door = torch.min(door_invalid)
     run.track(avg_door, name="avg_door", step=round)
     run.track(min_door, name="min_door", step=round)
     
-    connection_invalid = np.count_nonzero(outcomes.connection_invalid, axis=1)
-    avg_connection = np.mean(connection_invalid)
-    min_connection = np.min(connection_invalid)
+    connection_invalid = torch.sum(outcomes.connection_invalid != 0, dim=1)
+    avg_connection = torch.mean(connection_invalid.to(torch.float32))
+    min_connection = torch.min(connection_invalid)
     run.track(avg_connection, name="avg_connection", step=round)
     run.track(min_connection, name="min_connection", step=round)
     
     total_invalid = door_invalid + connection_invalid
-    avg_invalid = np.mean(total_invalid)
-    min_invalid = np.min(total_invalid)
+    avg_invalid = torch.mean(total_invalid.to(torch.float32))
+    min_invalid = torch.min(total_invalid)
     run.track(avg_invalid, name="avg_invalid", step=round)
     run.track(min_invalid, name="min_invalid", step=round)
     
-    logging.info(f"total: {avg_invalid:.2f} (min: {min_invalid}), door: {avg_door:.2f} (min: {min_door}), conn: {avg_connection:.2f} (min: {min_connection})")
+    logging.info(f"loss: {loss:.4f}, total: {avg_invalid:.2f} (min: {min_invalid}), door: {avg_door:.2f} (min: {min_door}), conn: {avg_connection:.2f} (min: {min_connection})")
     
 
-# main_optimizer = torch.optim.Adam(main_model.parameters(), lr=0.0003)
+main_optimizer = torch.optim.Adam(main_model.parameters(), lr=0.0001)
 
 
 start = time.perf_counter()
 for round in range(num_rounds):
-    actions, outcomes = generate(env, main_model, config, device)
-    log_outcomes(outcomes, round)
+    actions, outcomes = generate(env, main_model, gen_config, device)
 
-    # main_optimizer.zero_grad()
-    # preds = main_model(actions, device)
-    # loss = compute_loss(preds, outcomes, config)
-    # loss.backward()
-    # main_optimizer.step()
+    main_optimizer.zero_grad()
+    preds = main_model(actions, gen_config)
+    repeated_outcomes = Outcomes(
+        door_invalid=outcomes.door_invalid.unsqueeze(1).repeat(1, episode_length, 1),
+        connection_invalid=outcomes.connection_invalid.unsqueeze(1).repeat(1, episode_length, 1),
+    )
+    loss = compute_loss(preds, repeated_outcomes, loss_config)
+    loss.backward()
+    main_optimizer.step()
+
+    log_outcomes(outcomes, loss, round)
+
 end = time.perf_counter()
 print(f"Elapsed time: {(end - start):.3f} seconds, {(end - start)/(num_rounds*num_environments):.5f} seconds per episode")
