@@ -3,24 +3,6 @@ from map_gen import EnvironmentGroup
 import torch
 
 
-@dataclass
-class Predictions:
-    door_invalid: torch.Tensor
-    connection_invalid: torch.Tensor
-
-
-def get_predictions(raw_preds, output_sizes):
-    preds = []
-    col = 0
-    for size in output_sizes:
-        preds.append(raw_preds[:, :, col:(col + size)])
-        col += size
-
-    return Predictions(
-        door_invalid=preds[0],
-        connection_invalid=preds[1],
-    )
-
 
 @dataclass
 class GenerationConfig:
@@ -48,7 +30,6 @@ def generate(env: EnvironmentGroup, model, config: GenerationConfig, device):
     num_envs = env.num_environments()
     engine = env.get_engine()
     num_rooms = engine.num_rooms()
-    output_sizes = engine.get_output_sizes()
 
     kv_cache = model.get_initial_kv_cache(num_envs, device)
     env.clear()
@@ -62,8 +43,7 @@ def generate(env: EnvironmentGroup, model, config: GenerationConfig, device):
         cand_y = torch.from_numpy(cand_y).to(device)
         
         # Model inference to get predictions and updated key-value cache for next step
-        raw_preds, kv_cache_candidates = model.generate(cand_room_idx, cand_x, cand_y, kv_cache, config)
-        preds = get_predictions(raw_preds, output_sizes)
+        preds, kv_cache_candidates = model.generate(cand_room_idx, cand_x, cand_y, kv_cache, config)
 
         # Compute expected reward and sample to select an action (per environment)
         expected_reward = compute_expected_reward(preds, config)

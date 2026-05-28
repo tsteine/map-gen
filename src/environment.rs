@@ -166,10 +166,10 @@ impl Environment {
     }
 
     pub fn step(&mut self, action: Action, common: &CommonData) {
+        self.actions.push(action);
         if self.finished {
             return;
         }
-        self.actions.push(action);
         if action.room_idx >= common.room.len() as RoomIdx {
             // Dummy/invalid action: do nothing more.
             self.finished = true;

@@ -1,7 +1,29 @@
 import torch
 import math
+from dataclasses import dataclass
 
 from generate import GenerationConfig
+
+
+@dataclass
+class Predictions:
+    door_invalid: torch.Tensor
+    connection_invalid: torch.Tensor
+
+
+def get_predictions(raw_preds, output_sizes):
+    preds = []
+    col = 0
+    for size in output_sizes:
+        preds.append(raw_preds[:, :, col:(col + size)])
+        col += size
+
+    return Predictions(
+        door_invalid=preds[0],
+        connection_invalid=preds[1],
+    )
+
+
 
 def normalize(x: torch.Tensor):
     return torch.nn.functional.rms_norm(x, (x.size(-1),))
@@ -65,13 +87,14 @@ class FeedforwardLayer(torch.nn.Module):
 
 
 class CausalTransformerModel(torch.nn.Module):
-    def __init__(self, num_rooms, map_x, map_y, num_outputs, embedding_width, key_width, value_width, attn_heads, head_groups, hidden_width, num_layers):
+    def __init__(self, num_rooms, map_x, map_y, output_sizes, embedding_width, key_width, value_width, attn_heads, head_groups, hidden_width, num_layers):
         super().__init__()
         self.num_rooms = num_rooms
         self.map_x = map_x
         self.map_y = map_y
         self.num_tokens = self.num_rooms + 1
-        self.num_outputs = num_outputs
+        self.output_sizes = output_sizes
+        self.num_outputs = sum(output_sizes)
         self.num_layers = num_layers
         self.embedding_width = embedding_width
         self.global_lin = torch.nn.Linear(1, embedding_width)
@@ -96,11 +119,10 @@ class CausalTransformerModel(torch.nn.Module):
 
         # self.output_key = torch.nn.Linear(embedding_width, num_outputs, bias=False)
         # self.output_value = torch.nn.Linear(embedding_width, num_outputs, bias=False)
-        self.output_lin = torch.nn.Linear(embedding_width, num_outputs, bias=False)
+        self.output_lin = torch.nn.Linear(embedding_width, self.num_outputs, bias=False)
 
 
     def get_embedding(self, room_idx, room_x, room_y, config: GenerationConfig):
-        device = room_idx.device
         global_data = torch.cat([torch.log(config.temperature.view(-1, 1))], dim=1)
 
         global_emb = self.global_lin(global_data).unsqueeze(1)
@@ -148,7 +170,7 @@ class CausalTransformerModel(torch.nn.Module):
         # assert X.shape == (n, h, s, 1)
         # X = X.transpose(1, 2).view(n, s, h)
 
-        return X
+        return get_predictions(X, self.output_sizes)
 
 
     def get_initial_kv_cache(self, batch_size, device):
@@ -256,5 +278,5 @@ class CausalTransformerModel(torch.nn.Module):
             # X = X.transpose(1, 2).view(n, s, out)
 
         cache_candidates = (K_cands, V_cands)
-        return X, cache_candidates
+        return get_predictions(X, self.output_sizes), cache_candidates
 

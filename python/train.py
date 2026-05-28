@@ -1,3 +1,5 @@
+from doctest import OutputChecker
+
 import map_gen
 import json
 import time
@@ -32,9 +34,7 @@ device = torch.device("cpu")
 
 engine = map_gen.Engine(rooms_str)
 env = engine.create_environment_group(map_size, num_environments, seed=6)
-
-num_doors, num_connects = engine.get_output_sizes()
-num_outputs = num_doors + num_connects
+output_sizes = engine.get_output_sizes()
 
 embedding_width = 256
 key_width = 64
@@ -48,7 +48,7 @@ main_model = CausalTransformerModel(
     num_rooms=len(rooms),
     map_x=map_size[0],
     map_y=map_size[1],
-    num_outputs=num_outputs,
+    output_sizes=output_sizes,
     embedding_width=embedding_width,
     key_width=key_width,
     value_width=value_width,
@@ -64,7 +64,7 @@ run["model"] = {
     "num_rooms": len(rooms),
     "map_x": map_size[0],
     "map_y": map_size[1],
-    "num_outputs": num_outputs,
+    "output_sizes": output_sizes,
     "embedding_width": embedding_width,
     "key_width": key_width,
     "value_width": value_width,
