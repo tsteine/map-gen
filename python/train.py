@@ -75,7 +75,6 @@ run["model"] = {
 }
 
 
-
 config = GenerationConfig(
     episode_length=len(rooms),
     max_candidates=max_candidates,
@@ -83,15 +82,13 @@ config = GenerationConfig(
 )
 
 def log_outcomes(outcomes, round):
-    door_invalid, connection_invalid = outcomes
-    
-    door_invalid = np.count_nonzero(door_invalid, axis=1)
+    door_invalid = np.count_nonzero(outcomes.door_invalid, axis=1)
     avg_door = np.mean(door_invalid)
     min_door = np.min(door_invalid)
     run.track(avg_door, name="avg_door", step=round)
     run.track(min_door, name="min_door", step=round)
     
-    connection_invalid = np.count_nonzero(connection_invalid, axis=1)
+    connection_invalid = np.count_nonzero(outcomes.connection_invalid, axis=1)
     avg_connection = np.mean(connection_invalid)
     min_connection = np.min(connection_invalid)
     run.track(avg_connection, name="avg_connection", step=round)

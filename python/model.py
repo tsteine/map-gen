@@ -2,13 +2,25 @@ import torch
 import math
 from dataclasses import dataclass
 
-from generate import GenerationConfig
+
+@dataclass
+class GenerationConfig:
+    episode_length: int
+    max_candidates: int
+    temperature: torch.Tensor
 
 
 @dataclass
 class Predictions:
     door_invalid: torch.Tensor
     connection_invalid: torch.Tensor
+
+
+@dataclass
+class Outcomes:
+    door_invalid: torch.Tensor
+    connection_invalid: torch.Tensor
+    
 
 
 def get_predictions(raw_preds, output_sizes):
@@ -23,6 +35,13 @@ def get_predictions(raw_preds, output_sizes):
         connection_invalid=preds[1],
     )
 
+
+def get_outcomes(raw_outcomes):
+    door_invalid, connection_invalid = raw_outcomes
+    return Outcomes(
+        door_invalid=door_invalid,
+        connection_invalid=connection_invalid,
+    )
 
 
 def normalize(x: torch.Tensor):

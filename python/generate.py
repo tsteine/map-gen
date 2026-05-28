@@ -1,14 +1,10 @@
-from dataclasses import dataclass
 from map_gen import EnvironmentGroup
 import torch
 
+from model import GenerationConfig, get_outcomes
 
 
-@dataclass
-class GenerationConfig:
-    episode_length: int
-    max_candidates: int
-    temperature: torch.Tensor
+
 
 
 def rand_choice(p):
@@ -64,5 +60,6 @@ def generate(env: EnvironmentGroup, model, config: GenerationConfig, device):
         
     env.finish()
     actions = env.get_actions()
-    outcomes = env.get_outcomes()
+    raw_outcomes = env.get_outcomes()
+    outcomes = get_outcomes(raw_outcomes)
     return actions, outcomes
