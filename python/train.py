@@ -1,6 +1,3 @@
-from doctest import OutputChecker
-
-import map_gen
 import json
 import time
 import numpy as np
@@ -11,8 +8,10 @@ import os
 
 from aim import Run
 
+from env import Engine, GenerationConfig
 from model import CausalTransformerModel
-from generate import generate, GenerationConfig
+from loss import compute_loss
+from generate import generate
 
 start_time = datetime.now()
 os.makedirs("logs", exist_ok=True)
@@ -32,7 +31,7 @@ map_size = (72, 72)
 temperature = 1.0
 device = torch.device("cpu")
 
-engine = map_gen.Engine(rooms_str)
+engine = Engine(rooms)
 env = engine.create_environment_group(map_size, num_environments, seed=6)
 output_sizes = engine.get_output_sizes()
 
@@ -103,10 +102,18 @@ def log_outcomes(outcomes, round):
     logging.info(f"total: {avg_invalid:.2f} (min: {min_invalid}), door: {avg_door:.2f} (min: {min_door}), conn: {avg_connection:.2f} (min: {min_connection})")
     
 
+# main_optimizer = torch.optim.Adam(main_model.parameters(), lr=0.0003)
+
+
 start = time.perf_counter()
 for round in range(num_rounds):
     actions, outcomes = generate(env, main_model, config, device)
     log_outcomes(outcomes, round)
 
+    # main_optimizer.zero_grad()
+    # preds = main_model(actions, device)
+    # loss = compute_loss(preds, outcomes, config)
+    # loss.backward()
+    # main_optimizer.step()
 end = time.perf_counter()
 print(f"Elapsed time: {(end - start):.3f} seconds, {(end - start)/(num_rounds*num_environments):.5f} seconds per episode")

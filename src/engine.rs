@@ -485,16 +485,6 @@ impl EnvironmentGroup {
 
 #[pymethods]
 impl EnvironmentGroup {
-    fn get_engine(&self) -> Engine {
-        Engine {
-            common_data: Arc::clone(&self.common_data),
-        }
-    }
-
-    fn num_environments(&self) -> usize {
-        self.num_environments
-    }
-
     fn clear(&mut self, py: Python<'_>) -> PyResult<()> {
         py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());

@@ -1,4 +1,7 @@
+import torch
+
 from model import Predictions
+from env import Outcomes
 from dataclasses import dataclass
 
 
@@ -8,21 +11,14 @@ class LossConfig:
     connection_weight: float
 
 
+def masked_binary_cross_entropy_loss(preds: torch.Tensor, outcomes: torch.Tensor) -> torch.Tensor:
+    mask = (outcomes < 0).to(preds.dtype)
+    binary_loss = torch.nn.functional.binary_cross_entropy_with_logits(preds, outcomes, reduction='none')
+    return torch.mean(binary_loss * mask)
+
+
 def compute_loss(self, preds: Predictions, outcomes: Outcomes, config: LossConfig):
-    s = data.action.shape[1]
-    preds = self.get_preds(raw_preds)
-
-    mask = (data.action[:, :, 0] != self.state_model.num_rooms - 1).to(raw_preds.dtype)
-    # TODO: mask out loss values for dummy actions
-
-    all_binary_outputs = torch.cat([data.door_connects, data.missing_connects], dim=1)
-    all_binary_outputs = all_binary_outputs.unsqueeze(1).expand(-1, s, -1)
-
-    state_value_raw_logodds = torch.cat([preds.door_connects, preds.missing_connects], dim=2)
-    # print("train idx: ", num_binary_outputs + num_save_dist_outputs, "num_binary_outputs =", num_binary_outputs, "num_save_dist_outputs =", num_save_dist_outputs)
-
-    binary_loss = torch.nn.functional.binary_cross_entropy_with_logits(state_value_raw_logodds,
-                                                                        all_binary_outputs.to(
-                                                                            state_value_raw_logodds.dtype),
-                                                                        reduction='none')
-    binary_loss = torch.mean(binary_loss * mask.unsqueeze(2))
+    door_loss = masked_binary_cross_entropy_loss(preds.door_invalid, outcomes.door_invalid)
+    connection_loss = masked_binary_cross_entropy_loss(preds.connection_invalid, outcomes.connection_invalid)
+    total_loss = config.door_weight * door_loss + config.connection_weight * connection_loss
+    return total_loss

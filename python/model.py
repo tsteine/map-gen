@@ -2,25 +2,17 @@ import torch
 import math
 from dataclasses import dataclass
 
+from env import Actions, GenerationConfig
 
-@dataclass
-class GenerationConfig:
-    episode_length: int
-    max_candidates: int
-    temperature: torch.Tensor
-
-
+# These tensors are all f32 with shape
+#    [batch, time, output]  during training,
+#    [batch, candidate, output]  during generation
 @dataclass
 class Predictions:
+    # log-odds of invalid door (unconnected):
     door_invalid: torch.Tensor
+    # log-odds of invalid connection (lack of return path):
     connection_invalid: torch.Tensor
-
-
-@dataclass
-class Outcomes:
-    door_invalid: torch.Tensor
-    connection_invalid: torch.Tensor
-    
 
 
 def get_predictions(raw_preds, output_sizes):
@@ -33,14 +25,6 @@ def get_predictions(raw_preds, output_sizes):
     return Predictions(
         door_invalid=preds[0],
         connection_invalid=preds[1],
-    )
-
-
-def get_outcomes(raw_outcomes):
-    door_invalid, connection_invalid = raw_outcomes
-    return Outcomes(
-        door_invalid=door_invalid,
-        connection_invalid=connection_invalid,
     )
 
 
@@ -154,10 +138,10 @@ class CausalTransformerModel(torch.nn.Module):
         return X        
 
 
-    def forward(self, room_idx, room_x, room_y, config: GenerationConfig):
-        room_idx = room_idx.to(torch.int64)
-        room_x = room_x.to(torch.int64)
-        room_y = room_y.to(torch.int64)
+    def forward(self, actions: Actions, config: GenerationConfig):
+        room_idx = actions.room_idx.to(torch.int64)
+        room_x = actions.room_x.to(torch.int64)
+        room_y = actions.room_y.to(torch.int64)
 
         with torch.cuda.amp.autocast():
             X = self.get_embedding(room_idx, room_x, room_y, config)
@@ -227,7 +211,11 @@ class CausalTransformerModel(torch.nn.Module):
         return new_K_list, new_V_list
 
 
-    def generate(self, room_idx, room_x, room_y, kv_cache, config: GenerationConfig):
+    def generate(self, actions: Actions, kv_cache, config: GenerationConfig):
+        room_idx = actions.room_idx
+        room_x = actions.room_x
+        room_y = actions.room_y
+        
         n = room_idx.shape[0]  # batch size
         c = room_idx.shape[1]  # number of candidates per batch element
         # e = self.embedding_width
@@ -239,7 +227,7 @@ class CausalTransformerModel(torch.nn.Module):
         K_cands = []
         V_cands = []
 
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda'):
             X = self.get_embedding(room_idx, room_x, room_y, config)
             # X: [n, c, e]
             # print("generate: X:", X.shape, X)

@@ -1,9 +1,5 @@
-from map_gen import EnvironmentGroup
+from env import EnvironmentGroup, GenerationConfig
 import torch
-
-from model import GenerationConfig, get_outcomes
-
-
 
 
 
@@ -22,10 +18,10 @@ def compute_expected_reward(preds, config: GenerationConfig):
     return total_logprobs
 
 
-def generate(env: EnvironmentGroup, model, config: GenerationConfig, device):
-    num_envs = env.num_environments()
-    engine = env.get_engine()
-    num_rooms = engine.num_rooms()
+def generate(env: EnvironmentGroup, model, config: GenerationConfig, device: torch.device):
+    num_envs = env.num_envs
+    engine = env.engine
+    num_rooms = len(engine.rooms)
 
     kv_cache = model.get_initial_kv_cache(num_envs, device)
     env.clear()
@@ -33,33 +29,27 @@ def generate(env: EnvironmentGroup, model, config: GenerationConfig, device):
     
     for _ in range(config.episode_length - 1):
         # Get candidate actions from environment, and load them to device (e.g. GPU)
-        cand_room_idx, cand_x, cand_y = env.get_candidates(config.max_candidates)
-        cand_room_idx = torch.from_numpy(cand_room_idx).to(device)
-        cand_x = torch.from_numpy(cand_x).to(device)
-        cand_y = torch.from_numpy(cand_y).to(device)
+        candidates = env.get_candidates(config.max_candidates, device)
         
         # Model inference to get predictions and updated key-value cache for next step
-        preds, kv_cache_candidates = model.generate(cand_room_idx, cand_x, cand_y, kv_cache, config)
+        preds, kv_cache_candidates = model.generate(candidates, kv_cache, config)
 
         # Compute expected reward and sample to select an action (per environment)
         expected_reward = compute_expected_reward(preds, config)
-        expected_reward = torch.where(cand_room_idx == num_rooms, # dummy action should only be selected if no other choice
+        expected_reward = torch.where(candidates.room_idx == num_rooms, # dummy action should only be selected if no other choice
                                       torch.full_like(expected_reward, float('-inf')),
                                       expected_reward)
         probs = torch.softmax(expected_reward / torch.unsqueeze(config.temperature, 1), dim=1)
         action_index = rand_choice(probs)
-        selected_cand_room_idx = torch.gather(cand_room_idx, 1, action_index.unsqueeze(1)).squeeze(1)
-        selected_cand_x = torch.gather(cand_x, 1, action_index.unsqueeze(1)).squeeze(1)
-        selected_cand_y = torch.gather(cand_y, 1, action_index.unsqueeze(1)).squeeze(1)
+        selected_actions = candidates.select(action_index)
         
         # Apply the selected action to the environment
-        env.step(selected_cand_room_idx.cpu().numpy(), selected_cand_x.cpu().numpy(), selected_cand_y.cpu().numpy())
+        env.step(selected_actions)
         
         # Finalize the kv cache update based on the selected action
         kv_cache = model.get_updated_kv_cache(kv_cache, kv_cache_candidates, action_index)
         
     env.finish()
-    actions = env.get_actions()
-    raw_outcomes = env.get_outcomes()
-    outcomes = get_outcomes(raw_outcomes)
+    actions = env.get_actions(device)
+    outcomes = env.get_outcomes(device)
     return actions, outcomes
