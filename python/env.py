@@ -29,6 +29,9 @@ class Actions:
         selected_room_y = torch.gather(self.room_y, 1, index.unsqueeze(1)).squeeze(1)
         return Actions(selected_room_idx, selected_room_x, selected_room_y)
 
+    def to(self, device: torch.device) -> "Actions":
+        return Actions(self.room_idx.to(device), self.room_x.to(device), self.room_y.to(device))
+
 
 # Each tensor here is int8 with shape
 #    [batch, time, output]  during training,

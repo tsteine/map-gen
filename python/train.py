@@ -1,10 +1,8 @@
 import json
-import time
-import numpy as np
+import math
 import torch
 import logging
 from datetime import datetime
-from dataclasses import dataclass
 import argparse
 
 import os
@@ -17,7 +15,7 @@ from env import Engine, GenerateConfig, Outcomes
 from model import CausalTransformerModel
 from loss import LossConfig, compute_loss
 from generate import generate
-
+from experience import ExperienceStorage
 
 class ModelConfig(BaseModel):
     embedding_width: int 
@@ -36,23 +34,27 @@ class OptimizerConfig(BaseModel):
     
 
 class GenerationConfig(BaseModel):
-    num_environments: int
-    action_candidates: int
-    temperature0: float
-    temperature1: float
+    num_environments: int  # number of maps to generate in parallel
+    action_candidates: int  # number of candidates to score for each room placement step
+    temperature0: float  # initial temperature (higher = candidates selected more randomly)
+    temperature1: float  # final temperature
 
     
 class TrainConfig(BaseModel):
-    door_weight: float
-    connection_weight: float
+    batch_size: int  # number of episodes to sample per training batch
+    pass_factor: float  # average number of total times a given episode is sampled
+    episodes_per_file: int  # number of episodes to read from each file (higher values = lower disk I/O, lower values = more diverse sampling)
+    hist_c: float  # extent to which sampling biases towards recent episodes (0.0 = no bias)
+    door_weight: float  # amount of weight assigned to door outcomes in the loss function
+    connection_weight: float  # amount of weight assigned to connection outcomes in the loss function
 
 
 class Config(BaseModel):
-    experiment_name: str
-    room_set: Path
-    annealing_episodes: int
-    total_episodes: int
-    map_size: tuple[int, int]
+    experiment_name: str  # string/identifier for the experiment (doesn't have to be unique)
+    room_set: Path  # path to JSON file defining the set of rooms to use for map generation
+    annealing_episodes: int  # number of episodes over which to ramp the temperature from temperature0 to temperature1
+    total_episodes: int  # total number of episodes to generate
+    map_size: tuple[int, int]  # dimensions of the map grid within which rooms are placed
     model: ModelConfig
     optimizer: OptimizerConfig
     generation: GenerationConfig
@@ -100,17 +102,16 @@ main_model = CausalTransformerModel(
 ).to(device)
 
 
-@dataclass
-class TrainSession:
-    model: torch.nn.Module
-    optimizer: torch.optim.Optimizer
-    num_episodes: int = 0
+# @dataclass
+# class TrainSession:
+#     model: torch.nn.Module
+#     optimizer: torch.optim.Optimizer
+#     num_episodes: int = 0
 
-    def __init__(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer, num_episodes: int = 0):
-        self.model = model
-        self.optimizer = optimizer
-        self.num_episodes = num_episodes
-
+#     def __init__(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer, num_episodes: int = 0):
+#         self.model = model
+#         self.optimizer = optimizer
+#         self.num_episodes = num_episodes
 
 # Log experiment using Aim
 run = Run(experiment=config.experiment_name)
@@ -155,6 +156,9 @@ def get_gen_config(frac):
     )
 
 
+experience_path = f"{run_path}/experience"
+experience = ExperienceStorage(num_rooms, experience_path) 
+
 main_optimizer = torch.optim.Adam(
     main_model.parameters(),
     lr=config.optimizer.lr,
@@ -162,26 +166,38 @@ main_optimizer = torch.optim.Adam(
 
 scaler = torch.cuda.amp.GradScaler()
 
+episodes_per_round = config.generation.num_environments
+num_batches = int(math.ceil(episodes_per_round * config.train.pass_factor / config.train.batch_size))
 num_episodes = 0
 
 for round in range(config.total_episodes):
     frac = min(num_episodes / config.annealing_episodes, 1.0)
+
+    # Generate new maps:
     gen_config = get_gen_config(frac)
     actions, outcomes = generate(env, main_model, gen_config, device)
     num_episodes += config.generation.num_environments
 
-    main_model.zero_grad()
-    preds = main_model(actions, gen_config)
+    # Store them as experience (to disk):
+    experience.store(actions)    
 
-    repeated_outcomes = Outcomes(
-        door_invalid=outcomes.door_invalid.unsqueeze(1).repeat(1, episode_length, 1),
-        connection_invalid=outcomes.connection_invalid.unsqueeze(1).repeat(1, episode_length, 1),
-    )
-    mask = (actions.room_idx < num_rooms).unsqueeze(2)  # exclude dummy actions
-    loss = compute_loss(preds, repeated_outcomes, mask, loss_config)
+    # Train the model on samples of past experience
+    for _ in range(num_batches):
+        actions = experience.sample(config.train.batch_size, config.train.episodes_per_file, config.train.hist_c)
+        
+        
+        main_model.zero_grad()
+        preds = main_model(actions, gen_config)
 
-    scaler.scale(loss).backward()
-    scaler.step(main_optimizer)
-    scaler.update()
-
+        repeated_outcomes = Outcomes(
+            door_invalid=outcomes.door_invalid.unsqueeze(1).repeat(1, episode_length, 1),
+            connection_invalid=outcomes.connection_invalid.unsqueeze(1).repeat(1, episode_length, 1),
+        )
+        mask = (actions.room_idx < num_rooms).unsqueeze(2)  # exclude dummy actions
+        loss = compute_loss(preds, repeated_outcomes, mask, loss_config)
+    
+        scaler.scale(loss).backward()
+        scaler.step(main_optimizer)
+        scaler.update()
+    
     log_outcomes(outcomes, loss, round, frac)
