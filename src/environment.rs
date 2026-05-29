@@ -274,6 +274,14 @@ impl Environment {
         }
     }
 
+    pub fn replay(&mut self, actions: &[Action], common: &CommonData) {
+        self.clear(common);
+        for &action in actions {
+            self.step(action, common);
+        }
+        self.finish();
+    }
+
     pub fn finish(&mut self) {
         self.finished = true;
     }
@@ -584,6 +592,67 @@ mod tests {
         ));
 
         env.finish();
+        let outcomes = env.outcomes(&common);
+        assert!(matches!(
+            outcomes.connections_valid.as_slice(),
+            [DoorValidOutcome::Invalid]
+        ));
+    }
+
+    #[test]
+    fn replay_rebuilds_episode_and_finishes_environment() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [[0, 1]]
+            },
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": []
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (4, 4), 0);
+
+        env.step(
+            Action {
+                room_idx: 1,
+                x: 2,
+                y: 2,
+            },
+            &common,
+        );
+
+        let actions = [
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            Action {
+                room_idx: 1,
+                x: 1,
+                y: 0,
+            },
+        ];
+        env.replay(&actions, &common);
+
+        assert_eq!(env.actions(), actions);
+        assert!(env.room_used[0]);
+        assert!(env.room_used[1]);
+        assert_eq!(env.room_x[1], 1);
+        assert_eq!(env.room_y[1], 0);
+
         let outcomes = env.outcomes(&common);
         assert!(matches!(
             outcomes.connections_valid.as_slice(),

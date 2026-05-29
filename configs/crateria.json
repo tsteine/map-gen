@@ -27,7 +27,7 @@
   "train": {
     "batch_size": 512,
     "pass_factor": 2.0,
-    "experiences_per_file": 64,
+    "episodes_per_file": 64,
     "hist_c": 3.0,
     "door_weight": 1.0,
     "connection_weight": 1.0

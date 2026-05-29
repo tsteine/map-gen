@@ -84,7 +84,8 @@ episode_length = num_rooms
 device = torch.device("cuda:0")
 
 engine = Engine(rooms)
-env = engine.create_environment_group(config.map_size, config.generation.num_environments, seed=0)
+gen_env = engine.create_environment_group(config.map_size, config.generation.num_environments, seed=0)
+train_env = engine.create_environment_group(config.map_size, config.train.batch_size)
 output_sizes = engine.get_output_sizes()
 
 main_model = CausalTransformerModel(
@@ -156,17 +157,17 @@ def get_gen_config(frac):
     )
 
 
+episodes_per_round = config.generation.num_environments
 experience_path = f"{run_path}/experience"
-experience = ExperienceStorage(num_rooms, experience_path) 
+experience = ExperienceStorage(num_rooms, experience_path, episodes_per_round)
 
 main_optimizer = torch.optim.Adam(
     main_model.parameters(),
     lr=config.optimizer.lr,
     betas=(config.optimizer.beta1, config.optimizer.beta2))
 
-scaler = torch.cuda.amp.GradScaler()
+scaler = torch.amp.GradScaler('cuda')
 
-episodes_per_round = config.generation.num_environments
 num_batches = int(math.ceil(episodes_per_round * config.train.pass_factor / config.train.batch_size))
 num_episodes = 0
 
@@ -175,7 +176,7 @@ for round in range(config.total_episodes):
 
     # Generate new maps:
     gen_config = get_gen_config(frac)
-    actions, outcomes = generate(env, main_model, gen_config, device)
+    actions, outcomes = generate(gen_env, main_model, gen_config, device)
     num_episodes += config.generation.num_environments
 
     # Store them as experience (to disk):
@@ -184,7 +185,9 @@ for round in range(config.total_episodes):
     # Train the model on samples of past experience
     for _ in range(num_batches):
         actions = experience.sample(config.train.batch_size, config.train.episodes_per_file, config.train.hist_c)
-        
+        train_env.replay(actions)
+        actions = actions.to(device)
+        outcomes = train_env.get_outcomes(device)
         
         main_model.zero_grad()
         preds = main_model(actions, gen_config)

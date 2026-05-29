@@ -1,6 +1,7 @@
 # Python wrappers around the Rust map generation engine, includes (zero-copy) conversions
 # between numpy and torch tensors.
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 import json
@@ -52,7 +53,9 @@ class Engine:
         self.engine = map_gen.Engine(json.dumps(rooms))
         self.rooms = rooms
 
-    def create_environment_group(self, map_size: tuple[int, int], num_envs: int, seed: int) -> "EnvironmentGroup":
+    def create_environment_group(self, map_size: tuple[int, int], num_envs: int, seed: Optional[int] = None) -> "EnvironmentGroup":
+        if seed is None:
+            seed = int(torch.randint(0, 2**31 - 1, ()).item())
         env = self.engine.create_environment_group(map_size, num_envs, seed)
         return EnvironmentGroup(self, env, map_size, num_envs)
 
@@ -85,6 +88,13 @@ class EnvironmentGroup:
 
     def step(self, actions: Actions):
         self.env.step(
+            actions.room_idx.cpu().numpy(),
+            actions.room_x.cpu().numpy(),
+            actions.room_y.cpu().numpy(),
+        )
+
+    def replay(self, actions: Actions):
+        self.env.replay(
             actions.room_idx.cpu().numpy(),
             actions.room_x.cpu().numpy(),
             actions.room_y.cpu().numpy(),

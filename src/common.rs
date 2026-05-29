@@ -59,7 +59,7 @@ impl Direction {
 }
 
 // Action: a placement of a room. The top-left corner is placed at (x, y) on the map.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Action {
     pub room_idx: RoomIdx,
     pub x: Coord,

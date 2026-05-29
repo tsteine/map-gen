@@ -4,7 +4,7 @@
 use crate::common::{Action, CommonData, Coord, DoorValidOutcome, Room, RoomIdx};
 use crate::environment::Environment;
 use crossbeam_channel as channel;
-use numpy::{Element, IntoPyArray, PyArray2, PyArrayMethods, PyReadonlyArray1};
+use numpy::{Element, IntoPyArray, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use std::cmp::{max, min};
@@ -81,6 +81,12 @@ enum WorkerCommand {
     Clear,
     Finish,
     Step {
+        room_idx: InputShard<RoomIdx>,
+        room_x: InputShard<Coord>,
+        room_y: InputShard<Coord>,
+    },
+    Replay {
+        action_count: usize,
         room_idx: InputShard<RoomIdx>,
         room_x: InputShard<Coord>,
         room_y: InputShard<Coord>,
@@ -201,6 +207,37 @@ fn worker_loop(
                         },
                         &common_data,
                     );
+                }
+                WorkerResponse::Done
+            }
+            WorkerCommand::Replay {
+                action_count,
+                room_idx,
+                room_x,
+                room_y,
+            } => {
+                // SAFETY: The main thread guarantees that for the duration of this command,
+                // the input slices remain valid and that no other thread mutates them.
+                let room_idx = unsafe { room_idx.into_slice() };
+                let room_x = unsafe { room_x.into_slice() };
+                let room_y = unsafe { room_y.into_slice() };
+                debug_assert_eq!(room_idx.len(), environments.len() * action_count);
+                debug_assert_eq!(room_x.len(), environments.len() * action_count);
+                debug_assert_eq!(room_y.len(), environments.len() * action_count);
+
+                for (env_idx, env) in environments.iter_mut().enumerate() {
+                    let row_start = env_idx * action_count;
+                    let actions = (0..action_count)
+                        .map(|action_idx| {
+                            let idx = row_start + action_idx;
+                            Action {
+                                room_idx: room_idx[idx],
+                                x: room_x[idx],
+                                y: room_y[idx],
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    env.replay(&actions, &common_data);
                 }
                 WorkerResponse::Done
             }
@@ -612,6 +649,66 @@ impl EnvironmentGroup {
         })?;
 
         self.action_count += 1;
+        Ok(())
+    }
+
+    fn replay<'py>(
+        &mut self,
+        py: Python<'py>,
+        room_idx: PyReadonlyArray2<'py, RoomIdx>,
+        room_x: PyReadonlyArray2<'py, Coord>,
+        room_y: PyReadonlyArray2<'py, Coord>,
+    ) -> PyResult<()> {
+        let room_idx_shape = room_idx.as_array().shape().to_vec();
+        let room_x_shape = room_x.as_array().shape().to_vec();
+        let room_y_shape = room_y.as_array().shape().to_vec();
+        if room_idx_shape != room_x_shape || room_idx_shape != room_y_shape {
+            return Err(PyValueError::new_err(format!(
+                "room_idx, room_x, and room_y must have the same shape; got {:?}, {:?}, and {:?}",
+                room_idx_shape, room_x_shape, room_y_shape
+            )));
+        }
+
+        if room_idx_shape[0] != self.num_environments {
+            return Err(PyValueError::new_err(format!(
+                "action arrays must have first dimension num_environments {}; got {}",
+                self.num_environments, room_idx_shape[0],
+            )));
+        }
+
+        let action_count = room_idx_shape[1];
+        let room_idx = room_idx
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_idx must be a contiguous 2D numpy array"))?;
+        let room_x = room_x
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_x must be a contiguous 2D numpy array"))?;
+        let room_y = room_y
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_y must be a contiguous 2D numpy array"))?;
+
+        py.detach(|| {
+            let mut sent_workers = Vec::with_capacity(self.workers.len());
+            let mut first_error = None;
+            for (worker_idx, worker) in self.workers.iter().enumerate() {
+                let action_start = worker.start * action_count;
+                let action_end = worker.end() * action_count;
+                if let Err(err) = worker.send(WorkerCommand::Replay {
+                    action_count,
+                    room_idx: InputShard::from_slice(&room_idx[action_start..action_end]),
+                    room_x: InputShard::from_slice(&room_x[action_start..action_end]),
+                    room_y: InputShard::from_slice(&room_y[action_start..action_end]),
+                }) {
+                    set_first_error(&mut first_error, err);
+                    break;
+                }
+                sent_workers.push(worker_idx);
+            }
+
+            wait_for_done_responses(&self.workers, sent_workers, first_error)
+        })?;
+
+        self.action_count = action_count;
         Ok(())
     }
 

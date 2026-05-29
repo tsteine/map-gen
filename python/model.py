@@ -126,15 +126,16 @@ class CausalTransformerModel(torch.nn.Module):
 
 
     def get_embedding(self, room_idx, room_x, room_y, config: GenerateConfig):
-        global_data = torch.cat([torch.log(config.temperature.view(-1, 1))], dim=1)
+        # global_data = torch.cat([torch.log(config.temperature.view(-1, 1))], dim=1)
 
-        global_emb = self.global_lin(global_data).unsqueeze(1)
+        # global_emb = self.global_lin(global_data).unsqueeze(1)
         # TODO: try rotary positional embeddings
         position_emb_x = self.pos_embedding_x[room_x]
         position_emb_y = self.pos_embedding_y[room_y]
         room_emb = self.room_embedding[room_idx]
         
-        X = global_emb + position_emb_x + position_emb_y + room_emb
+        # X = global_emb + position_emb_x + position_emb_y + room_emb
+        X = position_emb_x + position_emb_y + room_emb
         return X        
 
 
