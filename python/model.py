@@ -73,6 +73,18 @@ def get_outcome_metadata(rooms):
         for connections in geometry_connections
     ]
 
+    door_identity_offset = []
+    num_geometry_doors = 0
+    for doors in geometry_doors:
+        door_identity_offset.append(num_geometry_doors)
+        num_geometry_doors += len(doors)
+
+    connection_identity_offset = []
+    num_geometry_connections = 0
+    for connections in geometry_connections:
+        connection_identity_offset.append(num_geometry_connections)
+        num_geometry_connections += len(connections)
+
     door_outputs = []
     for direction in direction_order:
         for room_idx, room in enumerate(rooms):
@@ -81,38 +93,38 @@ def get_outcome_metadata(rooms):
                 for door in door_group:
                     if door["direction"] == direction:
                         door_key = (direction, door["x"], door["y"], door.get("kind", 0))
-                        door_outputs.append((room_idx, geometry_idx, door_identity[geometry_idx][door_key]))
+                        geometry_door_idx = door_identity_offset[geometry_idx] + door_identity[geometry_idx][door_key]
+                        door_outputs.append((room_idx, geometry_door_idx))
 
     connection_outputs = []
     for room_idx, room in enumerate(rooms):
         geometry_idx = geometry_idx_by_room[room_idx]
         for connection in room.get("connections", []):
-            connection_outputs.append(
-                (room_idx, geometry_idx, connection_identity[geometry_idx][tuple(connection)])
+            geometry_connection_idx = (
+                connection_identity_offset[geometry_idx]
+                + connection_identity[geometry_idx][tuple(connection)]
             )
+            connection_outputs.append((room_idx, geometry_connection_idx))
 
     return (
         len(geometry_by_key),
         door_outputs,
         connection_outputs,
-        max((len(doors) for doors in geometry_doors), default=0),
-        max((len(connections) for connections in geometry_connections), default=0),
+        num_geometry_doors,
+        num_geometry_connections,
     )
 
 
 class FactorizedOutcomeHead(torch.nn.Module):
-    def __init__(self, output_metadata, num_geometries, num_identities, embedding_width):
+    def __init__(self, output_metadata, num_geometry_outcomes, embedding_width):
         super().__init__()
         self.embedding_width = embedding_width
         self.num_outputs = len(output_metadata)
-        metadata = torch.tensor(output_metadata, dtype=torch.int64).reshape(self.num_outputs, 3)
+        metadata = torch.tensor(output_metadata, dtype=torch.int64).reshape(self.num_outputs, 2)
         self.register_buffer("room_idx", metadata[:, 0])
-        self.register_buffer("geometry_idx", metadata[:, 1])
-        self.register_buffer("identity_idx", metadata[:, 2])
-        self.geometry_embedding = torch.nn.Parameter(
-            torch.randn([num_geometries, embedding_width]) / math.sqrt(embedding_width))
-        self.identity_embedding = torch.nn.Parameter(
-            torch.randn([num_identities, embedding_width]) / math.sqrt(embedding_width))
+        self.register_buffer("geometry_outcome_idx", metadata[:, 1])
+        self.geometry_outcome_embedding = torch.nn.Parameter(
+            torch.randn([num_geometry_outcomes, embedding_width]) / math.sqrt(embedding_width))
         self.state = torch.nn.Linear(embedding_width, embedding_width, bias=False)
         self.logit_scale = torch.nn.Parameter(torch.tensor(math.log(math.sqrt(embedding_width) / 2)))
 
@@ -120,11 +132,11 @@ class FactorizedOutcomeHead(torch.nn.Module):
         if self.num_outputs == 0:
             return X.new_empty([X.shape[0], X.shape[1], 0])
         state = torch.nn.functional.normalize(self.state(X), dim=-1)
-        geometry_embedding = torch.nn.functional.normalize(self.geometry_embedding, dim=-1)
-        identity_embedding = torch.nn.functional.normalize(self.identity_embedding, dim=-1)
+        geometry_outcome_embedding = torch.nn.functional.normalize(
+            self.geometry_outcome_embedding, dim=-1)
         pos_embedding_x = torch.nn.functional.normalize(pos_embedding_x, dim=-1)
         pos_embedding_y = torch.nn.functional.normalize(pos_embedding_y, dim=-1)
-        base_query = geometry_embedding[self.geometry_idx] + identity_embedding[self.identity_idx]
+        base_query = geometry_outcome_embedding[self.geometry_outcome_idx]
         base_logits = torch.matmul(state, base_query.transpose(0, 1))
         x_logits = torch.matmul(state, pos_embedding_x.transpose(0, 1))
         y_logits = torch.matmul(state, pos_embedding_y.transpose(0, 1))
@@ -222,14 +234,14 @@ class CausalTransformerModel(torch.nn.Module):
                 hidden_width=hidden_width)
             self.ff_layers.append(ff_layer)
 
-        num_geometries, door_outputs, connection_outputs, num_door_identities, num_connection_identities = (
+        _, door_outputs, connection_outputs, num_geometry_doors, num_geometry_connections = (
             get_outcome_metadata(rooms)
         )
         assert output_sizes == (len(door_outputs), len(connection_outputs))
         self.door_output = FactorizedOutcomeHead(
-            door_outputs, num_geometries, num_door_identities, embedding_width)
+            door_outputs, num_geometry_doors, embedding_width)
         self.connection_output = FactorizedOutcomeHead(
-            connection_outputs, num_geometries, num_connection_identities, embedding_width)
+            connection_outputs, num_geometry_connections, embedding_width)
 
 
     def get_embedding(self, room_idx, room_x, room_y, config: GenerateConfig):
