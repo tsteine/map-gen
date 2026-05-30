@@ -43,10 +43,14 @@ class ExperienceStorage:
     def sample(self, batch_size, episodes_per_file, hist_c) -> Actions:
         n = batch_size
         episodes_per_file = min(episodes_per_file, self.episodes_per_file)
-        num_files = n // episodes_per_file
+        num_files = (n + episodes_per_file - 1) // episodes_per_file
 
         t = torch.pow(torch.rand([num_files]), 1 / (1 + hist_c))
         file_num_list = torch.floor(t * self.num_files).to(torch.int64).clamp_max(self.num_files - 1).tolist()
         
         data = self.read_files(file_num_list, episodes_per_file)
-        return data
+        return Actions(
+            room_idx=data.room_idx[:n],
+            room_x=data.room_x[:n],
+            room_y=data.room_y[:n],
+        )

@@ -13,10 +13,11 @@ from aim import Run
 from pydantic import BaseModel
 from pathlib import Path
 
-from env import Engine, GenerateConfig, Outcomes
+from env import Actions, Engine, GenerateConfig, Outcomes
 from model import CausalTransformerModel
 from loss import LossConfig, compute_loss
 from generate import generate
+from experience import ExperienceStorage
 
 class ModelConfig(BaseModel):
     embedding_width: int 
@@ -43,9 +44,10 @@ class GenerationConfig(BaseModel):
     
 class TrainConfig(BaseModel):
     batch_size: int  # number of episodes per training batch
-    pass_factor: float  # number of passes over each round's generated episodes
-    episodes_per_file: int  # unused; kept for compatibility with existing configs
-    hist_c: float  # unused; kept for compatibility with existing configs
+    fresh_pass_factor: float  # number of passes over just-generated episodes
+    replay_pass_factor: float  # average number of passes over past episodes
+    episodes_per_file: int  # number of episodes to read from each file (higher values = lower disk I/O, lower values = more diverse sampling)
+    hist_c: float  # extent to which replay sampling biases towards recent episodes (0.0 = no bias)
     door_weight: float  # amount of weight assigned to door outcomes in the loss function
     connection_weight: float  # amount of weight assigned to connection outcomes in the loss function
     ema_decay: float  # decay factor for exponential moving average model used during generation
@@ -79,6 +81,12 @@ logging.basicConfig(format='%(asctime)s %(message)s',
 
 logging.info("Config:\n{}".format(config.model_dump_json(indent=2)))
 
+if config.train.fresh_pass_factor != 0.0 and config.generation.num_environments % config.train.batch_size != 0:
+    raise ValueError(
+        "train.batch_size must evenly divide generation.num_environments when "
+        "train.fresh_pass_factor is non-zero"
+    )
+
 stop_requested = False
 
 def handle_stop(signum, frame):
@@ -98,6 +106,7 @@ device = torch.device("cuda:0")
 
 engine = Engine(rooms)
 gen_env = engine.create_environment_group(config.map_size, config.generation.num_environments, seed=0)
+train_env = engine.create_environment_group(config.map_size, config.train.batch_size)
 output_sizes = engine.get_output_sizes()
 
 main_model = CausalTransformerModel(
@@ -196,6 +205,8 @@ def get_gen_config(frac):
 
 
 episodes_per_round = config.generation.num_environments
+experience_path = f"{run_path}/experience"
+experience = ExperienceStorage(num_rooms, experience_path, episodes_per_round)
 
 main_optimizer = torch.optim.Adam(
     main_model.parameters(),
@@ -207,34 +218,51 @@ scaler = torch.amp.GradScaler('cuda')
 num_episodes = 0
 
 
-def select_actions(actions, start, end):
-    return type(actions)(
-        room_idx=actions.room_idx[start:end],
-        room_x=actions.room_x[start:end],
-        room_y=actions.room_y[start:end],
+def select_batch(actions, outcomes, start, batch_size):
+    end = start + batch_size
+    return (
+        Actions(
+            room_idx=actions.room_idx[start:end],
+            room_x=actions.room_x[start:end],
+            room_y=actions.room_y[start:end],
+        ),
+        Outcomes(
+            door_invalid=outcomes.door_invalid[start:end],
+            connection_invalid=outcomes.connection_invalid[start:end],
+        ),
     )
 
 
-def select_outcomes(outcomes, start, end):
-    return Outcomes(
-        door_invalid=outcomes.door_invalid[start:end],
-        connection_invalid=outcomes.connection_invalid[start:end],
+def iter_fresh_batch_starts(num_items, pass_factor, batch_size):
+    num_batches = int(math.ceil(num_items * pass_factor / batch_size))
+    for batch_idx in range(num_batches):
+        yield (batch_idx * batch_size) % num_items
+
+
+def num_replay_batches(num_items, pass_factor, batch_size):
+    return int(math.ceil(num_items * pass_factor / batch_size))
+    
+
+def train_batch(train_actions, train_outcomes, gen_config):
+    main_model.zero_grad()
+    preds = main_model(train_actions, gen_config)
+
+    repeated_outcomes = Outcomes(
+        door_invalid=train_outcomes.door_invalid.unsqueeze(1).repeat(1, episode_length, 1),
+        connection_invalid=train_outcomes.connection_invalid.unsqueeze(1).repeat(1, episode_length, 1),
     )
+    mask = (train_actions.room_idx < num_rooms).unsqueeze(2)  # exclude dummy actions
+    loss = compute_loss(preds, repeated_outcomes, mask, loss_config)
 
+    scaler.scale(loss).backward()
+    scaler.step(main_optimizer)
+    scaler.update()
+    update_ema_model()
 
-def iter_pass_batches(num_items, pass_factor, batch_size):
-    full_passes = int(math.floor(pass_factor))
-    partial_items = int(math.ceil((pass_factor - full_passes) * num_items))
-
-    for _ in range(full_passes):
-        for start in range(0, num_items, batch_size):
-            yield start, min(start + batch_size, num_items)
-
-    for start in range(0, partial_items, batch_size):
-        yield start, min(start + batch_size, partial_items)
+    return loss.item()
 
 try:
-    for round in range(config.total_episodes):
+    for round in range(config.total_episodes // episodes_per_round):
         frac = min(num_episodes / config.annealing_episodes, 1.0)
 
         # Generate new maps:
@@ -242,29 +270,30 @@ try:
         actions, gen_outcomes = generate(gen_env, ema_model, gen_config, device)
         num_episodes += config.generation.num_environments
 
-        # Train the model only on the episodes generated in this round.
+        # Train the model on the episodes generated in this round.
         total_loss = 0.0
         train_batch_count = 0
-        for start, end in iter_pass_batches(episodes_per_round, config.train.pass_factor, config.train.batch_size):
-            train_actions = select_actions(actions, start, end)
-            train_outcomes = select_outcomes(gen_outcomes, start, end)
-
-            main_model.zero_grad()
-            preds = main_model(train_actions, gen_config)
-
-            repeated_outcomes = Outcomes(
-                door_invalid=train_outcomes.door_invalid.unsqueeze(1).repeat(1, episode_length, 1),
-                connection_invalid=train_outcomes.connection_invalid.unsqueeze(1).repeat(1, episode_length, 1),
-            )
-            mask = (train_actions.room_idx < num_rooms).unsqueeze(2)  # exclude dummy actions
-            loss = compute_loss(preds, repeated_outcomes, mask, loss_config)
-            total_loss += loss.item()
+        for start in iter_fresh_batch_starts(episodes_per_round, config.train.fresh_pass_factor, config.train.batch_size):
+            train_actions, train_outcomes = select_batch(actions, gen_outcomes, start, config.train.batch_size)
+            total_loss += train_batch(train_actions, train_outcomes, gen_config)
             train_batch_count += 1
 
-            scaler.scale(loss).backward()
-            scaler.step(main_optimizer)
-            scaler.update()
-            update_ema_model()
+        # Train on replay batches sampled from previous rounds' stored experience.
+        if experience.num_files > 0:
+            for _ in range(num_replay_batches(episodes_per_round, config.train.replay_pass_factor, config.train.batch_size)):
+                replay_actions = experience.sample(
+                    config.train.batch_size,
+                    config.train.episodes_per_file,
+                    config.train.hist_c,
+                )
+                train_env.replay(replay_actions)
+                replay_actions = replay_actions.to(device)
+                replay_outcomes = train_env.get_outcomes(device)
+                total_loss += train_batch(replay_actions, replay_outcomes, gen_config)
+                train_batch_count += 1
+
+        # Store this round for future replay after direct fresh training is complete.
+        experience.store(actions)
 
         avg_loss = total_loss / train_batch_count if train_batch_count > 0 else 0.0
         log_outcomes(gen_outcomes, avg_loss, round, frac)
