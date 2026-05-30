@@ -1,0 +1,1160 @@
+[
+    {
+        "room_id": 132,
+        "name": "Main Hall",
+        "map": [
+            [0, 0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0],
+            [1, 1, 1, 1, 1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"direction": "right", "x": 7, "y": 2, "kind": 0},
+                {"direction": "up",    "x": 4, "y": 0, "kind": 1}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 133,
+        "name": "Fast Pillars Setup Room",
+        "map": [
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 2, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 134,
+        "name": "Pillar Room",
+        "map": [
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 135,
+        "name": "The Worst Room In The Game",
+        "map": [
+            [1],
+            [1],
+            [1],
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 5, "kind": 0},
+                {"direction": "right", "x": 0, "y": 1, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 136,
+        "name": "Amphitheatre",
+        "map": [
+            [0, 1, 1, 1],
+            [1, 1, 1, 1],
+            [1, 1, 1, 1],
+            [1, 1, 1, 1],
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [{"direction": "left",  "x": 0, "y": 1, "kind": 0}],
+            [{"direction": "right", "x": 3, "y": 0, "kind": 0}]
+        ],
+        "connections": [
+            [0, 1]
+        ]
+    },
+    {
+        "room_id": 137,
+        "name": "Red Kihunter Shaft",
+        "map": [
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 3, "kind": 0},
+                {"direction": "down",  "x": 2, "y": 4, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 312,
+        "name": "Red Kihunter Shaft Save Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 138,
+        "name": "Wasteland",
+        "map": [
+            [1, 1, 1, 1, 1, 1],
+            [0, 1, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0]
+        ],
+        "doors": [
+            [
+                {"direction": "left", "x": 1, "y": 2, "kind": 0},
+                {"direction": "up",   "x": 5, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 139,
+        "name": "Metal Pirates Room",
+        "map": [
+            [1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 140,
+        "name": "Plowerhouse Room",
+        "map": [
+            [1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 141,
+        "name": "Lower Norfair Farming Room",
+        "map": [
+            [1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 142,
+        "name": "Ridley's Room",
+        "map": [
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 143,
+        "name": "Ridley Tank Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 144,
+        "name": "Mickey Mouse Room",
+        "map": [
+            [0, 0, 0, 1],
+            [0, 0, 1, 1],
+            [0, 0, 0, 1],
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [{"direction": "left",  "x": 0, "y": 3, "kind": 0}],
+            [{"direction": "right", "x": 3, "y": 0, "kind": 0}]
+        ],
+        "connections": [
+            [1, 0]
+        ]
+    },
+    {
+        "room_id": 145,
+        "name": "Lower Norfair Fireflea Room",
+        "map": [
+            [1, 1, 0],
+            [0, 1, 0],
+            [0, 1, 0],
+            [0, 1, 1],
+            [0, 1, 1],
+            [0, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "left",  "x": 1, "y": 3, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 146,
+        "name": "Lower Norfair Spring Ball Maze Room",
+        "map": [
+            [1, 1, 1, 1, 1],
+            [1, 1, 0, 0, 0]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 1, "kind": 0}
+            ],
+            [
+                {"direction": "down", "x": 4, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": [
+            [0, 1]
+        ]
+    },
+    {
+        "room_id": 147,
+        "name": "Lower Norfair Escape Power Bomb Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
+            [{"direction": "up",   "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": [
+            [1, 0]
+        ]
+    },
+    {
+        "room_id": 148,
+        "name": "Three Musketeers' Room",
+        "map": [
+            [0, 1, 0, 0],
+            [0, 1, 0, 0],
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 1, "y": 0, "kind": 0},
+                {"direction": "right", "x": 3, "y": 2, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 149,
+        "name": "Acid Statue Room",
+        "map": [
+            [1, 1, 0],
+            [1, 1, 0],
+            [1, 1, 1]
+        ],
+        "doors": [
+            [{"direction": "right", "x": 1, "y": 0, "kind": 0}],
+            [{"direction": "right", "x": 2, "y": 2, "kind": 0}]
+        ],
+        "connections": [
+            [0, 1]
+        ]
+    },
+    {
+        "room_id": 150,
+        "name": "Golden Torizo's Room",
+        "map": [
+            [1, 1],
+            [1, 1]
+        ],
+        "doors": [
+            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"direction": "right", "x": 1, "y": 1, "kind": 0}]
+        ],
+        "connections": [
+            [0, 1]
+        ]
+    },
+    {
+        "room_id": 151,
+        "name": "Screw Attack Room",
+        "map": [
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 1, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 152,
+        "name": "Golden Torizo Energy Recharge",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 153,
+        "name": "Fast Ripper Room",
+        "map": [
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"direction": "right", "x": 3, "y": 0, "kind": 0}]
+        ],
+        "connections": [
+            [0, 1]
+        ]
+    },
+    {
+        "room_id": 86,
+        "name": "Business Center",
+        "map": [
+            [1],
+            [1],
+            [1],
+            [1],
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 4, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 5, "kind": 0},
+                {"direction": "right", "x": 0, "y": 3, "kind": 0},
+                {"direction": "right", "x": 0, "y": 5, "kind": 0},
+                {"direction": "right", "x": 0, "y": 6, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 87,
+        "name": "Norfair Map Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 88,
+        "name": "Hi Jump Energy Tank Room",
+        "map": [
+            [1, 1],
+            [1, 0]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 89,
+        "name": "Hi Jump Boots Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 90,
+        "name": "Cathedral Entrance",
+        "map": [
+            [1, 1, 1],
+            [1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 91,
+        "name": "Cathedral",
+        "map": [
+            [1, 1, 1],
+            [1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 2, "y": 1, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 92,
+        "name": "Rising Tide",
+        "map": [
+            [1, 1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 4, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 93,
+        "name": "Frog Speedway",
+        "map": [
+            [1, 1, 1, 1, 1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 7, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 94,
+        "name": "Upper Norfair Farming Room",
+        "map": [
+            [1, 1],
+            [1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 95,
+        "name": "Purple Shaft",
+        "map": [
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "right", "x": 0, "y": 1, "kind": 0},
+                {"direction": "right", "x": 0, "y": 2, "kind": 0},
+                {"direction": "up",    "x": 0, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 96,
+        "name": "Purple Farming Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 302,
+        "name": "Frog Savestation",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 97,
+        "name": "Bubble Mountain",
+        "map": [
+            [1, 1],
+            [1, 1],
+            [1, 1],
+            [1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 1, "kind": 0},
+                {"direction": "down",  "x": 0, "y": 3, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 307,
+        "name": "Bubble Mountain Save Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 98,
+        "name": "Green Bubbles Missile Room",
+        "map": [
+            [1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 99,
+        "name": "Norfair Reserve Tank Room",
+        "map": [
+            [1, 1]
+        ],
+        "doors": [
+            [{"direction": "right", "x": 1, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 100,
+        "name": "Bat Cave",
+        "map": [
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 101,
+        "name": "Speed Booster Hall",
+        "map": [
+            [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x":  0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 11, "y": 1, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 102,
+        "name": "Speed Booster Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 103,
+        "name": "Single Chamber",
+        "map": [
+            [1, 1, 1, 1, 1, 1],
+            [1, 0, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0, 0]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 1, "kind": 0},
+                {"direction": "right", "x": 0, "y": 2, "kind": 0},
+                {"direction": "right", "x": 0, "y": 3, "kind": 0}
+            ],
+            [
+                {"direction": "right", "x": 5, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": [
+            [1, 0]
+        ]
+    },
+    {
+        "room_id": 104,
+        "name": "Double Chamber",
+        "map": [
+            [1, 1, 1, 1],
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 105,
+        "name": "Wave Beam Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 106,
+        "name": "Ice Beam Gate Room",
+        "map": [
+            [0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 1, 1, 1, 1],
+            [1, 1, 1, 1, 0, 0, 0]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 3, "y": 2, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"direction": "right", "x": 6, "y": 2, "kind": 0}
+            ],
+            [
+                {"direction": "left", "x": 3, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": [
+            [1, 0]
+        ]
+    },
+    {
+        "room_id": 107,
+        "name": "Ice Beam Acid Room",
+        "map": [
+            [1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 108,
+        "name": "Ice Beam Snake Room",
+        "map": [
+            [1, 0],
+            [1, 1],
+            [1, 0]
+        ],
+        "doors": [
+            [
+                {"direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 1, "kind": 0},
+                {"direction": "right", "x": 0, "y": 2, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 109,
+        "name": "Ice Beam Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 110,
+        "name": "Ice Beam Tutorial Room",
+        "map": [
+            [1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 111,
+        "name": "Crumble Shaft",
+        "map": [
+            [1],
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 3, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 308,
+        "name": "Nutella Refill",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 112,
+        "name": "Spiky Acid Snakes Tunnel",
+        "map": [
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 113,
+        "name": "Kronic Boost Room",
+        "map": [
+            [0, 1],
+            [1, 1],
+            [0, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 1, "y": 0, "kind": 0},
+                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"direction": "left",  "x": 1, "y": 2, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 114,
+        "name": "Magdollite Tunnel",
+        "map": [
+            [1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 115,
+        "name": "Lava Dive Room",
+        "map": [
+            [1, 1, 1, 1],
+            [0, 1, 1, 1],
+            [0, 1, 1, 0]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 116,
+        "name": "Volcano Room",
+        "map": [
+            [0, 0, 1],
+            [0, 0, 1],
+            [1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left", "x": 2, "y": 0, "kind": 0},
+                {"direction": "left", "x": 0, "y": 2, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 117,
+        "name": "Spiky Platforms Tunnel",
+        "map": [
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 118,
+        "name": "Red Pirate Shaft",
+        "map": [
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"direction": "down",  "x": 0, "y": 2, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 119,
+        "name": "Acid Snakes Tunnel",
+        "map": [
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 3, "y": 0, "kind": 0},
+                {"direction": "up",    "x": 3, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 120,
+        "name": "Crocomire Speedway",
+        "map": [
+            [1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1],
+            [0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1],
+            [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left", "x": 0, "y": 0, "kind": 0}
+            ],
+            [
+                {"direction": "left",  "x": 12, "y": 0, "kind": 0},
+                {"direction": "right", "x": 12, "y": 1, "kind": 0},
+                {"direction": "right", "x": 12, "y": 2, "kind": 0},
+                {"direction": "down",  "x": 12, "y": 2, "kind": 0}
+            ]
+        ],
+        "connections": [
+            [0, 1]
+        ]
+    },
+    {
+        "room_id": 121,
+        "name": "Crocomire Escape",
+        "map": [
+            [1, 1, 1, 1],
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"direction": "right", "x": 3, "y": 1, "kind": 0}]
+        ],
+        "connections": [
+            [1, 0]
+        ]
+    },
+    {
+        "room_id": 122,
+        "name": "Crocomire's Room",
+        "map": [
+            [1, 1, 1, 1, 1, 1, 1, 1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
+            [{"direction": "up",   "x": 3, "y": 0, "kind": 0}]
+        ],
+        "connections": [
+            [1, 0]
+        ]
+    },
+    {
+        "room_id": 123,
+        "name": "Post Crocomire Farming Room",
+        "map": [
+            [1, 1],
+            [1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 1, "kind": 0},
+                {"direction": "down",  "x": 0, "y": 1, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 124,
+        "name": "Post Crocomire Power Bomb Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 125,
+        "name": "Post Crocomire Shaft",
+        "map": [
+            [1],
+            [1],
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 3, "kind": 0},
+                {"direction": "down",  "x": 0, "y": 4, "kind": 0},
+                {"direction": "up",    "x": 0, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 126,
+        "name": "Post Crocomire Missile Room",
+        "map": [
+            [1, 1, 1, 1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 127,
+        "name": "Post Crocomire Jump Room",
+        "map": [
+            [1, 1, 1, 1, 1, 0, 0, 0],
+            [1, 1, 1, 1, 1, 0, 0, 0],
+            [1, 1, 1, 1, 1, 1, 1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left", "x": 0, "y": 1, "kind": 0},
+                {"direction": "up",   "x": 6, "y": 2, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 128,
+        "name": "Grapple Beam Room",
+        "map": [
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 2, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 129,
+        "name": "Grapple Tutorial Room 1",
+        "map": [
+            [1, 1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 130,
+        "name": "Grapple Tutorial Room 2",
+        "map": [
+            [1],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 131,
+        "name": "Grapple Tutorial Room 3",
+        "map": [
+            [1, 1, 1],
+            [1, 1, 1]
+        ],
+        "doors": [
+            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"direction": "right", "x": 2, "y": 0, "kind": 0}]
+        ],
+        "connections": [
+            [0, 1]
+        ]
+    },
+    {
+        "room_id": 303,
+        "name": "Crocomire Save Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 311,
+        "name": "Post Crocomire Save Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 309,
+        "name": "Lower Norfair Elevator",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"direction": "down",  "x": 0, "y": 0, "kind": 1}
+            ]
+        ],
+        "connections": []
+    },
+    {
+        "room_id": 310,
+        "name": "Lower Norfair Elevator Save Room",
+        "map": [
+            [1]
+        ],
+        "doors": [
+            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+        ],
+        "connections": []
+    }
+]

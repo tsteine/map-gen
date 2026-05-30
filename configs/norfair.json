@@ -1,0 +1,38 @@
+{
+  "experiment_name": "norfair-initial-testing",
+  "room_set": "room_definitions/norfair.json",
+  "annealing_episodes": 1000000,
+  "total_episodes": 4000000,
+  "map_size": [72, 72],
+  "model": {
+    "embedding_width": 256,
+    "key_width": 64,
+    "value_width": 64,
+    "attn_heads": 16,
+    "head_groups": 4,
+    "hidden_width": 512,
+    "num_layers": 4
+  },
+  "optimizer": {
+    "lr": 0.0005,
+    "beta1": 0.95,
+    "beta2": 0.95
+  },
+  "generation": {
+    "num_environments": 8192,
+    "action_candidates": 16,
+    "lookahead_outcomes": true,
+    "temperature0": 10.0,
+    "temperature1": 0.03
+  },
+  "train": {
+    "batch_size": 512,
+    "fresh_pass_factor": 1.0,
+    "replay_pass_factor": 1.0,
+    "episodes_per_file": 64,
+    "ema_decay": 0.995,
+    "hist_c": 3.0,
+    "door_weight": 1.0,
+    "connection_weight": 1.0
+  }
+}
