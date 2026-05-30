@@ -2,6 +2,8 @@ from env import EnvironmentGroup, GenerateConfig
 import torch
 
 
+KNOWN_INVALID_REWARD = -100.0
+
 
 def rand_choice(p):
     cumul_p = torch.cumsum(p, dim=1)
@@ -9,11 +11,22 @@ def rand_choice(p):
     choice = torch.clamp(torch.searchsorted(cumul_p, rnd), max=p.shape[1] - 1).view(-1)
     return choice
 
+
+def outcome_reward(model_logprobs: torch.Tensor, known_invalid: torch.Tensor) -> torch.Tensor:
+    known_invalid = known_invalid.unsqueeze(1)
+    known_valid_reward = torch.zeros_like(model_logprobs)
+    known_invalid_reward = torch.full_like(model_logprobs, KNOWN_INVALID_REWARD)
+    known_reward = torch.where(known_invalid == 0, known_valid_reward, known_invalid_reward)
+    return torch.where(known_invalid < 0, model_logprobs, known_reward)
+
+
 # preds.door_invalid: [batch_size, max_candidates, num_outputs]
 # preds.connection_invalid: [batch_size, max_candidates, num_outputs]
-def compute_expected_reward(preds, config: GenerateConfig):
+def compute_expected_reward(preds, outcomes, config: GenerateConfig):
     door_logprobs = torch.nn.functional.logsigmoid(-preds.door_invalid)
     connection_logprobs = torch.nn.functional.logsigmoid(-preds.connection_invalid)
+    door_logprobs = outcome_reward(door_logprobs, outcomes.door_invalid)
+    connection_logprobs = outcome_reward(connection_logprobs, outcomes.connection_invalid)
     return torch.sum(door_logprobs, dim=2) + torch.sum(connection_logprobs, dim=2)
 
 
@@ -29,6 +42,7 @@ def generate(env: EnvironmentGroup, model, config: GenerateConfig, device: torch
         for _ in range(config.episode_length):
             # Get candidate actions from environment, and load them to device (e.g. GPU)
             candidates = env.get_candidates(config.max_candidates, device)
+            outcomes = env.get_outcomes(device)
             
             # Model inference to get predictions and updated key-value cache for next step
             preds, kv_cache_candidates = model.generate(candidates, kv_cache, config)
@@ -39,7 +53,7 @@ def generate(env: EnvironmentGroup, model, config: GenerateConfig, device: torch
                 selected_actions = candidates.select(action_index)
             else:
                 # Compute expected reward and sample to select an action (per environment)
-                expected_reward = compute_expected_reward(preds, config)
+                expected_reward = compute_expected_reward(preds, outcomes, config)
                 expected_reward = torch.where(candidates.room_idx == num_rooms, # dummy action should only be selected if no other choice
                                             torch.full_like(expected_reward, float('-inf')),
                                             expected_reward)
