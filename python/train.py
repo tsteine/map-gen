@@ -1,5 +1,6 @@
 import json
 import math
+import copy
 import torch
 import logging
 import signal
@@ -49,6 +50,7 @@ class TrainConfig(BaseModel):
     hist_c: float  # extent to which sampling biases towards recent episodes (0.0 = no bias)
     door_weight: float  # amount of weight assigned to door outcomes in the loss function
     connection_weight: float  # amount of weight assigned to connection outcomes in the loss function
+    ema_decay: float  # decay factor for exponential moving average model used during generation
 
 
 class Config(BaseModel):
@@ -115,6 +117,16 @@ main_model = CausalTransformerModel(
     num_layers=config.model.num_layers,
 ).to(device)
 
+ema_model = copy.deepcopy(main_model).to(device)
+ema_model.requires_grad_(False)
+ema_model.eval()
+
+
+def update_ema_model():
+    with torch.no_grad():
+        for ema_param, main_param in zip(ema_model.parameters(), main_model.parameters()):
+            ema_param.lerp_(main_param, 1.0 - config.train.ema_decay)
+
 
 # @dataclass
 # class TrainSession:
@@ -128,7 +140,7 @@ main_model = CausalTransformerModel(
 #         self.num_episodes = num_episodes
 
 # Log experiment using Aim
-aim_run = Run(experiment=config.experiment_name)
+aim_run = Run(experiment=config.experiment_name, system_tracking_interval=None)
 aim_run["config"] = json.loads(config.model_dump_json())
 
 loss_config = LossConfig(
@@ -165,12 +177,13 @@ def log_outcomes(outcomes, loss, round, frac):
         "min_invalid": min_invalid,
         "min_door": min_door,
         "min_conn": min_conn,
+        "frac": frac,
     }
 
     for name, value in metrics.items():
         aim_run.track(value, name=name, step=round)
     
-    logging.info(f"round {round}, loss {loss:.4f}, succ {success_rate:.5f}, total {avg_invalid:.2f} (min {min_invalid}), door {avg_door:.2f} (min {min_door}), conn {avg_conn:.2f} (min {min_conn}), frac {frac:.4f}")
+    logging.info(f"round {round}, loss {loss:.4f}, succ {success_rate:.4f}, total {avg_invalid:.2f} (min {min_invalid}), door {avg_door:.2f} (min {min_door}), conn {avg_conn:.2f} (min {min_conn}), frac {frac:.4f}")
 
 
 def get_gen_config(frac):
@@ -205,7 +218,7 @@ try:
 
         # Generate new maps:
         gen_config = get_gen_config(frac)
-        actions, outcomes = generate(gen_env, main_model, gen_config, device)
+        actions, gen_outcomes = generate(gen_env, ema_model, gen_config, device)
         num_episodes += config.generation.num_environments
 
         # Store them as experience (to disk):
@@ -216,14 +229,14 @@ try:
             actions = experience.sample(config.train.batch_size, config.train.episodes_per_file, config.train.hist_c)
             train_env.replay(actions)
             actions = actions.to(device)
-            outcomes = train_env.get_outcomes(device)
+            train_outcomes = train_env.get_outcomes(device)
 
             main_model.zero_grad()
             preds = main_model(actions, gen_config)
 
             repeated_outcomes = Outcomes(
-                door_invalid=outcomes.door_invalid.unsqueeze(1).repeat(1, episode_length, 1),
-                connection_invalid=outcomes.connection_invalid.unsqueeze(1).repeat(1, episode_length, 1),
+                door_invalid=train_outcomes.door_invalid.unsqueeze(1).repeat(1, episode_length, 1),
+                connection_invalid=train_outcomes.connection_invalid.unsqueeze(1).repeat(1, episode_length, 1),
             )
             mask = (actions.room_idx < num_rooms).unsqueeze(2)  # exclude dummy actions
             loss = compute_loss(preds, repeated_outcomes, mask, loss_config)
@@ -231,8 +244,9 @@ try:
             scaler.scale(loss).backward()
             scaler.step(main_optimizer)
             scaler.update()
+            update_ema_model()
 
-        log_outcomes(outcomes, loss, round, frac)
+        log_outcomes(gen_outcomes, loss, round, frac)
 
         if stop_requested:
             logging.info("Stopping training after completing round %s.", round)

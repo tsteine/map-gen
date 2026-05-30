@@ -21,13 +21,14 @@
   "generation": {
     "num_environments": 8192,
     "action_candidates": 16,
-    "temperature0": 1.0,
+    "temperature0": 10.0,
     "temperature1": 0.03
   },
   "train": {
     "batch_size": 512,
     "pass_factor": 2.0,
     "episodes_per_file": 64,
+    "ema_decay": 0.995,
     "hist_c": 3.0,
     "door_weight": 1.0,
     "connection_weight": 1.0
