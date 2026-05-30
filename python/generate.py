@@ -13,7 +13,8 @@ def rand_choice(p):
 
 
 def outcome_reward(model_logprobs: torch.Tensor, known_invalid: torch.Tensor) -> torch.Tensor:
-    known_invalid = known_invalid.unsqueeze(1)
+    if known_invalid.ndim == model_logprobs.ndim - 1:
+        known_invalid = known_invalid.unsqueeze(1)
     known_valid_reward = torch.zeros_like(model_logprobs)
     known_invalid_reward = torch.full_like(model_logprobs, KNOWN_INVALID_REWARD)
     known_reward = torch.where(known_invalid == 0, known_valid_reward, known_invalid_reward)
@@ -40,9 +41,8 @@ def generate(env: EnvironmentGroup, model, config: GenerateConfig, device: torch
 
     with torch.no_grad():
         for _ in range(config.episode_length):
-            # Get candidate actions from environment, and load them to device (e.g. GPU)
-            candidates = env.get_candidates(config.max_candidates, device)
-            outcomes = env.get_outcomes(device)
+            # Get candidate actions and their post-step known outcomes from environment.
+            candidates, outcomes = env.get_candidates_with_outcomes(config.max_candidates, device)
             
             # Model inference to get predictions and updated key-value cache for next step
             preds, kv_cache_candidates = model.generate(candidates, kv_cache, config)
@@ -54,9 +54,13 @@ def generate(env: EnvironmentGroup, model, config: GenerateConfig, device: torch
             else:
                 # Compute expected reward and sample to select an action (per environment)
                 expected_reward = compute_expected_reward(preds, outcomes, config)
-                expected_reward = torch.where(candidates.room_idx == num_rooms, # dummy action should only be selected if no other choice
-                                            torch.full_like(expected_reward, float('-inf')),
-                                            expected_reward)
+                dummy_candidate = candidates.room_idx == num_rooms
+                has_real_candidate = torch.any(~dummy_candidate, dim=1, keepdim=True)
+                expected_reward = torch.where(
+                    dummy_candidate & has_real_candidate,
+                    torch.full_like(expected_reward, float('-inf')),
+                    expected_reward,
+                )
                 probs = torch.softmax(expected_reward / torch.unsqueeze(config.temperature, 1), dim=1)
                 action_index = rand_choice(probs)
                 selected_actions = candidates.select(action_index)

@@ -12,7 +12,7 @@ use crate::scc_dag::SccDag;
 const NO_COMPONENT: usize = usize::MAX;
 
 // Frontier: location of an unconnected door on the map.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Frontier {
     dir_door_idx: DirDoorIdx,
     candidates: Vec<GeometryAction>, // possible geometry placements to connect to this frontier
@@ -387,6 +387,44 @@ impl Environment {
         candidates.shuffle(&mut self.rng);
         candidates.truncate(max_candidates);
         candidates
+    }
+
+    pub fn get_candidates_with_outcomes(
+        &mut self,
+        common: &CommonData,
+        max_candidates: usize,
+    ) -> (Vec<Action>, Vec<Outcomes>) {
+        let candidates = self.get_candidates(common, max_candidates);
+        let outcomes = candidates
+            .iter()
+            .map(|&candidate| self.outcomes_after_candidate(common, candidate))
+            .collect();
+        (candidates, outcomes)
+    }
+
+    pub fn outcomes_after_candidate(&self, common: &CommonData, candidate: Action) -> Outcomes {
+        let mut env = self.clone_for_lookahead();
+        env.step(candidate, common);
+        env.outcomes(common)
+    }
+
+    fn clone_for_lookahead(&self) -> Self {
+        Self {
+            // Lookahead only calls step() and outcomes(); candidate RNG state must not advance.
+            rng: rand::rngs::StdRng::seed_from_u64(0),
+            map_size: self.map_size,
+            actions: self.actions.clone(),
+            finished: self.finished,
+            frontier: self.frontier.clone(),
+            door_matches: self.door_matches.clone(),
+            room_used: self.room_used.clone(),
+            room_x: self.room_x.clone(),
+            room_y: self.room_y.clone(),
+            geometry_unused_count: self.geometry_unused_count.clone(),
+            connection_variant_unused_count: self.connection_variant_unused_count.clone(),
+            room_part_component: self.room_part_component.clone(),
+            scc_dag: self.scc_dag.clone(),
+        }
     }
 
     pub fn actions(&self) -> &[Action] {

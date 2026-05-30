@@ -116,6 +116,24 @@ class EnvironmentGroup:
             room_y=torch.from_numpy(room_y).to(device),
         )
 
+    def get_candidates_with_outcomes(
+        self, max_candidates: int, device: torch.device
+    ) -> tuple[Actions, Outcomes]:
+        room_idx, room_x, room_y, door_invalid, connection_invalid = (
+            self.env.get_candidates_with_outcomes(max_candidates)
+        )
+        return (
+            Actions(
+                room_idx=torch.from_numpy(room_idx).to(device),
+                room_x=torch.from_numpy(room_x).to(device),
+                room_y=torch.from_numpy(room_y).to(device),
+            ),
+            Outcomes(
+                door_invalid=torch.from_numpy(door_invalid).to(device),
+                connection_invalid=torch.from_numpy(connection_invalid).to(device),
+            ),
+        )
+
     def get_outcomes(self, device: torch.device) -> Outcomes:
         door_invalid, connection_invalid = self.env.get_outcomes()
         return Outcomes(
