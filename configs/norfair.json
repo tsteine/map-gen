@@ -14,14 +14,14 @@
     "num_layers": 4
   },
   "optimizer": {
-    "lr": 0.0005,
+    "lr": 0.0003,
     "beta1": 0.95,
     "beta2": 0.95
   },
   "generation": {
     "num_environments": 8192,
     "action_candidates": 16,
-    "lookahead_outcomes": true,
+    "lookahead_outcomes": false,
     "temperature0": 10.0,
     "temperature1": 0.03
   },

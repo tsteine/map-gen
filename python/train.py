@@ -120,7 +120,7 @@ train_env = engine.create_environment_group(config.map_size, config.train.batch_
 output_sizes = engine.get_output_sizes()
 
 main_model = CausalTransformerModel(
-    num_rooms=len(rooms),
+    rooms=rooms,
     map_x=config.map_size[0],
     map_y=config.map_size[1],
     output_sizes=output_sizes,

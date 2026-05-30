@@ -32,6 +32,103 @@ def normalize(x: torch.Tensor):
     return torch.nn.functional.rms_norm(x, (x.size(-1),))
 
 
+def get_outcome_metadata(rooms):
+    direction_order = {"left": 0, "right": 1, "up": 2, "down": 3}
+    geometry_by_key = {}
+    geometry_idx_by_room = []
+    geometry_doors = []
+    geometry_connections = []
+
+    for room in rooms:
+        doors = sorted(
+            (
+                door["direction"],
+                door["x"],
+                door["y"],
+                door.get("kind", 0),
+            )
+            for door_group in room.get("doors", [])
+            for door in door_group
+        )
+        geometry_key = (
+            tuple(tuple(row) for row in room["map"]),
+            tuple(sorted(doors, key=lambda door: (direction_order[door[0]], *door[1:]))),
+        )
+        geometry_idx = geometry_by_key.get(geometry_key)
+        if geometry_idx is None:
+            geometry_idx = len(geometry_by_key)
+            geometry_by_key[geometry_key] = geometry_idx
+            geometry_doors.append(geometry_key[1])
+            geometry_connections.append(set())
+        geometry_idx_by_room.append(geometry_idx)
+        geometry_connections[geometry_idx].update(tuple(connection) for connection in room.get("connections", []))
+
+    geometry_connections = [sorted(connections) for connections in geometry_connections]
+    door_identity = [
+        {door: identity_idx for identity_idx, door in enumerate(doors)}
+        for doors in geometry_doors
+    ]
+    connection_identity = [
+        {connection: identity_idx for identity_idx, connection in enumerate(connections)}
+        for connections in geometry_connections
+    ]
+
+    door_outputs = []
+    for direction in direction_order:
+        for room_idx, room in enumerate(rooms):
+            geometry_idx = geometry_idx_by_room[room_idx]
+            for door_group in room.get("doors", []):
+                for door in door_group:
+                    if door["direction"] == direction:
+                        door_key = (direction, door["x"], door["y"], door.get("kind", 0))
+                        door_outputs.append((room_idx, geometry_idx, door_identity[geometry_idx][door_key]))
+
+    connection_outputs = []
+    for room_idx, room in enumerate(rooms):
+        geometry_idx = geometry_idx_by_room[room_idx]
+        for connection in room.get("connections", []):
+            connection_outputs.append(
+                (room_idx, geometry_idx, connection_identity[geometry_idx][tuple(connection)])
+            )
+
+    return (
+        len(geometry_by_key),
+        door_outputs,
+        connection_outputs,
+        max((len(doors) for doors in geometry_doors), default=0),
+        max((len(connections) for connections in geometry_connections), default=0),
+    )
+
+
+class FactorizedOutcomeHead(torch.nn.Module):
+    def __init__(self, output_metadata, num_geometries, num_identities, embedding_width):
+        super().__init__()
+        self.embedding_width = embedding_width
+        self.num_outputs = len(output_metadata)
+        metadata = torch.tensor(output_metadata, dtype=torch.int64).reshape(self.num_outputs, 3)
+        self.register_buffer("room_idx", metadata[:, 0])
+        self.register_buffer("geometry_idx", metadata[:, 1])
+        self.register_buffer("identity_idx", metadata[:, 2])
+        self.geometry_embedding = torch.nn.Parameter(
+            torch.randn([num_geometries, embedding_width]) / math.sqrt(embedding_width))
+        self.identity_embedding = torch.nn.Parameter(
+            torch.randn([num_identities, embedding_width]) / math.sqrt(embedding_width))
+        self.state = torch.nn.Linear(embedding_width, embedding_width, bias=False)
+
+    def forward(self, X, room_x, room_y, room_placed, pos_embedding_x, pos_embedding_y):
+        if self.num_outputs == 0:
+            return X.new_empty([X.shape[0], X.shape[1], 0])
+        state = self.state(X)
+        base_query = self.geometry_embedding[self.geometry_idx] + self.identity_embedding[self.identity_idx]
+        base_logits = torch.matmul(state, base_query.transpose(0, 1))
+        x_logits = torch.matmul(state, pos_embedding_x.transpose(0, 1))
+        y_logits = torch.matmul(state, pos_embedding_y.transpose(0, 1))
+        room_logits = torch.gather(x_logits, -1, room_x) + torch.gather(y_logits, -1, room_y)
+        room_logits = torch.where(room_placed, room_logits, 0.0)
+        position_logits = room_logits[..., self.room_idx]
+        return (base_logits + position_logits) / math.sqrt(self.embedding_width)
+
+
 class GroupedQueryAttentionLayer(torch.nn.Module):
     def __init__(self, input_width, key_width, value_width, num_heads, num_groups):
         super().__init__()
@@ -90,9 +187,9 @@ class FeedforwardLayer(torch.nn.Module):
 
 
 class CausalTransformerModel(torch.nn.Module):
-    def __init__(self, num_rooms, map_x, map_y, output_sizes, embedding_width, key_width, value_width, attn_heads, head_groups, hidden_width, num_layers):
+    def __init__(self, rooms, map_x, map_y, output_sizes, embedding_width, key_width, value_width, attn_heads, head_groups, hidden_width, num_layers):
         super().__init__()
-        self.num_rooms = num_rooms
+        self.num_rooms = len(rooms)
         self.map_x = map_x
         self.map_y = map_y
         self.num_tokens = self.num_rooms + 1
@@ -120,9 +217,14 @@ class CausalTransformerModel(torch.nn.Module):
                 hidden_width=hidden_width)
             self.ff_layers.append(ff_layer)
 
-        # self.output_key = torch.nn.Linear(embedding_width, num_outputs, bias=False)
-        # self.output_value = torch.nn.Linear(embedding_width, num_outputs, bias=False)
-        self.output_lin = torch.nn.Linear(embedding_width, self.num_outputs, bias=False)
+        num_geometries, door_outputs, connection_outputs, num_door_identities, num_connection_identities = (
+            get_outcome_metadata(rooms)
+        )
+        assert output_sizes == (len(door_outputs), len(connection_outputs))
+        self.door_output = FactorizedOutcomeHead(
+            door_outputs, num_geometries, num_door_identities, embedding_width)
+        self.connection_output = FactorizedOutcomeHead(
+            connection_outputs, num_geometries, num_connection_identities, embedding_width)
 
 
     def get_embedding(self, room_idx, room_x, room_y, config: GenerateConfig):
@@ -138,13 +240,30 @@ class CausalTransformerModel(torch.nn.Module):
         X = position_emb_x + position_emb_y + room_emb
         return X        
 
+    def get_placement_state(self, room_idx, room_x, room_y):
+        valid_room = room_idx < self.num_rooms
+        room_one_hot = torch.nn.functional.one_hot(
+            torch.where(valid_room, room_idx, 0), self.num_rooms)
+        room_one_hot = room_one_hot & valid_room.unsqueeze(-1)
+        room_placed = torch.cumsum(room_one_hot, dim=1) > 0
+        placed_x = torch.cumsum(room_one_hot * room_x.unsqueeze(-1), dim=1)
+        placed_y = torch.cumsum(room_one_hot * room_y.unsqueeze(-1), dim=1)
+        return placed_x, placed_y, room_placed
+
+    def get_output(self, X, room_x, room_y, room_placed):
+        door = self.door_output(
+            X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
+        connection = self.connection_output(
+            X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
+        return torch.cat([door, connection], dim=-1)
+
 
     def forward(self, actions: Actions, config: GenerateConfig):
         room_idx = actions.room_idx.to(torch.int64)
         room_x = actions.room_x.to(torch.int64)
         room_y = actions.room_y.to(torch.int64)
 
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda', enabled=room_idx.device.type == 'cuda'):
             X = self.get_embedding(room_idx, room_x, room_y, config)
             # print("forward: X:", X.shape, X)
             for i in range(len(self.attn_layers)):
@@ -152,28 +271,9 @@ class CausalTransformerModel(torch.nn.Module):
                 X = self.ff_layers[i](X)
 
         X = normalize(X)
-        X = self.output_lin(X)
+        placed_x, placed_y, room_placed = self.get_placement_state(room_idx, room_x, room_y)
+        X = self.get_output(X, placed_x, placed_y, room_placed)
         X = X.to(torch.float32)
-        # # TODO: do this in a more numerically stable way (could express as attention with Q=1)
-        # X = X.to(torch.float32)            
-        # out_k = self.output_key(X)
-        # out_v = self.output_value(X)
-        # out_w = torch.exp(out_k)
-        # out_numer = torch.cumsum(out_v * out_w, dim=1)
-        # out_denom = torch.cumsum(out_w, dim=1)
-        # # print("forward: X:", X.shape, X, "\nout_w:", out_w.shape, out_w, "\nout_v:", out_v.shape, out_v, "\nout_numer:", out_numer.shape, out_numer, "\nout_denom:", out_denom.shape, out_denom)
-        # out = out_numer / out_denom
-            
-        # # rough idea: Compute output using attention with one head per output, key/value dimension 1.
-        # h = self.num_outputs
-        # s = X.shape[1]
-        # Q = torch.ones([n, h, s, 1], device=X.device, dtype=X.dtype)
-        # K = self.global_key(X).view(n, s, h).transpose(1, 2).view(n, h, s, 1)
-        # V = self.global_value(X).view(n, s, h).transpose(1, 2).view(n, h, s, 1)
-        # X = torch.nn.functional.scaled_dot_product_attention(Q, K, V, causal=True)
-        # assert X.shape == (n, h, s, 1)
-        # X = X.transpose(1, 2).view(n, s, h)
-
         return get_predictions(X, self.output_sizes)
 
 
@@ -184,14 +284,15 @@ class CausalTransformerModel(torch.nn.Module):
             g = layer.num_groups
             K_list.append(torch.zeros([batch_size, g, 0, layer.key_width], device=device))
             V_list.append(torch.zeros([batch_size, g, 0, layer.value_width], device=device))
-        return K_list, V_list
+        room_x = torch.zeros([batch_size, self.num_rooms], dtype=torch.int64, device=device)
+        room_y = torch.zeros([batch_size, self.num_rooms], dtype=torch.int64, device=device)
+        room_placed = torch.zeros([batch_size, self.num_rooms], dtype=torch.bool, device=device)
+        return K_list, V_list, room_x, room_y, room_placed
 
 
     def get_updated_kv_cache(self, old_kv_cache, cache_candidates, action_idx):
-        # old_K_list, old_V_list, old_out_numer, old_out_denom = old_kv_cache
-        # cand_K_list, cand_V_list, cand_out_numer, cand_out_denom = cache_candidates
-        old_K_list, old_V_list = old_kv_cache
-        cand_K_list, cand_V_list = cache_candidates
+        old_K_list, old_V_list, _, _, _ = old_kv_cache
+        cand_K_list, cand_V_list, cand_room_x, cand_room_y, cand_room_placed = cache_candidates
         new_K_list = []
         new_V_list = []
         for old_K, old_V, cand_K, cand_V in zip(old_K_list, old_V_list, cand_K_list, cand_V_list):
@@ -209,7 +310,14 @@ class CausalTransformerModel(torch.nn.Module):
             new_K_list.append(new_K)
             new_V_list.append(new_V)
         
-        return new_K_list, new_V_list
+        batch_idx = torch.arange(cand_room_x.shape[0], device=cand_room_x.device)
+        return (
+            new_K_list,
+            new_V_list,
+            cand_room_x[batch_idx, action_idx],
+            cand_room_y[batch_idx, action_idx],
+            cand_room_placed[batch_idx, action_idx],
+        )
 
 
     def generate(self, actions: Actions, kv_cache, config: GenerateConfig):
@@ -223,12 +331,12 @@ class CausalTransformerModel(torch.nn.Module):
         room_idx = room_idx.to(torch.int64)
         room_x = room_x.to(torch.int64)
         room_y = room_y.to(torch.int64)
-        s = kv_cache[0][0].shape[2] if len(kv_cache) > 0 else 0  # current sequence length
-        K_list, V_list = kv_cache
+        s = kv_cache[0][0].shape[2] if len(kv_cache[0]) > 0 else 0  # current sequence length
+        K_list, V_list, old_room_x, old_room_y, old_room_placed = kv_cache
         K_cands = []
         V_cands = []
 
-        with torch.amp.autocast('cuda'):
+        with torch.amp.autocast('cuda', enabled=room_idx.device.type == 'cuda'):
             X = self.get_embedding(room_idx, room_x, room_y, config)
             # X: [n, c, e]
             # print("generate: X:", X.shape, X)
@@ -263,41 +371,32 @@ class CausalTransformerModel(torch.nn.Module):
                 X = self.ff_layers[i].forward(X)
 
             X = normalize(X)
-            X = self.output_lin(X)
+            cand_room_x = old_room_x.unsqueeze(1).expand(-1, c, -1).clone()
+            cand_room_y = old_room_y.unsqueeze(1).expand(-1, c, -1).clone()
+            cand_room_placed = old_room_placed.unsqueeze(1).expand(-1, c, -1).clone()
+            valid_room = room_idx < self.num_rooms
+            batch_idx, cand_idx = torch.nonzero(valid_room, as_tuple=True)
+            placed_room_idx = room_idx[batch_idx, cand_idx]
+            cand_room_x[batch_idx, cand_idx, placed_room_idx] = room_x[batch_idx, cand_idx]
+            cand_room_y[batch_idx, cand_idx, placed_room_idx] = room_y[batch_idx, cand_idx]
+            cand_room_placed[batch_idx, cand_idx, placed_room_idx] = True
+            X = self.get_output(X, cand_room_x, cand_room_y, cand_room_placed)
             X = X.to(torch.float32)
-            # out_k = self.output_key(X)
-            # out_v = self.output_value(X)
-            # out_w = torch.exp(out_k)
-            # # out_v, out_w: [n, c, out]
-            # out_numer = out_w * out_v + old_out_numer.unsqueeze(1)
-            # out_denom = out_w + old_out_denom.unsqueeze(1)
-            # # print("generate: X:", X.shape, X, "\nout_w:", out_w.shape, out_w, "\nout_v:", out_v.shape, out_v, "\nout_numer:", out_numer.shape, out_numer, "\nout_denom:", out_denom.shape, out_denom)
-            # out = out_numer / out_denom
-            
-            # TODO: figure out how to make attention-based output work
-            # out = self.num_outputs
-            # K = K_list[-1]  # [n, out, s, 1]
-            # V = V_list[-1]  # [n, out, s, 1]
-            # Q = torch.ones([n, out, c, 1], device=X.device, dtype=X.dtype)
-            # K = self.global_key(X).view(n, s, out).transpose(1, 2).view(n, out, s, 1)
-            # V = self.global_value(X).view(n, s, out).transpose(1, 2).view(n, out, s, 1)
-            # X = torch.nn.functional.scaled_dot_product_attention(Q, K, V, causal=True)
-            # assert X.shape == (n, out, s, 1)
-            # X = X.transpose(1, 2).view(n, s, out)
 
-        cache_candidates = (K_cands, V_cands)
+        cache_candidates = (
+            K_cands, V_cands, cand_room_x, cand_room_y, cand_room_placed)
         return get_predictions(X, self.output_sizes), cache_candidates
 
 
 if __name__ == "__main__":
     rooms = [
-        {"map": [[0, 0], [0, 0]]},
-        {"map": [[0]]},
-        {"map": [[0]]},
-        {"map": [[0, 0]]},
+        {"map": [[0, 0], [0, 0]], "doors": [[], []], "connections": [[0, 1]]},
+        {"map": [[0]], "doors": [[], []], "connections": [[0, 1]]},
+        {"map": [[0]], "doors": [], "connections": []},
+        {"map": [[0, 0]], "doors": [], "connections": []},
     ]
     state_model = CausalTransformerModel(
-        num_rooms=len(rooms),
+        rooms=rooms,
         map_x=8,
         map_y=8,
         output_sizes=(0, 2),
