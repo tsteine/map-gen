@@ -117,13 +117,13 @@ device = torch.device("cuda:0")
 engine = Engine(rooms)
 gen_env = engine.create_environment_group(config.map_size, config.generation.num_environments, seed=0)
 train_env = engine.create_environment_group(config.map_size, config.train.batch_size)
-output_sizes = engine.get_output_sizes()
+output_metadata = engine.get_output_metadata()
 
 main_model = CausalTransformerModel(
-    rooms=rooms,
+    num_rooms=len(rooms),
+    output_metadata=output_metadata,
     map_x=config.map_size[0],
     map_y=config.map_size[1],
-    output_sizes=output_sizes,
     embedding_width=config.model.embedding_width,
     key_width=config.model.key_width,
     value_width=config.model.value_width,

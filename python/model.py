@@ -2,7 +2,10 @@ import torch
 import math
 from dataclasses import dataclass
 
-from env import Actions, GenerateConfig
+from env import Actions, GenerateConfig, OutputMetadata
+
+NUM_COORD_VALUES = 256
+COORD_OFFSET = 128
 
 # These tensors are all f32 with shape
 #    [batch, time, output]  during training,
@@ -30,90 +33,6 @@ def get_predictions(raw_preds, output_sizes):
 
 def normalize(x: torch.Tensor):
     return torch.nn.functional.rms_norm(x, (x.size(-1),))
-
-
-def get_outcome_metadata(rooms):
-    direction_order = {"left": 0, "right": 1, "up": 2, "down": 3}
-    geometry_by_key = {}
-    geometry_idx_by_room = []
-    geometry_doors = []
-    geometry_connections = []
-
-    for room in rooms:
-        doors = sorted(
-            (
-                door["direction"],
-                door["x"],
-                door["y"],
-                door.get("kind", 0),
-            )
-            for door_group in room.get("doors", [])
-            for door in door_group
-        )
-        geometry_key = (
-            tuple(tuple(row) for row in room["map"]),
-            tuple(sorted(doors, key=lambda door: (direction_order[door[0]], *door[1:]))),
-            tuple(sorted(tuple(connection) for connection in room.get("connections", []))),
-        )
-        geometry_idx = geometry_by_key.get(geometry_key)
-        if geometry_idx is None:
-            geometry_idx = len(geometry_by_key)
-            geometry_by_key[geometry_key] = geometry_idx
-            geometry_doors.append(geometry_key[1])
-            geometry_connections.append(set())
-        geometry_idx_by_room.append(geometry_idx)
-        geometry_connections[geometry_idx].update(tuple(connection) for connection in room.get("connections", []))
-
-    geometry_connections = [sorted(connections) for connections in geometry_connections]
-    door_identity = [
-        {door: identity_idx for identity_idx, door in enumerate(doors)}
-        for doors in geometry_doors
-    ]
-    connection_identity = [
-        {connection: identity_idx for identity_idx, connection in enumerate(connections)}
-        for connections in geometry_connections
-    ]
-
-    door_identity_offset = []
-    num_geometry_doors = 0
-    for doors in geometry_doors:
-        door_identity_offset.append(num_geometry_doors)
-        num_geometry_doors += len(doors)
-
-    connection_identity_offset = []
-    num_geometry_connections = 0
-    for connections in geometry_connections:
-        connection_identity_offset.append(num_geometry_connections)
-        num_geometry_connections += len(connections)
-
-    door_outputs = []
-    for direction in direction_order:
-        for room_idx, room in enumerate(rooms):
-            geometry_idx = geometry_idx_by_room[room_idx]
-            for door_group in room.get("doors", []):
-                for door in door_group:
-                    if door["direction"] == direction:
-                        door_key = (direction, door["x"], door["y"], door.get("kind", 0))
-                        geometry_door_idx = door_identity_offset[geometry_idx] + door_identity[geometry_idx][door_key]
-                        door_outputs.append((room_idx, geometry_door_idx))
-
-    connection_outputs = []
-    for room_idx, room in enumerate(rooms):
-        geometry_idx = geometry_idx_by_room[room_idx]
-        for connection in room.get("connections", []):
-            geometry_connection_idx = (
-                connection_identity_offset[geometry_idx]
-                + connection_identity[geometry_idx][tuple(connection)]
-            )
-            connection_outputs.append((room_idx, geometry_connection_idx))
-
-    return (
-        len(geometry_by_key),
-        door_outputs,
-        connection_outputs,
-        num_geometry_doors,
-        num_geometry_connections,
-    )
 
 
 class FactorizedOutcomeHead(torch.nn.Module):
@@ -205,19 +124,21 @@ class FeedforwardLayer(torch.nn.Module):
 
 
 class CausalTransformerModel(torch.nn.Module):
-    def __init__(self, rooms, map_x, map_y, output_sizes, embedding_width, key_width, value_width, attn_heads, head_groups, hidden_width, num_layers):
+    def __init__(self, num_rooms, output_metadata: OutputMetadata, map_x, map_y, embedding_width, key_width, value_width, attn_heads, head_groups, hidden_width, num_layers):
         super().__init__()
-        self.num_rooms = len(rooms)
+        self.num_rooms = num_rooms
         self.map_x = map_x
         self.map_y = map_y
         self.num_tokens = self.num_rooms + 1
-        self.output_sizes = output_sizes
-        self.num_outputs = sum(output_sizes)
+        self.output_sizes = output_metadata.get_output_sizes()
+        self.num_outputs = sum(self.output_sizes)
         self.num_layers = num_layers
         self.embedding_width = embedding_width
         self.global_lin = torch.nn.Linear(1, embedding_width)
-        self.pos_embedding_x = torch.nn.Parameter(torch.randn([self.map_x, embedding_width]) / math.sqrt(embedding_width))
-        self.pos_embedding_y = torch.nn.Parameter(torch.randn([self.map_y, embedding_width]) / math.sqrt(embedding_width))
+        self.pos_embedding_x = torch.nn.Parameter(
+            torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
+        self.pos_embedding_y = torch.nn.Parameter(
+            torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
         self.room_embedding = torch.nn.Parameter(
             torch.randn([self.num_rooms + 1, embedding_width]) / math.sqrt(embedding_width))
         self.attn_layers = torch.nn.ModuleList()
@@ -235,14 +156,10 @@ class CausalTransformerModel(torch.nn.Module):
                 hidden_width=hidden_width)
             self.ff_layers.append(ff_layer)
 
-        _, door_outputs, connection_outputs, num_geometry_doors, num_geometry_connections = (
-            get_outcome_metadata(rooms)
-        )
-        assert output_sizes == (len(door_outputs), len(connection_outputs))
         self.door_output = FactorizedOutcomeHead(
-            door_outputs, num_geometry_doors, embedding_width)
+            output_metadata.door, output_metadata.num_door_variants, embedding_width)
         self.connection_output = FactorizedOutcomeHead(
-            connection_outputs, num_geometry_connections, embedding_width)
+            output_metadata.connection, output_metadata.num_connection_variants, embedding_width)
 
 
     def get_embedding(self, room_idx, room_x, room_y, config: GenerateConfig):
@@ -250,8 +167,8 @@ class CausalTransformerModel(torch.nn.Module):
 
         # global_emb = self.global_lin(global_data).unsqueeze(1)
         # TODO: try rotary positional embeddings
-        position_emb_x = self.pos_embedding_x[room_x]
-        position_emb_y = self.pos_embedding_y[room_y]
+        position_emb_x = self.pos_embedding_x[room_x + COORD_OFFSET]
+        position_emb_y = self.pos_embedding_y[room_y + COORD_OFFSET]
         room_emb = self.room_embedding[room_idx]
         
         # X = global_emb + position_emb_x + position_emb_y + room_emb
@@ -270,9 +187,11 @@ class CausalTransformerModel(torch.nn.Module):
 
     def get_output(self, X, room_x, room_y, room_placed):
         door = self.door_output(
-            X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
+            X, room_x + COORD_OFFSET, room_y + COORD_OFFSET, room_placed,
+            self.pos_embedding_x, self.pos_embedding_y)
         connection = self.connection_output(
-            X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
+            X, room_x + COORD_OFFSET, room_y + COORD_OFFSET, room_placed,
+            self.pos_embedding_x, self.pos_embedding_y)
         return torch.cat([door, connection], dim=-1)
 
 
@@ -414,10 +333,15 @@ if __name__ == "__main__":
         {"map": [[0, 0]], "doors": [], "connections": []},
     ]
     state_model = CausalTransformerModel(
-        rooms=rooms,
+        num_rooms=len(rooms),
+        output_metadata=OutputMetadata(
+            door=[],
+            connection=[(0, 0), (1, 1)],
+            num_door_variants=0,
+            num_connection_variants=2,
+        ),
         map_x=8,
         map_y=8,
-        output_sizes=(0, 2),
         embedding_width=3,
         key_width=4,
         value_width=5,

@@ -564,6 +564,27 @@ impl Engine {
     fn get_output_sizes(&self) -> (usize, usize) {
         output_sizes(&self.common_data)
     }
+
+    fn get_output_metadata(&self) -> (Vec<(usize, usize)>, Vec<(usize, usize)>, usize, usize) {
+        let door_output = self
+            .common_data
+            .door_output
+            .iter()
+            .map(|output| (output.room_idx as usize, output.variant_outcome_idx))
+            .collect();
+        let connection_output = self
+            .common_data
+            .connection_output
+            .iter()
+            .map(|output| (output.room_idx as usize, output.variant_outcome_idx))
+            .collect();
+        (
+            door_output,
+            connection_output,
+            self.common_data.num_door_output_variants,
+            self.common_data.num_connection_output_variants,
+        )
+    }
 }
 
 impl EnvironmentGroup {

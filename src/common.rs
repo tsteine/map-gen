@@ -129,12 +129,18 @@ pub struct RoomDirDoorData {
     pub x: Coord,
     pub y: Coord,
     pub direction: Direction,
+    pub kind: DoorKind,
 }
 
 pub struct RoomConnectionData {
     pub room_idx: RoomIdx,
     pub from_part: PartIdx,
     pub to_part: PartIdx,
+}
+
+pub struct OutputData {
+    pub room_idx: RoomIdx,
+    pub variant_outcome_idx: usize,
 }
 
 pub struct RoomData {
@@ -195,6 +201,10 @@ pub struct CommonData {
     pub room_dir_door: [Vec<RoomDirDoorData>; NUM_DIRS],
     pub room_part: Vec<(RoomIdx, PartIdx)>,
     pub room_connection: Vec<RoomConnectionData>,
+    pub door_output: Vec<OutputData>,
+    pub connection_output: Vec<OutputData>,
+    pub num_door_output_variants: usize,
+    pub num_connection_output_variants: usize,
 }
 
 impl GeometryKey {
@@ -327,6 +337,7 @@ impl CommonData {
                         x: door.x,
                         y: door.y,
                         direction: door.direction,
+                        kind: door.kind,
                     });
                     door_data.push(RoomDoorData {
                         x: door.x,
@@ -407,6 +418,45 @@ impl CommonData {
             door_group_count += room.doors.len();
         }
 
+        let mut door_output = vec![];
+        let mut door_output_variant_by_key = HashMap::new();
+        for door in room_dir_door.iter().flatten() {
+            let connection_variant_idx = room_data[door.room_idx as usize].connection_variant_idx;
+            let next_variant_idx = door_output_variant_by_key.len();
+            let variant_outcome_idx = *door_output_variant_by_key
+                .entry((
+                    connection_variant_idx,
+                    door.direction,
+                    door.x,
+                    door.y,
+                    door.kind,
+                ))
+                .or_insert(next_variant_idx);
+            door_output.push(OutputData {
+                room_idx: door.room_idx,
+                variant_outcome_idx,
+            });
+        }
+
+        let mut connection_output = vec![];
+        let mut connection_output_variant_by_key = HashMap::new();
+        for connection in &room_connection {
+            let connection_variant_idx =
+                room_data[connection.room_idx as usize].connection_variant_idx;
+            let next_variant_idx = connection_output_variant_by_key.len();
+            let variant_outcome_idx = *connection_output_variant_by_key
+                .entry((
+                    connection_variant_idx,
+                    connection.from_part,
+                    connection.to_part,
+                ))
+                .or_insert(next_variant_idx);
+            connection_output.push(OutputData {
+                room_idx: connection.room_idx,
+                variant_outcome_idx,
+            });
+        }
+
         let mut common = Self {
             room: room_data,
             geometry: geometry_data,
@@ -419,6 +469,10 @@ impl CommonData {
             room_dir_door,
             room_part,
             room_connection,
+            door_output,
+            connection_output,
+            num_door_output_variants: door_output_variant_by_key.len(),
+            num_connection_output_variants: connection_output_variant_by_key.len(),
         };
         common.build_intersection_set();
         println!(
@@ -576,5 +630,65 @@ impl CommonData {
         }
 
         false // No intersection
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_metadata_shares_only_matching_connection_variants() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "doors": [[
+                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                    ]],
+                    "connections": []
+                },
+                {
+                    "map": [[1]],
+                    "doors": [[
+                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                    ]],
+                    "connections": []
+                },
+                {
+                    "map": [[1]],
+                    "doors": [[
+                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                    ]],
+                    "connections": [[0, 0]]
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+
+        let common = CommonData::new(rooms).unwrap();
+        let door_output: Vec<_> = common
+            .door_output
+            .iter()
+            .map(|output| (output.room_idx, output.variant_outcome_idx))
+            .collect();
+        assert_eq!(
+            door_output,
+            vec![(0, 0), (1, 0), (2, 1), (0, 2), (1, 2), (2, 3)]
+        );
+        assert_eq!(common.num_door_output_variants, 4);
+
+        let connection_output: Vec<_> = common
+            .connection_output
+            .iter()
+            .map(|output| (output.room_idx, output.variant_outcome_idx))
+            .collect();
+        assert_eq!(connection_output, vec![(2, 0)]);
+        assert_eq!(common.num_connection_output_variants, 1);
     }
 }

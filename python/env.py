@@ -44,7 +44,18 @@ class Outcomes:
     door_invalid: torch.Tensor
     # -1 = unknown, 0 = valid (connection has return path), 1 = invalid (connection does not have return path)
     connection_invalid: torch.Tensor
-    
+
+
+@dataclass
+class OutputMetadata:
+    door: list[tuple[int, int]]
+    connection: list[tuple[int, int]]
+    num_door_variants: int
+    num_connection_variants: int
+
+    def get_output_sizes(self) -> tuple[int, int]:
+        return len(self.door), len(self.connection)
+
 
 class Engine:
     engine: map_gen.Engine
@@ -62,6 +73,17 @@ class Engine:
 
     def get_output_sizes(self) -> tuple[int, int]:
         return self.engine.get_output_sizes()
+
+    def get_output_metadata(self) -> OutputMetadata:
+        door, connection, num_door_variants, num_connection_variants = (
+            self.engine.get_output_metadata()
+        )
+        return OutputMetadata(
+            door=door,
+            connection=connection,
+            num_door_variants=num_door_variants,
+            num_connection_variants=num_connection_variants,
+        )
 
 
 class EnvironmentGroup:
