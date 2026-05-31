@@ -147,6 +147,9 @@ class CausalTransformerModel(torch.nn.Module):
         self.connection_variant_embedding = torch.nn.Parameter(
             torch.randn([output_metadata.num_room_connection_variants + 1, embedding_width])
             / math.sqrt(embedding_width))
+        self.room_embedding = torch.nn.Parameter(
+            torch.randn([num_rooms + 1, embedding_width])
+            / (10.0 * math.sqrt(embedding_width)))
         self.attn_layers = torch.nn.ModuleList()
         self.ff_layers = torch.nn.ModuleList()
         for i in range(num_layers):
@@ -175,10 +178,11 @@ class CausalTransformerModel(torch.nn.Module):
         # TODO: try rotary positional embeddings
         position_emb_x = self.pos_embedding_x[room_x + COORD_OFFSET]
         position_emb_y = self.pos_embedding_y[room_y + COORD_OFFSET]
-        room_emb = self.connection_variant_embedding[self.room_connection_variant_idx[room_idx]]
+        conn_var_emb = self.connection_variant_embedding[self.room_connection_variant_idx[room_idx]]
+        room_emb = self.room_embedding[room_idx]
         
         # X = global_emb + position_emb_x + position_emb_y + room_emb
-        X = position_emb_x + position_emb_y + room_emb
+        X = position_emb_x + position_emb_y + room_emb + conn_var_emb
         return X        
 
     def get_placement_state(self, room_idx, room_x, room_y):
