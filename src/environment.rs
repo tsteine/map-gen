@@ -182,6 +182,19 @@ impl Environment {
     }
 
     pub fn step(&mut self, action: Action, common: &CommonData) {
+        self.step_impl(action, common, true);
+    }
+
+    fn step_for_state_features(&mut self, action: Action, common: &CommonData) {
+        self.step_impl(action, common, false);
+    }
+
+    fn step_impl(
+        &mut self,
+        action: Action,
+        common: &CommonData,
+        update_outcomes_and_occupancy: bool,
+    ) {
         self.actions.push(action);
         if self.finished {
             return;
@@ -201,17 +214,19 @@ impl Environment {
         self.geometry_unused_count[action_geometry_idx as usize] -= 1;
         self.connection_variant_unused_count[connection_variant_idx as usize] -= 1;
         self.add_room_components_and_edges(action, common);
-        for (dy, row) in common.geometry[action_geometry_idx as usize]
-            .map
-            .iter()
-            .enumerate()
-        {
-            for (dx, &tile) in row.iter().enumerate() {
-                if tile != 0 {
-                    let x = action.x + dx as Coord;
-                    let y = action.y + dy as Coord;
-                    if x >= 0 && y >= 0 && x < self.map_size.0 && y < self.map_size.1 {
-                        self.occupancy[y as usize * self.map_size.0 as usize + x as usize] = 1;
+        if update_outcomes_and_occupancy {
+            for (dy, row) in common.geometry[action_geometry_idx as usize]
+                .map
+                .iter()
+                .enumerate()
+            {
+                for (dx, &tile) in row.iter().enumerate() {
+                    if tile != 0 {
+                        let x = action.x + dx as Coord;
+                        let y = action.y + dy as Coord;
+                        if x >= 0 && y >= 0 && x < self.map_size.0 && y < self.map_size.1 {
+                            self.occupancy[y as usize * self.map_size.0 as usize + x as usize] = 1;
+                        }
                     }
                 }
             }
@@ -225,8 +240,10 @@ impl Environment {
                 // This frontier is now connected, so remove it and mark the doors as connected:
                 let i1 = door.dir_door_idx;
                 let i2 = frontier.dir_door_idx;
-                self.door_matches[door.direction as usize][i1 as usize] = i2;
-                self.door_matches[door.direction.opposite() as usize][i2 as usize] = i1;
+                if update_outcomes_and_occupancy {
+                    self.door_matches[door.direction as usize][i1 as usize] = i2;
+                    self.door_matches[door.direction.opposite() as usize][i2 as usize] = i1;
+                }
                 let p1 = common.room_dir_door[door.direction as usize][i1 as usize].room_part_idx;
                 let p2 = common.room_dir_door[door.direction.opposite() as usize][i2 as usize]
                     .room_part_idx;
@@ -491,6 +508,26 @@ impl Environment {
         }
     }
 
+    fn clone_for_state_features(&self) -> Self {
+        Self {
+            // Feature-only lookahead does not read outcomes or the cloned occupancy grid.
+            rng: rand::rngs::StdRng::seed_from_u64(0),
+            map_size: self.map_size,
+            actions: self.actions.clone(),
+            finished: self.finished,
+            frontier: self.frontier.clone(),
+            door_matches: std::array::from_fn(|_| vec![]),
+            room_used: self.room_used.clone(),
+            room_x: self.room_x.clone(),
+            room_y: self.room_y.clone(),
+            geometry_unused_count: self.geometry_unused_count.clone(),
+            connection_variant_unused_count: self.connection_variant_unused_count.clone(),
+            room_part_component: self.room_part_component.clone(),
+            scc_dag: self.scc_dag.clone(),
+            occupancy: vec![],
+        }
+    }
+
     pub fn max_frontiers(common: &CommonData) -> usize {
         common
             .room
@@ -684,8 +721,8 @@ impl Environment {
         } else {
             vec![]
         };
-        let mut env = self.clone_for_lookahead();
-        env.step(candidate, common);
+        let mut env = self.clone_for_state_features();
+        env.step_for_state_features(candidate, common);
         env.state_features_with_occupancy(
             common,
             occupancy_prefix,
