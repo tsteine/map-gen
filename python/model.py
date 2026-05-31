@@ -354,7 +354,11 @@ class FrontierStateModel(torch.nn.Module):
             for _ in range(num_layers)
         ])
         self.value_layers = torch.nn.ModuleList([
-            torch.nn.Linear(embedding_width, value_width)
+            torch.nn.Linear(embedding_width, attn_heads * value_width)
+            for _ in range(num_layers)
+        ])
+        self.pair_value_layers = torch.nn.ModuleList([
+            torch.nn.Linear(11, attn_heads * value_width)
             for _ in range(num_layers)
         ])
         self.message_output_layers = torch.nn.ModuleList([
@@ -418,19 +422,19 @@ class FrontierStateModel(torch.nn.Module):
         ], dim=-1)
         return pair * (features.frontier_neighbor >= 0).unsqueeze(-1)
 
-    def _aggregate_neighbors(self, values, neighbor, weights):
+    def _aggregate_neighbors(self, values, pair, neighbor, weights, pair_value_layer):
         # Accumulate one neighbor slot at a time to avoid an edge-wise
-        # [b, f, k, v] value gather.
-        b, f, v = values.shape
-        a = weights.shape[-1]
+        # [b, f, k, a, v] value gather.
+        b, f, a, v = values.shape
         aggregated = values.new_zeros([b, f, a, v])
         for neighbor_idx in range(neighbor.shape[2]):
             source = torch.gather(
                 values,
                 1,
-                neighbor[:, :, neighbor_idx].unsqueeze(-1).expand(-1, -1, v),
+                neighbor[:, :, neighbor_idx, None, None].expand(-1, -1, a, v),
             )
-            aggregated = aggregated + weights[:, :, neighbor_idx].unsqueeze(-1) * source.unsqueeze(2)
+            relation = pair_value_layer(pair[:, :, neighbor_idx]).view(b, f, a, v)
+            aggregated = aggregated + weights[:, :, neighbor_idx].unsqueeze(-1) * (source + relation)
         return aggregated
 
     def forward(self, features: StateFeatures):
@@ -461,19 +465,21 @@ class FrontierStateModel(torch.nn.Module):
             pair = self._pair_features(features, node_mask)
             neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
             pair_mask = (features.frontier_neighbor >= 0).unsqueeze(-1)
-            for pair_weight_layer, value_layer, output_layer, update_layer in zip(
+            for pair_weight_layer, value_layer, pair_value_layer, output_layer, update_layer in zip(
                 self.pair_weight_layers,
                 self.value_layers,
+                self.pair_value_layers,
                 self.message_output_layers,
                 self.update_layers,
             ):
-                # logits, weights: [b, f, k, a]; values: [b, f, v]
+                # logits, weights: [b, f, k, a]; values: [b, f, a, v]
                 logits = pair_weight_layer(pair)
                 logits = logits.masked_fill(~pair_mask, torch.finfo(logits.dtype).min)
                 weights = torch.softmax(logits, dim=2) * pair_mask
-                values = value_layer(normalize(X))
-                # aggregated: [b, f, a, v]; no [b, f, k, h] activation is created.
-                aggregated = self._aggregate_neighbors(values, neighbor, weights)
+                values = value_layer(normalize(X)).view(*X.shape[:2], weights.shape[-1], -1)
+                # aggregated: [b, f, a, v]; relation values are projected one
+                # neighbor slot at a time, so no edge-wise value activation is created.
+                aggregated = self._aggregate_neighbors(values, pair, neighbor, weights, pair_value_layer)
                 X = X + output_layer(aggregated.flatten(2))
                 X = X + update_layer(normalize(X))
                 X = X * node_mask.unsqueeze(-1)

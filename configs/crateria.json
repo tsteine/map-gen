@@ -16,7 +16,7 @@
     "num_layers": 4
   },
   "optimizer": {
-    "lr": 0.0005,
+    "lr": 0.0003,
     "beta1": 0.95,
     "beta2": 0.99
   },
@@ -33,8 +33,8 @@
   },
   "train": {
     "batch_size": 512,
-    "fresh_pass_factor": 1.0,
-    "replay_pass_factor": 1.0,
+    "fresh_pass_factor": 0.5,
+    "replay_pass_factor": 1.5,
     "episodes_per_file": 64,
     "ema_decay": 0.995,
     "hist_c": 3.0,
