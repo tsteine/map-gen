@@ -337,16 +337,26 @@ def train_batch(train_actions, train_outcomes, gen_config):
                         train_actions_cpu.room_y[:, action_idx],
                     ))
                 current_prefix_length = prefix_length
-                return train_env.get_state_features(torch.device("cpu"))
+                return [
+                    (
+                        start,
+                        min(start + config.train.state_batch_chunk, train_actions.room_idx.shape[0]),
+                        train_env.get_state_features(
+                            torch.device("cpu"),
+                            start,
+                            min(config.train.state_batch_chunk, train_actions.room_idx.shape[0] - start),
+                        ),
+                    )
+                    for start in range(0, train_actions.room_idx.shape[0], config.train.state_batch_chunk)
+                ]
 
-        for features in train_prefetcher.map(
+        for feature_chunks in train_prefetcher.map(
             prefix_lengths, prepare_prefix, profiler, "train.cpu_prefix_wait"
         ):
-            for start in range(0, train_actions.room_idx.shape[0], config.train.state_batch_chunk):
-                end = min(start + config.train.state_batch_chunk, train_actions.room_idx.shape[0])
+            for start, end, chunk_features in feature_chunks:
                 chunk_weight = (end - start) / train_actions.room_idx.shape[0] / len(prefix_lengths)
                 with profiler.timer("train.cpu_transfer_submit"):
-                    chunk_features = features.slice(start, end).compact_frontiers().to(device)
+                    chunk_features = chunk_features.to(device)
                 with profiler.cuda_timer("train.gpu_forward_backward", device):
                     with torch.amp.autocast("cuda", enabled=device.type == "cuda" and config.model.autocast):
                         chunk_preds = main_model(chunk_features)

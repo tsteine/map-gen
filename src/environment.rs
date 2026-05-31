@@ -506,7 +506,7 @@ impl Environment {
         frontier_neighbor_count: usize,
     ) -> StateFeatures {
         let occupancy_prefix = self.occupancy_prefix();
-        self.state_features_with_occupancy(&common, &occupancy_prefix, &[], frontier_neighbor_count)
+        self.state_features_with_occupancy(common, &occupancy_prefix, &[], frontier_neighbor_count)
     }
 
     pub(crate) fn occupancy_prefix(&self) -> Vec<u16> {
@@ -532,8 +532,8 @@ impl Environment {
         extra_occupied: &[(Coord, Coord)],
         frontier_neighbor_count: usize,
     ) -> StateFeatures {
-        let max_frontiers = Self::max_frontiers(common);
-        assert!(self.frontier.len() <= max_frontiers);
+        assert!(self.frontier.len() <= Self::max_frontiers(common));
+        let frontier_count = self.frontier.len();
         let mut inventory = self
             .connection_variant_unused_count
             .iter()
@@ -544,10 +544,10 @@ impl Environment {
             .iter()
             .map(|bit| u8::from(*bit))
             .collect::<Vec<_>>();
-        let mut frontier = vec![0; max_frontiers * 7];
-        let mut frontier_neighbor = vec![-1; max_frontiers * frontier_neighbor_count];
-        let mut frontier_neighbor_pair = vec![0; max_frontiers * frontier_neighbor_count];
-        let mut frontier_obstruction = vec![0; max_frontiers * frontier_neighbor_count * 3];
+        let mut frontier = vec![0; frontier_count * 7];
+        let mut frontier_neighbor = vec![-1; frontier_count * frontier_neighbor_count];
+        let mut frontier_neighbor_pair = vec![0; frontier_count * frontier_neighbor_count];
+        let mut frontier_obstruction = vec![0; frontier_count * frontier_neighbor_count * 3];
         let mut sorted_frontiers = self.frontier.iter().collect::<Vec<_>>();
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
         let map_width = self.map_size.0 as usize;

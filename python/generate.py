@@ -170,7 +170,7 @@ def generate(
                                 with profiler.timer("gen.cpu_extract"):
                                     features = env.get_state_features_after_candidates(
                                         env_chunk, torch.device("cpu"), env_start
-                                    ).flatten_candidates().compact_frontiers()
+                                    ).flatten_candidates()
                                 return env_start, env_end, features
 
                             for env_start, env_end, features in prefetcher.map(
