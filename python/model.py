@@ -2,7 +2,7 @@ import torch
 import math
 from dataclasses import dataclass
 
-from env import Actions, GenerateConfig, OutputMetadata
+from env import Actions, GenerateConfig, OutputMetadata, StateFeatures
 
 NUM_COORD_VALUES = 256
 COORD_OFFSET = 128
@@ -333,6 +333,133 @@ class CausalTransformerModel(torch.nn.Module):
         cache_candidates = (
             K_cands, V_cands, cand_room_x, cand_room_y, cand_room_placed)
         return get_predictions(X, self.output_sizes), cache_candidates
+
+
+class FrontierStateModel(torch.nn.Module):
+    uses_state_features = True
+
+    def __init__(self, num_rooms, output_metadata: OutputMetadata, map_x, map_y, embedding_width, hidden_width, num_layers, **_):
+        super().__init__()
+        self.num_rooms = num_rooms
+        self.map_x = map_x
+        self.map_y = map_y
+        self.output_sizes = output_metadata.get_output_sizes()
+        self.inventory_embedding = torch.nn.Parameter(
+            torch.randn([output_metadata.num_room_connection_variants, embedding_width]) / math.sqrt(embedding_width))
+        self.orientation_embedding = torch.nn.Embedding(2, embedding_width)
+        self.kind_embedding = torch.nn.Embedding(256, embedding_width)
+        self.node_numeric = torch.nn.Linear(7, embedding_width)
+        self.message_layers = torch.nn.ModuleList([
+            torch.nn.Sequential(
+                torch.nn.Linear(embedding_width + 11, hidden_width),
+                torch.nn.GELU(),
+                torch.nn.Linear(hidden_width, embedding_width),
+            ) for _ in range(num_layers)
+        ])
+        self.update_layers = torch.nn.ModuleList([
+            torch.nn.Sequential(
+                torch.nn.Linear(embedding_width * 2, hidden_width),
+                torch.nn.GELU(),
+                torch.nn.Linear(hidden_width, embedding_width),
+            ) for _ in range(num_layers)
+        ])
+        self.global_mlp = torch.nn.Sequential(
+            torch.nn.Linear(embedding_width * 3, hidden_width),
+            torch.nn.GELU(),
+            torch.nn.Linear(hidden_width, embedding_width),
+        )
+        self.pos_embedding_x = torch.nn.Parameter(
+            torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
+        self.pos_embedding_y = torch.nn.Parameter(
+            torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
+        self.door_output = FactorizedOutcomeHead(
+            output_metadata.door, output_metadata.num_door_variants, embedding_width)
+        self.connection_output = FactorizedOutcomeHead(
+            output_metadata.connection, output_metadata.num_connection_variants, embedding_width)
+
+    @staticmethod
+    def _rect_sum(prefix, x0, y0, x1, y1):
+        width = prefix.shape[-1]
+        flat = prefix.flatten(1)
+        def get(x, y):
+            index = y * width + x
+            return torch.gather(flat, 1, index.flatten(1)).view_as(index)
+        return get(x1 + 1, y1 + 1) - get(x0, y1 + 1) - get(x1 + 1, y0) + get(x0, y0)
+
+    def _pair_features(self, features, node_mask):
+        node = features.frontier
+        raw_x = node[:, :, 1].to(torch.int64)
+        raw_y = node[:, :, 2].to(torch.int64)
+        x = raw_x.clamp(0, self.map_x - 1)
+        y = raw_y.clamp(0, self.map_y - 1)
+        x0, x1 = x.unsqueeze(2), x.unsqueeze(1)
+        y0, y1 = y.unsqueeze(2), y.unsqueeze(1)
+        raw_x0, raw_x1 = raw_x.unsqueeze(2), raw_x.unsqueeze(1)
+        raw_y0, raw_y1 = raw_y.unsqueeze(2), raw_y.unsqueeze(1)
+        min_x, max_x = torch.minimum(x0, x1), torch.maximum(x0, x1)
+        min_y, max_y = torch.minimum(y0, y1), torch.maximum(y0, y1)
+        occupancy = features.occupancy.to(torch.float32)
+        prefix = torch.nn.functional.pad(occupancy, (1, 0, 1, 0)).cumsum(1).cumsum(2)
+        rect = self._rect_sum(prefix, min_x, min_y, max_x, max_y)
+        area = (max_x - min_x + 1) * (max_y - min_y + 1)
+        horizontal0 = self._rect_sum(prefix, min_x, y0, max_x, y0)
+        horizontal1 = self._rect_sum(prefix, min_x, y1, max_x, y1)
+        vertical0 = self._rect_sum(prefix, x1, min_y, x1, max_y)
+        vertical1 = self._rect_sum(prefix, x0, min_y, x0, max_y)
+        path_length = (max_x - min_x + 1) + (max_y - min_y + 1)
+        flags = features.frontier_pair
+        pair = torch.stack([
+            (raw_x1 - raw_x0).to(torch.float32) / self.map_x,
+            (raw_y1 - raw_y0).to(torch.float32) / self.map_y,
+            ((raw_x1 - raw_x0).abs() + (raw_y1 - raw_y0).abs()).to(torch.float32) / (self.map_x + self.map_y),
+            (raw_x0 == raw_x1).to(torch.float32),
+            (raw_y0 == raw_y1).to(torch.float32),
+            (flags & 1 != 0).to(torch.float32),
+            (flags & 2 != 0).to(torch.float32),
+            (flags & 4 != 0).to(torch.float32),
+            rect / area.clamp_min(1),
+            (horizontal0 + vertical0) / path_length.clamp_min(1),
+            (horizontal1 + vertical1) / path_length.clamp_min(1),
+        ], dim=-1)
+        return pair * (node_mask.unsqueeze(1) & node_mask.unsqueeze(2)).unsqueeze(-1)
+
+    def forward(self, features: StateFeatures):
+        node = features.frontier
+        node_mask = node[:, :, 0] != 0
+        numeric = torch.stack([
+            node[:, :, 1].to(torch.float32) / self.map_x,
+            node[:, :, 2].to(torch.float32) / self.map_y,
+            node[:, :, 5].to(torch.float32) / max(self.num_rooms, 1),
+            node[:, :, 1].to(torch.float32) / self.map_x,
+            (self.map_x - node[:, :, 1].to(torch.float32)) / self.map_x,
+            node[:, :, 2].to(torch.float32) / self.map_y,
+            (self.map_y - node[:, :, 2].to(torch.float32)) / self.map_y,
+        ], dim=-1)
+        X = self.node_numeric(numeric)
+        X = X + self.orientation_embedding(node[:, :, 3].to(torch.int64))
+        X = X + self.kind_embedding(node[:, :, 4].to(torch.int64))
+        X = X * node_mask.unsqueeze(-1)
+        pair = self._pair_features(features, node_mask)
+        pair_mask = (node_mask.unsqueeze(1) & node_mask.unsqueeze(2)).unsqueeze(-1)
+        for message_layer, update_layer in zip(self.message_layers, self.update_layers):
+            src = X.unsqueeze(1).expand(-1, X.shape[1], -1, -1)
+            messages = message_layer(torch.cat([src, pair], dim=-1)) * pair_mask
+            messages = messages.sum(2) / pair_mask.sum(2).clamp_min(1)
+            X = X + update_layer(torch.cat([X, messages], dim=-1))
+            X = X * node_mask.unsqueeze(-1)
+        count = node_mask.sum(1, keepdim=True).clamp_min(1)
+        mean_pool = X.sum(1) / count
+        max_pool = torch.where(node_mask.unsqueeze(-1), X, -torch.inf).max(1).values
+        max_pool = torch.where(torch.isfinite(max_pool), max_pool, 0)
+        inventory = torch.matmul(features.inventory.to(torch.float32), self.inventory_embedding)
+        global_state = self.global_mlp(torch.cat([inventory, mean_pool, max_pool], dim=-1))
+        room_x = (features.room_x.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
+        room_y = (features.room_y.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
+        room_placed = features.room_placed.to(torch.bool).unsqueeze(1)
+        X = global_state.unsqueeze(1)
+        door = self.door_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
+        connection = self.connection_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
+        return get_predictions(torch.cat([door, connection], dim=-1), self.output_sizes)
 
 
 if __name__ == "__main__":

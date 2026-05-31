@@ -87,6 +87,18 @@ pub struct DoorLocation {
 }
 
 impl DoorLocation {
+    pub fn x(&self) -> Coord {
+        self.x
+    }
+
+    pub fn y(&self) -> Coord {
+        self.y
+    }
+
+    pub fn vertical(&self) -> bool {
+        self.vertical
+    }
+
     pub fn from_parts(
         direction: Direction,
         door_x: Coord,

@@ -16,6 +16,7 @@ const NO_COMPONENT: usize = usize::MAX;
 pub struct Frontier {
     dir_door_idx: DirDoorIdx,
     component: usize,
+    kind: u8,
     candidates: Vec<GeometryAction>, // possible geometry placements to connect to this frontier
 }
 
@@ -33,6 +34,19 @@ pub struct Outcomes {
     pub connections_valid: Vec<DoorValidOutcome>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct StateFeatures {
+    pub inventory: Vec<u8>,
+    pub room_x: Vec<Coord>,
+    pub room_y: Vec<Coord>,
+    pub room_placed: Vec<u8>,
+    // mask, x, y, vertical, kind, feasible attachment count, SCC component
+    pub frontier: Vec<i16>,
+    // Bit flags: same SCC, source reaches destination, destination reaches source.
+    pub frontier_pair: Vec<u8>,
+    pub occupancy: Vec<u8>,
+}
+
 pub struct Environment {
     rng: rand::rngs::StdRng, // for randomly choosing the initial room placement
     map_size: (Coord, Coord),
@@ -48,6 +62,7 @@ pub struct Environment {
     connection_variant_unused_count: Vec<usize>, // number of unused room representatives for each connection variant
     room_part_component: Vec<usize>,             // maps placed room door groups to SCC components
     scc_dag: SccDag, // DAG of strongly connected components (condensation graph)
+    occupancy: Vec<u8>,
 }
 
 impl Environment {
@@ -76,6 +91,7 @@ impl Environment {
                 .collect(),
             room_part_component: vec![NO_COMPONENT; common.room_part.len()],
             scc_dag: SccDag::default(),
+            occupancy: vec![0; map_size.0 as usize * map_size.1 as usize],
         }
     }
 
@@ -99,6 +115,7 @@ impl Environment {
         );
         self.room_part_component.fill(NO_COMPONENT);
         self.scc_dag.clear();
+        self.occupancy.fill(0);
     }
 
     pub fn get_initial_action(&mut self, common: &CommonData) -> Action {
@@ -181,6 +198,21 @@ impl Environment {
         self.geometry_unused_count[action_geometry_idx as usize] -= 1;
         self.connection_variant_unused_count[connection_variant_idx as usize] -= 1;
         self.add_room_components_and_edges(action, common);
+        for (dy, row) in common.geometry[action_geometry_idx as usize]
+            .map
+            .iter()
+            .enumerate()
+        {
+            for (dx, &tile) in row.iter().enumerate() {
+                if tile != 0 {
+                    let x = action.x + dx as Coord;
+                    let y = action.y + dy as Coord;
+                    if x >= 0 && y >= 0 && x < self.map_size.0 && y < self.map_size.1 {
+                        self.occupancy[y as usize * self.map_size.0 as usize + x as usize] = 1;
+                    }
+                }
+            }
+        }
 
         // Remove the frontiers that the new room connects to (if any),
         // and update the frontier with the new unconnected doors of the new room.
@@ -253,6 +285,8 @@ impl Environment {
                 let frontier = Frontier {
                     dir_door_idx: door.dir_door_idx,
                     component: self.room_part_component(common, action.room_idx, door.part_idx),
+                    kind: common.room_dir_door[door.direction as usize][door.dir_door_idx as usize]
+                        .kind,
                     candidates,
                 };
                 self.frontier.insert(door_loc, frontier);
@@ -450,7 +484,80 @@ impl Environment {
             connection_variant_unused_count: self.connection_variant_unused_count.clone(),
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
+            occupancy: self.occupancy.clone(),
         }
+    }
+
+    pub fn max_frontiers(common: &CommonData) -> usize {
+        common
+            .room
+            .iter()
+            .map(|room| room.doors.len().saturating_sub(2))
+            .sum::<usize>()
+            + 2
+    }
+
+    pub fn state_features(&self, common: &CommonData) -> StateFeatures {
+        let max_frontiers = Self::max_frontiers(common);
+        assert!(self.frontier.len() <= max_frontiers);
+        let mut inventory = self
+            .connection_variant_unused_count
+            .iter()
+            .map(|&count| count as u8)
+            .collect::<Vec<_>>();
+        let room_placed = self
+            .room_used
+            .iter()
+            .map(|bit| u8::from(*bit))
+            .collect::<Vec<_>>();
+        let mut frontier = vec![0; max_frontiers * 7];
+        let mut frontier_pair = vec![0; max_frontiers * max_frontiers];
+        let mut sorted_frontiers = self.frontier.iter().collect::<Vec<_>>();
+        sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
+        for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
+            let row = idx * 7;
+            frontier[row] = 1;
+            frontier[row + 1] = location.x() as i16;
+            frontier[row + 2] = location.y() as i16;
+            frontier[row + 3] = location.vertical() as i16;
+            frontier[row + 4] = data.kind as i16;
+            frontier[row + 5] = data.candidates.len() as i16;
+            frontier[row + 6] = data.component as i16;
+        }
+        for (src_idx, (_, src)) in sorted_frontiers.iter().enumerate() {
+            for (dst_idx, (_, dst)) in sorted_frontiers.iter().enumerate() {
+                let mut flags = 0;
+                if src.component == dst.component {
+                    flags |= 1;
+                }
+                if self.scc_dag.can_reach(src.component, dst.component) {
+                    flags |= 2;
+                }
+                if self.scc_dag.can_reach(dst.component, src.component) {
+                    flags |= 4;
+                }
+                frontier_pair[src_idx * max_frontiers + dst_idx] = flags;
+            }
+        }
+        StateFeatures {
+            inventory: std::mem::take(&mut inventory),
+            room_x: self.room_x.clone(),
+            room_y: self.room_y.clone(),
+            room_placed,
+            frontier,
+            frontier_pair,
+            occupancy: self.occupancy.clone(),
+        }
+    }
+
+    pub fn state_features_after_candidate(
+        &self,
+        common: &CommonData,
+        candidate: Action,
+    ) -> StateFeatures {
+        let mut env = self.clone_for_lookahead();
+        env.step(candidate, common);
+        env.state_features(common)
     }
 
     pub fn actions(&self) -> &[Action] {
@@ -831,5 +938,51 @@ mod tests {
             outcomes.connections_valid.as_slice(),
             [DoorValidOutcome::Invalid]
         ));
+    }
+
+    #[test]
+    fn state_features_after_candidate_match_direct_step() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": []
+            },
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": []
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        assert_eq!(Environment::max_frontiers(&common), 3);
+        let mut env = Environment::new(&common, (4, 4), 0);
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        let candidate = Action {
+            room_idx: 1,
+            x: 1,
+            y: 0,
+        };
+        let simulated = env.state_features_after_candidate(&common, candidate);
+        env.step(candidate, &common);
+        assert_eq!(simulated, env.state_features(&common));
+        assert_eq!(simulated.occupancy[0], 1);
+        assert_eq!(simulated.occupancy[1], 1);
     }
 }

@@ -1,4 +1,5 @@
-from env import EnvironmentGroup, GenerateConfig, Outcomes
+from env import Actions, EnvironmentGroup, GenerateConfig, Outcomes
+from model import Predictions
 import torch
 
 
@@ -89,7 +90,8 @@ def generate(
     engine = env.engine
     num_rooms = len(engine.rooms)
 
-    kv_cache = model.get_initial_kv_cache(num_envs, device)
+    uses_state_features = getattr(model, "uses_state_features", False)
+    kv_cache = None if uses_state_features else model.get_initial_kv_cache(num_envs, device)
     env.clear()
     known_outcomes = None
 
@@ -103,8 +105,34 @@ def generate(
                 candidates = env.get_candidates(config.max_candidates, device)
                 outcomes = env.get_outcomes(device)
             
-            # Model inference to get predictions and updated key-value cache for next step
-            preds, kv_cache_candidates = model.generate(candidates, kv_cache, config)
+            if uses_state_features:
+                door_preds = []
+                connection_preds = []
+                for start in range(0, candidates.room_idx.shape[1], config.state_candidate_chunk):
+                    end = start + config.state_candidate_chunk
+                    chunk = Actions(
+                        candidates.room_idx[:, start:end],
+                        candidates.room_x[:, start:end],
+                        candidates.room_y[:, start:end],
+                    )
+                    chunk_features = env.get_state_features_after_candidates(chunk, torch.device("cpu"))
+                    env_door_preds = []
+                    env_connection_preds = []
+                    for env_start in range(0, num_envs, config.state_environment_chunk):
+                        env_end = env_start + config.state_environment_chunk
+                        env_features = chunk_features.slice(env_start, env_end).flatten_candidates().to(device)
+                        chunk_preds = model(env_features)
+                        chunk_size = min(env_end, num_envs) - env_start
+                        candidate_count = chunk.room_idx.shape[1]
+                        env_door_preds.append(chunk_preds.door_invalid.view(chunk_size, candidate_count, -1))
+                        env_connection_preds.append(chunk_preds.connection_invalid.view(chunk_size, candidate_count, -1))
+                    door_preds.append(torch.cat(env_door_preds, dim=0))
+                    connection_preds.append(torch.cat(env_connection_preds, dim=0))
+                preds = Predictions(torch.cat(door_preds, dim=1), torch.cat(connection_preds, dim=1))
+                kv_cache_candidates = None
+            else:
+                # Model inference to get predictions and updated key-value cache for next step
+                preds, kv_cache_candidates = model.generate(candidates, kv_cache, config)
     
             if candidates.room_idx.shape[1] == 1:
                 # Only one candidate, so select it directly (e.g. on the first step)
@@ -141,7 +169,8 @@ def generate(
                 )
             
             # Finalize the kv cache update based on the selected action
-            kv_cache = model.get_updated_kv_cache(kv_cache, kv_cache_candidates, action_index)
+            if not uses_state_features:
+                kv_cache = model.get_updated_kv_cache(kv_cache, kv_cache_candidates, action_index)
         
     env.finish()
     actions = env.get_actions(device)

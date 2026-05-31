@@ -14,6 +14,8 @@ class GenerateConfig:
     max_candidates: int
     temperature: torch.Tensor
     lookahead_outcomes: bool = True
+    state_candidate_chunk: int = 1
+    state_environment_chunk: int = 8
 
 
 # Each tensor here is uint8 with shape
@@ -44,6 +46,26 @@ class Outcomes:
     door_invalid: torch.Tensor
     # -1 = unknown, 0 = valid (connection has return path), 1 = invalid (connection does not have return path)
     connection_invalid: torch.Tensor
+
+
+@dataclass
+class StateFeatures:
+    inventory: torch.Tensor
+    room_x: torch.Tensor
+    room_y: torch.Tensor
+    room_placed: torch.Tensor
+    frontier: torch.Tensor
+    frontier_pair: torch.Tensor
+    occupancy: torch.Tensor
+
+    def to(self, device: torch.device) -> "StateFeatures":
+        return StateFeatures(*(value.to(device) for value in vars(self).values()))
+
+    def flatten_candidates(self) -> "StateFeatures":
+        return StateFeatures(*(value.flatten(0, 1) for value in vars(self).values()))
+
+    def slice(self, start: int, end: int) -> "StateFeatures":
+        return StateFeatures(*(value[start:end] for value in vars(self).values()))
 
 
 @dataclass
@@ -96,6 +118,9 @@ class Engine:
             num_room_connection_variants=num_room_connection_variants,
         )
 
+    def get_state_feature_sizes(self) -> tuple[int, int, int]:
+        return self.engine.get_state_feature_sizes()
+
 
 class EnvironmentGroup:
     engine: Engine
@@ -129,9 +154,9 @@ class EnvironmentGroup:
 
     def replay(self, actions: Actions):
         self.env.replay(
-            actions.room_idx.cpu().numpy(),
-            actions.room_x.cpu().numpy(),
-            actions.room_y.cpu().numpy(),
+            actions.room_idx.contiguous().cpu().numpy(),
+            actions.room_x.contiguous().cpu().numpy(),
+            actions.room_y.contiguous().cpu().numpy(),
         )
         
     def get_actions(self, device: torch.device) -> Actions:
@@ -174,6 +199,21 @@ class EnvironmentGroup:
             door_invalid=torch.from_numpy(door_invalid).to(device),
             connection_invalid=torch.from_numpy(connection_invalid).to(device),
         )
+
+    @staticmethod
+    def _state_features(values, device: torch.device) -> StateFeatures:
+        return StateFeatures(*(torch.from_numpy(value).to(device) for value in values))
+
+    def get_state_features(self, device: torch.device) -> StateFeatures:
+        return self._state_features(self.env.get_state_features(), device)
+
+    def get_state_features_after_candidates(self, actions: Actions, device: torch.device) -> StateFeatures:
+        values = self.env.get_state_features_after_candidates(
+            actions.room_idx.contiguous().cpu().numpy(),
+            actions.room_x.contiguous().cpu().numpy(),
+            actions.room_y.contiguous().cpu().numpy(),
+        )
+        return self._state_features(values, device)
 
     def finish(self):
         self.env.finish()

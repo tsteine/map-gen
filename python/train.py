@@ -14,12 +14,13 @@ from pydantic import BaseModel
 from pathlib import Path
 
 from env import Actions, Engine, GenerateConfig, Outcomes
-from model import CausalTransformerModel
+from model import CausalTransformerModel, FrontierStateModel, Predictions
 from loss import LossConfig, compute_loss
 from generate import generate
 from experience import ExperienceStorage
 
 class ModelConfig(BaseModel):
+    type: str
     embedding_width: int 
     key_width: int
     value_width: int
@@ -41,6 +42,8 @@ class GenerationConfig(BaseModel):
     lookahead_outcomes: bool  # use post-candidate known outcomes when scoring candidates (greater CPU usage, better accuracy)
     temperature0: float  # initial temperature (higher = candidates selected more randomly)
     temperature1: float  # final temperature
+    state_candidate_chunk: int
+    state_environment_chunk: int 
 
     
 class TrainConfig(BaseModel):
@@ -52,6 +55,8 @@ class TrainConfig(BaseModel):
     door_weight: float  # amount of weight assigned to door outcomes in the loss function
     connection_weight: float  # amount of weight assigned to connection outcomes in the loss function
     ema_decay: float  # decay factor for exponential moving average model used during generation
+    state_prefix_samples: int
+    state_batch_chunk: int
 
 
 class Config(BaseModel):
@@ -77,6 +82,14 @@ args = parser.parse_args()
 config = Config.parse_file(args.config)
 
 verify_outcome_consistency = args.verify_outcome_consistency
+if config.generation.state_candidate_chunk <= 0:
+    raise ValueError("generation.state_candidate_chunk must be greater than zero")
+if config.generation.state_environment_chunk <= 0:
+    raise ValueError("generation.state_environment_chunk must be greater than zero")
+if config.train.state_prefix_samples <= 0:
+    raise ValueError("train.state_prefix_samples must be greater than zero")
+if config.train.state_batch_chunk <= 0:
+    raise ValueError("train.state_batch_chunk must be greater than zero")
 
 
 start_time = datetime.now()
@@ -119,7 +132,14 @@ gen_env = engine.create_environment_group(config.map_size, config.generation.num
 train_env = engine.create_environment_group(config.map_size, config.train.batch_size)
 output_metadata = engine.get_output_metadata()
 
-main_model = CausalTransformerModel(
+model_class = {
+    "causal_transformer": CausalTransformerModel,
+    "frontier_state": FrontierStateModel,
+}.get(config.model.type)
+if model_class is None:
+    raise ValueError(f"unknown model.type: {config.model.type}")
+
+main_model = model_class(
     num_rooms=len(rooms),
     output_metadata=output_metadata,
     map_x=config.map_size[0],
@@ -212,6 +232,8 @@ def get_gen_config(frac):
         temperature=torch.full([config.generation.num_environments],
             temperature, dtype=torch.float32, device=device),
         lookahead_outcomes=config.generation.lookahead_outcomes,
+        state_candidate_chunk=config.generation.state_candidate_chunk,
+        state_environment_chunk=config.generation.state_environment_chunk,
     )
 
 
@@ -256,14 +278,40 @@ def num_replay_batches(num_items, pass_factor, batch_size):
 
 def train_batch(train_actions, train_outcomes, gen_config):
     main_model.zero_grad()
-    preds = main_model(train_actions, gen_config)
-
-    repeated_outcomes = Outcomes(
-        door_invalid=train_outcomes.door_invalid.unsqueeze(1).repeat(1, episode_length, 1),
-        connection_invalid=train_outcomes.connection_invalid.unsqueeze(1).repeat(1, episode_length, 1),
-    )
-    mask = (train_actions.room_idx < num_rooms).unsqueeze(2)  # exclude dummy actions
-    loss = compute_loss(preds, repeated_outcomes, mask, loss_config)
+    if getattr(main_model, "uses_state_features", False):
+        repeated_outcomes = Outcomes(
+            door_invalid=train_outcomes.door_invalid.unsqueeze(1),
+            connection_invalid=train_outcomes.connection_invalid.unsqueeze(1),
+        )
+        mask = torch.ones([train_actions.room_idx.shape[0], 1, 1], dtype=torch.bool, device=device)
+        losses = []
+        for _ in range(config.train.state_prefix_samples):
+            prefix_length = int(torch.randint(1, episode_length + 1, ()).item())
+            prefix_actions = Actions(
+                train_actions.room_idx[:, :prefix_length],
+                train_actions.room_x[:, :prefix_length],
+                train_actions.room_y[:, :prefix_length],
+            )
+            train_env.replay(prefix_actions)
+            features = train_env.get_state_features(torch.device("cpu"))
+            door_preds = []
+            connection_preds = []
+            for start in range(0, train_actions.room_idx.shape[0], config.train.state_batch_chunk):
+                end = start + config.train.state_batch_chunk
+                chunk_preds = main_model(features.slice(start, end).to(device))
+                door_preds.append(chunk_preds.door_invalid)
+                connection_preds.append(chunk_preds.connection_invalid)
+            preds = Predictions(torch.cat(door_preds, dim=0), torch.cat(connection_preds, dim=0))
+            losses.append(compute_loss(preds, repeated_outcomes, mask, loss_config))
+        loss = torch.stack(losses).mean()
+    else:
+        preds = main_model(train_actions, gen_config)
+        repeated_outcomes = Outcomes(
+            door_invalid=train_outcomes.door_invalid.unsqueeze(1).repeat(1, episode_length, 1),
+            connection_invalid=train_outcomes.connection_invalid.unsqueeze(1).repeat(1, episode_length, 1),
+        )
+        mask = (train_actions.room_idx < num_rooms).unsqueeze(2)  # exclude dummy actions
+        loss = compute_loss(preds, repeated_outcomes, mask, loss_config)
     if not torch.isfinite(loss):
         raise RuntimeError(f"non-finite loss before backward: {loss.item()}")
 
