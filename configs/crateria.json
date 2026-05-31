@@ -6,6 +6,7 @@
   "map_size": [72, 72],
   "model": {
     "type": "frontier_state",
+    "compile": "true",
     "embedding_width": 256,
     "key_width": 64,
     "value_width": 64,
@@ -20,7 +21,7 @@
     "beta2": 0.95
   },
   "generation": {
-    "num_environments": 8192,
+    "num_environments": 2048,
     "action_candidates": 8,
     "lookahead_outcomes": false,
     "temperature0": 10.0,

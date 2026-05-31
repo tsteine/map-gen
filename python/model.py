@@ -387,19 +387,24 @@ class FrontierStateModel(torch.nn.Module):
 
     def _pair_features(self, features, node_mask):
         node = features.frontier
+        neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
         raw_x = node[:, :, 1].to(torch.int64)
         raw_y = node[:, :, 2].to(torch.int64)
         x = raw_x.clamp(0, self.map_x - 1)
         y = raw_y.clamp(0, self.map_y - 1)
-        x0, x1 = x.unsqueeze(2), x.unsqueeze(1)
-        y0, y1 = y.unsqueeze(2), y.unsqueeze(1)
-        raw_x0, raw_x1 = raw_x.unsqueeze(2), raw_x.unsqueeze(1)
-        raw_y0, raw_y1 = raw_y.unsqueeze(2), raw_y.unsqueeze(1)
+        def gather_neighbor(values):
+            return torch.gather(
+                values.unsqueeze(2).expand(-1, -1, neighbor.shape[2]), 1, neighbor
+            )
+        x0, x1 = x.unsqueeze(2), gather_neighbor(x)
+        y0, y1 = y.unsqueeze(2), gather_neighbor(y)
+        raw_x0, raw_x1 = raw_x.unsqueeze(2), gather_neighbor(raw_x)
+        raw_y0, raw_y1 = raw_y.unsqueeze(2), gather_neighbor(raw_y)
         min_x, max_x = torch.minimum(x0, x1), torch.maximum(x0, x1)
         min_y, max_y = torch.minimum(y0, y1), torch.maximum(y0, y1)
         area = (max_x - min_x + 1) * (max_y - min_y + 1)
         path_length = (max_x - min_x + 1) + (max_y - min_y + 1)
-        flags = features.frontier_pair
+        flags = features.frontier_neighbor_pair
         obstruction = features.frontier_obstruction.to(torch.float32)
         pair = torch.stack([
             (raw_x1 - raw_x0).to(torch.float32) / self.map_x,
@@ -414,7 +419,7 @@ class FrontierStateModel(torch.nn.Module):
             obstruction[:, :, :, 1] / path_length.clamp_min(1),
             obstruction[:, :, :, 2] / path_length.clamp_min(1),
         ], dim=-1)
-        return pair * (node_mask.unsqueeze(1) & node_mask.unsqueeze(2)).unsqueeze(-1)
+        return pair * (features.frontier_neighbor >= 0).unsqueeze(-1)
 
     def forward(self, features: StateFeatures):
         node = features.frontier
@@ -433,14 +438,21 @@ class FrontierStateModel(torch.nn.Module):
         X = X + self.kind_embedding(node[:, :, 4].to(torch.int64))
         X = X * node_mask.unsqueeze(-1)
         pair = self._pair_features(features, node_mask)
-        pair_mask = (node_mask.unsqueeze(1) & node_mask.unsqueeze(2)).unsqueeze(-1)
+        neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
+        pair_mask = (features.frontier_neighbor >= 0).unsqueeze(-1)
         for source_layer, pair_layer, output_layer, update_layer in zip(
             self.source_message_layers,
             self.pair_message_layers,
             self.message_output_layers,
             self.update_layers,
         ):
-            messages = output_layer(source_layer(X).unsqueeze(1) + pair_layer(pair)) * pair_mask
+            source = source_layer(X)
+            source = torch.gather(
+                source,
+                1,
+                neighbor.flatten(1).unsqueeze(-1).expand(-1, -1, source.shape[-1]),
+            ).view(*neighbor.shape, source.shape[-1])
+            messages = output_layer(source + pair_layer(pair)) * pair_mask
             messages = messages.sum(2) / pair_mask.sum(2).clamp_min(1)
             X = X + update_layer(torch.cat([X, messages], dim=-1))
             X = X * node_mask.unsqueeze(-1)

@@ -131,7 +131,7 @@ def generate(
                             )
                             env_features = env.get_state_features_after_candidates(
                                 env_chunk, torch.device("cpu"), env_start
-                            ).flatten_candidates().to(device)
+                            ).flatten_candidates().compact_frontiers().to(device)
                             with torch.amp.autocast(
                                 "cuda",
                                 enabled=device.type == "cuda" and config.state_autocast,

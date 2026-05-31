@@ -56,7 +56,8 @@ class StateFeatures:
     room_y: torch.Tensor
     room_placed: torch.Tensor
     frontier: torch.Tensor
-    frontier_pair: torch.Tensor
+    frontier_neighbor: torch.Tensor
+    frontier_neighbor_pair: torch.Tensor
     frontier_obstruction: torch.Tensor
 
     def to(self, device: torch.device) -> "StateFeatures":
@@ -67,6 +68,24 @@ class StateFeatures:
 
     def slice(self, start: int, end: int) -> "StateFeatures":
         return StateFeatures(*(value[start:end] for value in vars(self).values()))
+
+    def compact_frontiers(self) -> "StateFeatures":
+        frontier_count = int(torch.sum(self.frontier[:, :, 0] != 0, dim=1).max().item())
+        frontier_bucket = next(
+            (bucket for bucket in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 24, 32, 40) if bucket >= frontier_count),
+            self.frontier.shape[1],
+        )
+        frontier_bucket = min(frontier_bucket, self.frontier.shape[1])
+        return StateFeatures(
+            inventory=self.inventory,
+            room_x=self.room_x,
+            room_y=self.room_y,
+            room_placed=self.room_placed,
+            frontier=self.frontier[:, :frontier_bucket],
+            frontier_neighbor=self.frontier_neighbor[:, :frontier_bucket],
+            frontier_neighbor_pair=self.frontier_neighbor_pair[:, :frontier_bucket],
+            frontier_obstruction=self.frontier_obstruction[:, :frontier_bucket],
+        )
 
 
 @dataclass

@@ -10,6 +10,7 @@ use crate::common::{
 use crate::scc_dag::SccDag;
 
 const NO_COMPONENT: usize = usize::MAX;
+pub const FRONTIER_NEIGHBOR_COUNT: usize = 4;
 
 // Frontier: location of an unconnected door on the map.
 #[derive(Clone, Debug)]
@@ -42,8 +43,11 @@ pub struct StateFeatures {
     pub room_placed: Vec<u8>,
     // mask, x, y, vertical, kind, feasible attachment count, SCC component
     pub frontier: Vec<i16>,
+    // Indices into frontier. Each frontier keeps itself and nearby frontiers.
+    // -1 marks padding.
+    pub frontier_neighbor: Vec<i16>,
     // Bit flags: same SCC, source reaches destination, destination reaches source.
-    pub frontier_pair: Vec<u8>,
+    pub frontier_neighbor_pair: Vec<u8>,
     // Occupied tile counts: bounding rectangle and the two Manhattan L paths.
     pub frontier_obstruction: Vec<u16>,
 }
@@ -538,8 +542,9 @@ impl Environment {
             .map(|bit| u8::from(*bit))
             .collect::<Vec<_>>();
         let mut frontier = vec![0; max_frontiers * 7];
-        let mut frontier_pair = vec![0; max_frontiers * max_frontiers];
-        let mut frontier_obstruction = vec![0; max_frontiers * max_frontiers * 3];
+        let mut frontier_neighbor = vec![-1; max_frontiers * FRONTIER_NEIGHBOR_COUNT];
+        let mut frontier_neighbor_pair = vec![0; max_frontiers * FRONTIER_NEIGHBOR_COUNT];
+        let mut frontier_obstruction = vec![0; max_frontiers * FRONTIER_NEIGHBOR_COUNT * 3];
         let mut sorted_frontiers = self.frontier.iter().collect::<Vec<_>>();
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
         let map_width = self.map_size.0 as usize;
@@ -571,7 +576,32 @@ impl Environment {
             frontier[row + 6] = data.component as i16;
         }
         for (src_idx, (src_location, src)) in sorted_frontiers.iter().enumerate() {
-            for (dst_idx, (dst_location, dst)) in sorted_frontiers.iter().enumerate() {
+            let distance = |dst_idx: usize| {
+                let dst_location = sorted_frontiers[dst_idx].0;
+                (
+                    (src_location.x() - dst_location.x()).abs()
+                        + (src_location.y() - dst_location.y()).abs(),
+                    usize::from(dst_idx != src_idx),
+                    dst_idx,
+                )
+            };
+            let mut neighbors = [usize::MAX; FRONTIER_NEIGHBOR_COUNT];
+            let mut neighbor_count = 0;
+            for dst_idx in 0..sorted_frontiers.len() {
+                let insert_idx = (0..neighbor_count)
+                    .position(|idx| distance(neighbors[idx]) > distance(dst_idx))
+                    .unwrap_or(neighbor_count);
+                if insert_idx >= FRONTIER_NEIGHBOR_COUNT {
+                    continue;
+                }
+                neighbor_count = (neighbor_count + 1).min(FRONTIER_NEIGHBOR_COUNT);
+                for idx in (insert_idx + 1..neighbor_count).rev() {
+                    neighbors[idx] = neighbors[idx - 1];
+                }
+                neighbors[insert_idx] = dst_idx;
+            }
+            for (neighbor_idx, &dst_idx) in neighbors[..neighbor_count].iter().enumerate() {
+                let (dst_location, dst) = sorted_frontiers[dst_idx];
                 let mut flags = 0;
                 if src.component == dst.component {
                     flags |= 1;
@@ -582,12 +612,14 @@ impl Environment {
                 if self.scc_dag.can_reach(dst.component, src.component) {
                     flags |= 4;
                 }
-                frontier_pair[src_idx * max_frontiers + dst_idx] = flags;
+                let pair_idx = src_idx * FRONTIER_NEIGHBOR_COUNT + neighbor_idx;
+                frontier_neighbor[pair_idx] = dst_idx as i16;
+                frontier_neighbor_pair[pair_idx] = flags;
                 let min_x = src_location.x().min(dst_location.x());
                 let max_x = src_location.x().max(dst_location.x());
                 let min_y = src_location.y().min(dst_location.y());
                 let max_y = src_location.y().max(dst_location.y());
-                let obstruction_idx = (src_idx * max_frontiers + dst_idx) * 3;
+                let obstruction_idx = pair_idx * 3;
                 frontier_obstruction[obstruction_idx] = rect_sum(min_x, min_y, max_x, max_y);
                 frontier_obstruction[obstruction_idx + 1] =
                     rect_sum(min_x, src_location.y(), max_x, src_location.y())
@@ -603,7 +635,8 @@ impl Environment {
             room_y: self.room_y.clone(),
             room_placed,
             frontier,
-            frontier_pair,
+            frontier_neighbor,
+            frontier_neighbor_pair,
             frontier_obstruction,
         }
     }

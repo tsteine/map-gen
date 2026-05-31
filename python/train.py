@@ -189,7 +189,7 @@ loss_config = LossConfig(
     connection_weight=config.train.connection_weight,
 )
 
-def log_outcomes(outcomes, loss, round, frac):
+def log_outcomes(outcomes, loss, round, frac, num_episodes):
     door_invalid = torch.sum(outcomes.door_invalid != 0, dim=1)
     avg_door = torch.mean(door_invalid.to(torch.float32))
     min_door = torch.min(door_invalid)
@@ -219,6 +219,7 @@ def log_outcomes(outcomes, loss, round, frac):
         "min_door": min_door,
         "min_conn": min_conn,
         "frac": frac,
+        "num_episodes": num_episodes,
     }
 
     for name, value in metrics.items():
@@ -307,7 +308,7 @@ def train_batch(train_actions, train_outcomes, gen_config):
             for start in range(0, train_actions.room_idx.shape[0], config.train.state_batch_chunk):
                 end = min(start + config.train.state_batch_chunk, train_actions.room_idx.shape[0])
                 with torch.amp.autocast("cuda", enabled=device.type == "cuda" and config.model.autocast):
-                    chunk_preds = main_model(features.slice(start, end).to(device))
+                    chunk_preds = main_model(features.slice(start, end).compact_frontiers().to(device))
                     chunk_loss = compute_loss(
                         chunk_preds,
                         Outcomes(
@@ -385,7 +386,7 @@ try:
         experience.store(actions)
 
         avg_loss = total_loss / train_batch_count if train_batch_count > 0 else 0.0
-        log_outcomes(gen_outcomes, avg_loss, round, frac)
+        log_outcomes(gen_outcomes, avg_loss, round, frac, num_episodes)
 
         if stop_requested:
             logging.info("Stopping training after completing round %s.", round)

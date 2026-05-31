@@ -2,7 +2,7 @@
 /// EnvironmentGroup classes. It handles the creation and management of worker threads that run
 /// environment simulations in parallel.
 use crate::common::{Action, CommonData, Coord, DoorValidOutcome, Room, RoomIdx};
-use crate::environment::{Environment, StateFeatures};
+use crate::environment::{Environment, FRONTIER_NEIGHBOR_COUNT, StateFeatures};
 use crossbeam_channel as channel;
 use numpy::{
     Element, IntoPyArray, PyArray2, PyArray3, PyArray4, PyArray5, PyArrayMethods, PyReadonlyArray1,
@@ -105,7 +105,8 @@ struct StateFeatureShards {
     room_y: OutputShard<Coord>,
     room_placed: OutputShard<u8>,
     frontier: OutputShard<i16>,
-    frontier_pair: OutputShard<u8>,
+    frontier_neighbor: OutputShard<i16>,
+    frontier_neighbor_pair: OutputShard<u8>,
     frontier_obstruction: OutputShard<u16>,
 }
 
@@ -131,7 +132,12 @@ unsafe fn write_state_features(shards: StateFeatureShards, features: &[StateFeat
     unsafe { copy_rows(shards.room_y, features, |x| &x.room_y) };
     unsafe { copy_rows(shards.room_placed, features, |x| &x.room_placed) };
     unsafe { copy_rows(shards.frontier, features, |x| &x.frontier) };
-    unsafe { copy_rows(shards.frontier_pair, features, |x| &x.frontier_pair) };
+    unsafe { copy_rows(shards.frontier_neighbor, features, |x| &x.frontier_neighbor) };
+    unsafe {
+        copy_rows(shards.frontier_neighbor_pair, features, |x| {
+            &x.frontier_neighbor_pair
+        })
+    };
     unsafe {
         copy_rows(shards.frontier_obstruction, features, |x| {
             &x.frontier_obstruction
@@ -648,7 +654,8 @@ struct StateFeatureBuffers {
     room_y: Vec<Coord>,
     room_placed: Vec<u8>,
     frontier: Vec<i16>,
-    frontier_pair: Vec<u8>,
+    frontier_neighbor: Vec<i16>,
+    frontier_neighbor_pair: Vec<u8>,
     frontier_obstruction: Vec<u16>,
 }
 
@@ -661,8 +668,15 @@ impl StateFeatureBuffers {
             room_y: vec![0; snapshot_count * common_data.room.len()],
             room_placed: vec![0; snapshot_count * common_data.room.len()],
             frontier: vec![0; snapshot_count * max_frontiers * 7],
-            frontier_pair: vec![0; snapshot_count * max_frontiers * max_frontiers],
-            frontier_obstruction: vec![0; snapshot_count * max_frontiers * max_frontiers * 3],
+            frontier_neighbor: vec![-1; snapshot_count * max_frontiers * FRONTIER_NEIGHBOR_COUNT],
+            frontier_neighbor_pair: vec![
+                0;
+                snapshot_count * max_frontiers * FRONTIER_NEIGHBOR_COUNT
+            ],
+            frontier_obstruction: vec![
+                0;
+                snapshot_count * max_frontiers * FRONTIER_NEIGHBOR_COUNT * 3
+            ],
         }
     }
 
@@ -686,13 +700,17 @@ impl StateFeatureBuffers {
             frontier: OutputShard::from_slice(
                 &mut self.frontier[start * max_frontiers * 7..(start + len) * max_frontiers * 7],
             ),
-            frontier_pair: OutputShard::from_slice(
-                &mut self.frontier_pair[start * max_frontiers * max_frontiers
-                    ..(start + len) * max_frontiers * max_frontiers],
+            frontier_neighbor: OutputShard::from_slice(
+                &mut self.frontier_neighbor[start * max_frontiers * FRONTIER_NEIGHBOR_COUNT
+                    ..(start + len) * max_frontiers * FRONTIER_NEIGHBOR_COUNT],
+            ),
+            frontier_neighbor_pair: OutputShard::from_slice(
+                &mut self.frontier_neighbor_pair[start * max_frontiers * FRONTIER_NEIGHBOR_COUNT
+                    ..(start + len) * max_frontiers * FRONTIER_NEIGHBOR_COUNT],
             ),
             frontier_obstruction: OutputShard::from_slice(
-                &mut self.frontier_obstruction[start * max_frontiers * max_frontiers * 3
-                    ..(start + len) * max_frontiers * max_frontiers * 3],
+                &mut self.frontier_obstruction[start * max_frontiers * FRONTIER_NEIGHBOR_COUNT * 3
+                    ..(start + len) * max_frontiers * FRONTIER_NEIGHBOR_COUNT * 3],
             ),
         }
     }
@@ -1230,6 +1248,7 @@ impl EnvironmentGroup {
         Bound<'py, PyArray2<Coord>>,
         Bound<'py, PyArray2<u8>>,
         Bound<'py, PyArray3<i16>>,
+        Bound<'py, PyArray3<i16>>,
         Bound<'py, PyArray3<u8>>,
         Bound<'py, PyArray4<u16>>,
     )> {
@@ -1269,17 +1288,24 @@ impl EnvironmentGroup {
             )?,
             pyarray3_from_flat_vec(
                 py,
-                buffers.frontier_pair,
+                buffers.frontier_neighbor,
                 self.num_environments,
                 max_frontiers,
+                FRONTIER_NEIGHBOR_COUNT,
+            )?,
+            pyarray3_from_flat_vec(
+                py,
+                buffers.frontier_neighbor_pair,
+                self.num_environments,
                 max_frontiers,
+                FRONTIER_NEIGHBOR_COUNT,
             )?,
             pyarray4_from_flat_vec(
                 py,
                 buffers.frontier_obstruction,
                 self.num_environments,
                 max_frontiers,
-                max_frontiers,
+                FRONTIER_NEIGHBOR_COUNT,
                 3,
             )?,
         ))
@@ -1298,6 +1324,7 @@ impl EnvironmentGroup {
         Bound<'py, PyArray3<Coord>>,
         Bound<'py, PyArray3<Coord>>,
         Bound<'py, PyArray3<u8>>,
+        Bound<'py, PyArray4<i16>>,
         Bound<'py, PyArray4<i16>>,
         Bound<'py, PyArray4<u8>>,
         Bound<'py, PyArray5<u16>>,
@@ -1395,11 +1422,19 @@ impl EnvironmentGroup {
             )?,
             pyarray4_from_flat_vec(
                 py,
-                buffers.frontier_pair,
+                buffers.frontier_neighbor,
                 environment_count,
                 candidate_count,
                 max_frontiers,
+                FRONTIER_NEIGHBOR_COUNT,
+            )?,
+            pyarray4_from_flat_vec(
+                py,
+                buffers.frontier_neighbor_pair,
+                environment_count,
+                candidate_count,
                 max_frontiers,
+                FRONTIER_NEIGHBOR_COUNT,
             )?,
             pyarray5_from_flat_vec(
                 py,
@@ -1407,7 +1442,7 @@ impl EnvironmentGroup {
                 environment_count,
                 candidate_count,
                 max_frontiers,
-                max_frontiers,
+                FRONTIER_NEIGHBOR_COUNT,
                 3,
             )?,
         ))
