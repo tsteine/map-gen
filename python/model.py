@@ -422,8 +422,12 @@ class FrontierStateModel(torch.nn.Module):
         return pair * (features.frontier_neighbor >= 0).unsqueeze(-1)
 
     def forward(self, features: StateFeatures):
+        # Shapes below use: b=batch, f=frontiers, k=neighbors, e=embedding width,
+        # h=message hidden width.
+        # node: [b, f, 7]
         node = features.frontier
         node_mask = node[:, :, 0] != 0
+        # numeric: [b, f, 7]
         numeric = torch.stack([
             node[:, :, 1].to(torch.float32) / self.map_x,
             node[:, :, 2].to(torch.float32) / self.map_y,
@@ -433,6 +437,7 @@ class FrontierStateModel(torch.nn.Module):
             node[:, :, 2].to(torch.float32) / self.map_y,
             (self.map_y - node[:, :, 2].to(torch.float32)) / self.map_y,
         ], dim=-1)
+        # X: [b, f, e]
         X = self.node_numeric(numeric)
         X = X + self.orientation_embedding(node[:, :, 3].to(torch.int64))
         X = X + self.kind_embedding(node[:, :, 4].to(torch.int64))
@@ -440,6 +445,7 @@ class FrontierStateModel(torch.nn.Module):
         if node.shape[1] == 0:
             mean_pool = max_pool = X.new_zeros([X.shape[0], X.shape[2]])
         else:
+            # pair: [b, f, k, 11], neighbor: [b, f, k], pair_mask: [b, f, k, 1]
             pair = self._pair_features(features, node_mask)
             neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
             pair_mask = (features.frontier_neighbor >= 0).unsqueeze(-1)
@@ -449,12 +455,15 @@ class FrontierStateModel(torch.nn.Module):
                 self.message_output_layers,
                 self.update_layers,
             ):
+                # source: [b, f, h]
                 source = source_layer(X)
+                # Gather each frontier's neighbors: source: [b, f, k, h]
                 source = torch.gather(
                     source,
                     1,
                     neighbor.flatten(1).unsqueeze(-1).expand(-1, -1, source.shape[-1]),
                 ).view(*neighbor.shape, source.shape[-1])
+                # messages: [b, f, k, e], then [b, f, e] after neighbor pooling
                 messages = output_layer(source + pair_layer(pair)) * pair_mask
                 messages = messages.sum(2) / pair_mask.sum(2).clamp_min(1)
                 X = X + update_layer(torch.cat([X, messages], dim=-1))
@@ -463,11 +472,13 @@ class FrontierStateModel(torch.nn.Module):
             mean_pool = X.sum(1) / count
             max_pool = torch.where(node_mask.unsqueeze(-1), X, -torch.inf).max(1).values
             max_pool = torch.where(torch.isfinite(max_pool), max_pool, 0)
+        # inventory, mean_pool, max_pool, global_state: [b, e]
         inventory = torch.matmul(features.inventory.to(torch.float32), self.inventory_embedding)
         global_state = self.global_mlp(torch.cat([inventory, mean_pool, max_pool], dim=-1))
         room_x = (features.room_x.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
         room_y = (features.room_y.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
         room_placed = features.room_placed.to(torch.bool).unsqueeze(1)
+        # X: [b, 1, e]
         X = global_state.unsqueeze(1)
         door = self.door_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
         connection = self.connection_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
