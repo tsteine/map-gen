@@ -139,8 +139,14 @@ class CausalTransformerModel(torch.nn.Module):
             torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
         self.pos_embedding_y = torch.nn.Parameter(
             torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
-        self.room_embedding = torch.nn.Parameter(
-            torch.randn([self.num_rooms + 1, embedding_width]) / math.sqrt(embedding_width))
+        room_connection_variant_idx = torch.tensor(
+            output_metadata.room_connection_variant_idx + [output_metadata.num_room_connection_variants],
+            dtype=torch.int64)
+        assert room_connection_variant_idx.shape == (self.num_rooms + 1,)
+        self.register_buffer("room_connection_variant_idx", room_connection_variant_idx)
+        self.connection_variant_embedding = torch.nn.Parameter(
+            torch.randn([output_metadata.num_room_connection_variants + 1, embedding_width])
+            / math.sqrt(embedding_width))
         self.attn_layers = torch.nn.ModuleList()
         self.ff_layers = torch.nn.ModuleList()
         for i in range(num_layers):
@@ -169,7 +175,7 @@ class CausalTransformerModel(torch.nn.Module):
         # TODO: try rotary positional embeddings
         position_emb_x = self.pos_embedding_x[room_x + COORD_OFFSET]
         position_emb_y = self.pos_embedding_y[room_y + COORD_OFFSET]
-        room_emb = self.room_embedding[room_idx]
+        room_emb = self.connection_variant_embedding[self.room_connection_variant_idx[room_idx]]
         
         # X = global_emb + position_emb_x + position_emb_y + room_emb
         X = position_emb_x + position_emb_y + room_emb
@@ -339,6 +345,8 @@ if __name__ == "__main__":
             connection=[(0, 0), (1, 1)],
             num_door_variants=0,
             num_connection_variants=2,
+            room_connection_variant_idx=[0, 1, 2, 3],
+            num_room_connection_variants=4,
         ),
         map_x=8,
         map_y=8,

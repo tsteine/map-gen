@@ -52,6 +52,8 @@ class OutputMetadata:
     connection: list[tuple[int, int]]
     num_door_variants: int
     num_connection_variants: int
+    room_connection_variant_idx: list[int]
+    num_room_connection_variants: int
 
     def get_output_sizes(self) -> tuple[int, int]:
         return len(self.door), len(self.connection)
@@ -75,7 +77,14 @@ class Engine:
         return self.engine.get_output_sizes()
 
     def get_output_metadata(self) -> OutputMetadata:
-        door, connection, num_door_variants, num_connection_variants = (
+        (
+            door,
+            connection,
+            num_door_variants,
+            num_connection_variants,
+            room_connection_variant_idx,
+            num_room_connection_variants,
+        ) = (
             self.engine.get_output_metadata()
         )
         return OutputMetadata(
@@ -83,6 +92,8 @@ class Engine:
             connection=connection,
             num_door_variants=num_door_variants,
             num_connection_variants=num_connection_variants,
+            room_connection_variant_idx=room_connection_variant_idx,
+            num_room_connection_variants=num_room_connection_variants,
         )
 
 

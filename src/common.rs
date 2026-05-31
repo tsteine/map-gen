@@ -690,5 +690,13 @@ mod tests {
             .collect();
         assert_eq!(connection_output, vec![(2, 0)]);
         assert_eq!(common.num_connection_output_variants, 1);
+
+        let room_connection_variant_idx: Vec<_> = common
+            .room
+            .iter()
+            .map(|room| room.connection_variant_idx)
+            .collect();
+        assert_eq!(room_connection_variant_idx, vec![0, 0, 1]);
+        assert_eq!(common.connection_variant_rooms.len(), 2);
     }
 }
