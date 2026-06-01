@@ -16,7 +16,8 @@ class GenerateConfig:
     lookahead_outcomes: bool = True
     state_candidate_chunk: int = 1
     state_environment_chunk: int = 8
-    state_autocast: bool = True
+    state_autocast: bool = False
+    training_autocast: bool = True
 
 
 # Each tensor here is uint8 with shape

@@ -25,6 +25,7 @@ class ModelConfig(BaseModel):
     type: str = "causal_transformer"
     compile: bool = True
     autocast: bool = True
+    generation_autocast: bool = False
     embedding_width: int 
     key_width: int
     value_width: int
@@ -90,6 +91,12 @@ parser.add_argument(
     action="store_true",
     help="log synchronized per-round timing breakdowns (changes CUDA throughput)",
 )
+parser.add_argument(
+    "--device",
+    choices=("auto", "cpu", "cuda"),
+    default="auto",
+    help="training device (default: auto; uses CUDA when available)",
+)
 args = parser.parse_args()
 config = Config.parse_file(args.config)
 
@@ -146,7 +153,30 @@ rooms_str = open(config.room_set, "r").read()
 rooms = json.loads(rooms_str)
 num_rooms = len(rooms)
 episode_length = num_rooms
-device = torch.device("cuda:0")
+if args.device == "cpu" or (args.device == "auto" and not torch.cuda.is_available()):
+    device = torch.device("cpu")
+elif not torch.cuda.is_available():
+    raise RuntimeError("--device cuda requested, but CUDA is not available")
+else:
+    device = torch.device("cuda:0")
+    torch.set_float32_matmul_precision('high')
+    if (config.model.autocast or config.model.generation_autocast) and not torch.cuda.is_bf16_supported():
+        raise RuntimeError(
+            "CUDA bfloat16 autocast requested, but this GPU does not support bfloat16. "
+            "Use --device cpu for float32 CPU execution or set model.autocast=false "
+            "and model.generation_autocast=false for float32 CUDA execution."
+        )
+
+train_precision = "bfloat16 autocast" if device.type == "cuda" and config.model.autocast else "float32"
+generation_precision = (
+    "bfloat16 autocast" if device.type == "cuda" and config.model.generation_autocast else "float32"
+)
+logging.info(
+    "Using device %s with %s training and %s generation.",
+    device,
+    train_precision,
+    generation_precision,
+)
 
 engine = Engine(rooms)
 gen_env = engine.create_environment_group(
@@ -273,7 +303,8 @@ def get_gen_config(frac):
         lookahead_outcomes=config.generation.lookahead_outcomes,
         state_candidate_chunk=config.generation.state_candidate_chunk,
         state_environment_chunk=config.generation.state_environment_chunk,
-        state_autocast=config.model.autocast,
+        state_autocast=config.model.generation_autocast,
+        training_autocast=config.model.autocast,
     )
 
 
@@ -286,7 +317,6 @@ main_optimizer = torch.optim.Adam(
     lr=config.optimizer.lr,
     betas=(config.optimizer.beta1, config.optimizer.beta2))
 
-scaler = torch.amp.GradScaler('cuda')
 train_prefetcher = Prefetcher()
 
 num_episodes = 0
@@ -364,18 +394,22 @@ def train_batch(train_actions, train_outcomes, gen_config):
                 with profiler.timer("train.cpu_transfer_submit"):
                     chunk_features = chunk_features.to(device)
                 with profiler.cuda_timer("train.gpu_forward_backward", device):
-                    with torch.amp.autocast("cuda", enabled=device.type == "cuda" and config.model.autocast):
+                    with torch.amp.autocast(
+                        "cuda",
+                        dtype=torch.bfloat16,
+                        enabled=device.type == "cuda" and config.model.autocast,
+                    ):
                         chunk_preds = main_model(chunk_features)
-                        chunk_loss = compute_loss(
-                            chunk_preds,
-                            Outcomes(
-                                repeated_outcomes.door_invalid[start:end],
-                                repeated_outcomes.connection_invalid[start:end],
-                            ),
-                            mask[start:end],
-                            loss_config,
-                        )
-                    scaler.scale(chunk_loss * chunk_weight).backward()
+                    chunk_loss = compute_loss(
+                        chunk_preds,
+                        Outcomes(
+                            repeated_outcomes.door_invalid[start:end],
+                            repeated_outcomes.connection_invalid[start:end],
+                        ),
+                        mask[start:end],
+                        loss_config,
+                    )
+                    (chunk_loss * chunk_weight).backward()
                 total_loss += chunk_loss.item() * chunk_weight
         loss = torch.tensor(total_loss, device=device)
     else:
@@ -392,14 +426,12 @@ def train_batch(train_actions, train_outcomes, gen_config):
 
     if not getattr(main_model, "uses_state_features", False):
         with profiler.cuda_timer("train.gpu_backward", device):
-            scaler.scale(loss).backward()
+            loss.backward()
     with profiler.cuda_timer("train.gpu_optimizer", device):
-        scaler.unscale_(main_optimizer)
         grad_norm = torch.nn.utils.clip_grad_norm_(main_model.parameters(), max_norm=1.0)
         if not torch.isfinite(grad_norm):
             raise RuntimeError(f"non-finite gradient norm: {grad_norm.item()}")
-        scaler.step(main_optimizer)
-        scaler.update()
+        main_optimizer.step()
         update_ema_model()
 
     return loss.item()

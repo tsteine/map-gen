@@ -227,6 +227,7 @@ def generate(
                                 with profiler.cuda_timer("gen.gpu_model_reward", device):
                                     with torch.amp.autocast(
                                         "cuda",
+                                        dtype=torch.bfloat16,
                                         enabled=device.type == "cuda" and config.state_autocast,
                                     ):
                                         chunk_preds = model(env_features)
