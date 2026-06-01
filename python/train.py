@@ -49,6 +49,7 @@ class GenerationConfig(BaseModel):
     state_candidate_chunk: int = 1
     state_environment_chunk: int = 8
     frontier_neighbor_count: int = 4
+    frontier_window_size: int = 16
     num_threads: int | None = None
 
     
@@ -100,6 +101,8 @@ if config.generation.state_environment_chunk <= 0:
     raise ValueError("generation.state_environment_chunk must be greater than zero")
 if config.generation.frontier_neighbor_count <= 0:
     raise ValueError("generation.frontier_neighbor_count must be greater than zero")
+if config.generation.frontier_window_size <= 0:
+    raise ValueError("generation.frontier_window_size must be greater than zero")
 if config.generation.num_threads is not None and config.generation.num_threads <= 0:
     raise ValueError("generation.num_threads must be greater than zero")
 if config.train.state_prefix_samples <= 0:
@@ -151,12 +154,14 @@ gen_env = engine.create_environment_group(
     config.generation.num_environments,
     seed=0,
     frontier_neighbor_count=config.generation.frontier_neighbor_count,
+    frontier_window_size=config.generation.frontier_window_size,
     num_threads=config.generation.num_threads,
 )
 train_env = engine.create_environment_group(
     config.map_size,
     config.train.batch_size,
     frontier_neighbor_count=config.generation.frontier_neighbor_count,
+    frontier_window_size=config.generation.frontier_window_size,
     num_threads=config.generation.num_threads,
 )
 output_metadata = engine.get_output_metadata()
@@ -180,6 +185,7 @@ main_model = model_class(
     head_groups=config.model.head_groups,
     hidden_width=config.model.hidden_width,
     num_layers=config.model.num_layers,
+    frontier_window_size=config.generation.frontier_window_size,
 ).to(device)
 
 ema_model = copy.deepcopy(main_model).to(device)

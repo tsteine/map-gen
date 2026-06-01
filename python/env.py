@@ -56,6 +56,7 @@ class StateFeatures:
     room_y: torch.Tensor
     room_placed: torch.Tensor
     frontier: torch.Tensor
+    frontier_occupancy: torch.Tensor
     frontier_neighbor: torch.Tensor
     frontier_neighbor_pair: torch.Tensor
     frontier_obstruction: torch.Tensor
@@ -97,12 +98,13 @@ class Engine:
         num_envs: int,
         seed: Optional[int] = None,
         frontier_neighbor_count: int = 4,
+        frontier_window_size: int = 16,
         num_threads: Optional[int] = None,
     ) -> "EnvironmentGroup":
         if seed is None:
             seed = int(torch.randint(0, 2**31 - 1, ()).item())
         env = self.engine.create_environment_group(
-            map_size, num_envs, seed, frontier_neighbor_count, num_threads
+            map_size, num_envs, seed, frontier_neighbor_count, frontier_window_size, num_threads
         )
         return EnvironmentGroup(self, env, map_size, num_envs)
 

@@ -160,11 +160,13 @@ enum WorkerCommand {
     },
     GetStateFeatures {
         frontier_neighbor_count: usize,
+        frontier_window_size: usize,
         environment_start: usize,
         environment_count: usize,
     },
     GetStateFeaturesAfterCandidates {
         frontier_neighbor_count: usize,
+        frontier_window_size: usize,
         environment_start: usize,
         environment_count: usize,
         candidate_count: usize,
@@ -481,6 +483,7 @@ fn worker_loop(
             }
             WorkerCommand::GetStateFeatures {
                 frontier_neighbor_count,
+                frontier_window_size,
                 environment_start,
                 environment_count,
             } => {
@@ -488,13 +491,20 @@ fn worker_loop(
                     .iter()
                     .skip(environment_start)
                     .take(environment_count)
-                    .map(|env| env.state_features(&common_data, frontier_neighbor_count))
+                    .map(|env| {
+                        env.state_features(
+                            &common_data,
+                            frontier_neighbor_count,
+                            frontier_window_size,
+                        )
+                    })
                     .collect();
                 let frontier_count = max_state_feature_frontier_count(&pending_state_features);
                 WorkerResponse::StateFeatureProfile(StateFeatureProfile::default(), frontier_count)
             }
             WorkerCommand::GetStateFeaturesAfterCandidates {
                 frontier_neighbor_count,
+                frontier_window_size,
                 environment_start,
                 environment_count,
                 candidate_count,
@@ -529,6 +539,7 @@ fn worker_loop(
                                 },
                                 &occupancy_prefix,
                                 frontier_neighbor_count,
+                                frontier_window_size,
                             );
                         pending_state_features.push(features);
                         profile.add(&candidate_profile);
@@ -657,6 +668,7 @@ pub struct EnvironmentGroup {
     workers: Vec<WorkerHandle>, // fixed worker-owned environment shards
     num_environments: usize,
     frontier_neighbor_count: usize,
+    frontier_window_size: usize,
     action_count: usize,
     state_feature_worker_ns: AtomicU64,
     state_feature_pack_ns: AtomicU64,
@@ -692,6 +704,7 @@ struct StateFeatureBuffers {
     room_y: Vec<Coord>,
     room_placed: Vec<u8>,
     frontier: Vec<i16>,
+    frontier_occupancy: Vec<u8>,
     frontier_neighbor: Vec<i16>,
     frontier_neighbor_pair: Vec<u8>,
     frontier_obstruction: Vec<u16>,
@@ -703,6 +716,7 @@ struct StateFeatureOutputShards {
     room_y: OutputShard<Coord>,
     room_placed: OutputShard<u8>,
     frontier: OutputShard<i16>,
+    frontier_occupancy: OutputShard<u8>,
     frontier_neighbor: OutputShard<i16>,
     frontier_neighbor_pair: OutputShard<u8>,
     frontier_obstruction: OutputShard<u16>,
@@ -710,6 +724,7 @@ struct StateFeatureOutputShards {
     room_count: usize,
     frontier_count: usize,
     frontier_neighbor_count: usize,
+    frontier_window_size: usize,
 }
 
 struct StateFeatureOutputSlices<'a> {
@@ -718,6 +733,7 @@ struct StateFeatureOutputSlices<'a> {
     room_y: &'a mut [Coord],
     room_placed: &'a mut [u8],
     frontier: &'a mut [i16],
+    frontier_occupancy: &'a mut [u8],
     frontier_neighbor: &'a mut [i16],
     frontier_neighbor_pair: &'a mut [u8],
     frontier_obstruction: &'a mut [u16],
@@ -725,6 +741,7 @@ struct StateFeatureOutputSlices<'a> {
     room_count: usize,
     frontier_count: usize,
     frontier_neighbor_count: usize,
+    frontier_window_size: usize,
 }
 
 impl StateFeatureOutputShards {
@@ -735,6 +752,7 @@ impl StateFeatureOutputShards {
             room_y: unsafe { self.room_y.into_mut_slice() },
             room_placed: unsafe { self.room_placed.into_mut_slice() },
             frontier: unsafe { self.frontier.into_mut_slice() },
+            frontier_occupancy: unsafe { self.frontier_occupancy.into_mut_slice() },
             frontier_neighbor: unsafe { self.frontier_neighbor.into_mut_slice() },
             frontier_neighbor_pair: unsafe { self.frontier_neighbor_pair.into_mut_slice() },
             frontier_obstruction: unsafe { self.frontier_obstruction.into_mut_slice() },
@@ -742,6 +760,7 @@ impl StateFeatureOutputShards {
             room_count: self.room_count,
             frontier_count: self.frontier_count,
             frontier_neighbor_count: self.frontier_neighbor_count,
+            frontier_window_size: self.frontier_window_size,
         }
     }
 }
@@ -773,6 +792,12 @@ impl StateFeatureOutputSlices<'_> {
             self.frontier_count * 7,
         );
         copy_row(
+            &mut self.frontier_occupancy,
+            &features.frontier_occupancy,
+            idx,
+            self.frontier_count * self.frontier_window_size * self.frontier_window_size,
+        );
+        copy_row(
             &mut self.frontier_neighbor,
             &features.frontier_neighbor,
             idx,
@@ -799,6 +824,7 @@ impl StateFeatureBuffers {
         snapshot_count: usize,
         frontier_count: usize,
         frontier_neighbor_count: usize,
+        frontier_window_size: usize,
     ) -> Self {
         Self {
             inventory: vec![0; snapshot_count * common_data.connection_variant_rooms.len()],
@@ -806,6 +832,13 @@ impl StateFeatureBuffers {
             room_y: vec![0; snapshot_count * common_data.room.len()],
             room_placed: vec![0; snapshot_count * common_data.room.len()],
             frontier: vec![0; snapshot_count * frontier_count * 7],
+            frontier_occupancy: vec![
+                0;
+                snapshot_count
+                    * frontier_count
+                    * frontier_window_size
+                    * frontier_window_size
+            ],
             frontier_neighbor: vec![-1; snapshot_count * frontier_count * frontier_neighbor_count],
             frontier_neighbor_pair: vec![
                 0;
@@ -826,6 +859,7 @@ impl StateFeatureBuffers {
         room_count: usize,
         frontier_count: usize,
         frontier_neighbor_count: usize,
+        frontier_window_size: usize,
     ) -> StateFeatureOutputShards {
         fn output_shard<T>(values: &mut [T], start: usize, len: usize) -> OutputShard<T> {
             OutputShard::from_slice(&mut values[start..start + len])
@@ -852,6 +886,11 @@ impl StateFeatureBuffers {
                 frontier_start * 7,
                 snapshot_count * frontier_count * 7,
             ),
+            frontier_occupancy: output_shard(
+                &mut self.frontier_occupancy,
+                frontier_start * frontier_window_size * frontier_window_size,
+                snapshot_count * frontier_count * frontier_window_size * frontier_window_size,
+            ),
             frontier_neighbor: output_shard(
                 &mut self.frontier_neighbor,
                 frontier_start * frontier_neighbor_count,
@@ -871,6 +910,7 @@ impl StateFeatureBuffers {
             room_count,
             frontier_count,
             frontier_neighbor_count,
+            frontier_window_size,
         }
     }
 }
@@ -899,13 +939,14 @@ impl Engine {
         self.common_data.room.len()
     }
 
-    #[pyo3(signature = (map_size, num_environments, seed, frontier_neighbor_count, num_threads=None))]
+    #[pyo3(signature = (map_size, num_environments, seed, frontier_neighbor_count, frontier_window_size, num_threads=None))]
     fn create_environment_group(
         &self,
         map_size: (Coord, Coord),
         num_environments: usize,
         seed: u64,
         frontier_neighbor_count: usize,
+        frontier_window_size: usize,
         num_threads: Option<usize>,
     ) -> PyResult<EnvironmentGroup> {
         EnvironmentGroup::new(
@@ -914,6 +955,7 @@ impl Engine {
             num_environments,
             seed,
             frontier_neighbor_count,
+            frontier_window_size,
             num_threads,
         )
     }
@@ -974,11 +1016,17 @@ impl EnvironmentGroup {
         num_environments: usize,
         seed: u64,
         frontier_neighbor_count: usize,
+        frontier_window_size: usize,
         num_threads: Option<usize>,
     ) -> PyResult<Self> {
         if frontier_neighbor_count == 0 {
             return Err(PyValueError::new_err(
                 "frontier_neighbor_count must be greater than zero",
+            ));
+        }
+        if frontier_window_size == 0 {
+            return Err(PyValueError::new_err(
+                "frontier_window_size must be greater than zero",
             ));
         }
         let requested_threads = requested_num_threads(num_threads)?;
@@ -1013,6 +1061,7 @@ impl EnvironmentGroup {
             workers,
             num_environments,
             frontier_neighbor_count,
+            frontier_window_size,
             action_count: 0,
             state_feature_worker_ns: AtomicU64::new(0),
             state_feature_pack_ns: AtomicU64::new(0),
@@ -1435,6 +1484,7 @@ impl EnvironmentGroup {
         Bound<'py, PyArray2<Coord>>,
         Bound<'py, PyArray2<u8>>,
         Bound<'py, PyArray3<i16>>,
+        Bound<'py, PyArray3<u8>>,
         Bound<'py, PyArray3<i16>>,
         Bound<'py, PyArray3<u8>>,
         Bound<'py, PyArray4<u16>>,
@@ -1464,6 +1514,7 @@ impl EnvironmentGroup {
                 }
                 if let Err(err) = worker.send(WorkerCommand::GetStateFeatures {
                     frontier_neighbor_count: self.frontier_neighbor_count,
+                    frontier_window_size: self.frontier_window_size,
                     environment_start: start - worker.start,
                     environment_count: end - start,
                 }) {
@@ -1479,6 +1530,7 @@ impl EnvironmentGroup {
             environment_count,
             frontier_count,
             self.frontier_neighbor_count,
+            self.frontier_window_size,
         );
         py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
@@ -1497,6 +1549,7 @@ impl EnvironmentGroup {
                         room_count,
                         frontier_count,
                         self.frontier_neighbor_count,
+                        self.frontier_window_size,
                     ),
                 }) {
                     set_first_error(&mut first_error, err);
@@ -1512,6 +1565,13 @@ impl EnvironmentGroup {
             pyarray2_from_flat_vec(py, buffers.room_y, environment_count, room_count)?,
             pyarray2_from_flat_vec(py, buffers.room_placed, environment_count, room_count)?,
             pyarray3_from_flat_vec(py, buffers.frontier, environment_count, frontier_count, 7)?,
+            pyarray3_from_flat_vec(
+                py,
+                buffers.frontier_occupancy,
+                environment_count,
+                frontier_count,
+                self.frontier_window_size * self.frontier_window_size,
+            )?,
             pyarray3_from_flat_vec(
                 py,
                 buffers.frontier_neighbor,
@@ -1551,6 +1611,7 @@ impl EnvironmentGroup {
         Bound<'py, PyArray3<Coord>>,
         Bound<'py, PyArray3<u8>>,
         Bound<'py, PyArray4<i16>>,
+        Bound<'py, PyArray4<u8>>,
         Bound<'py, PyArray4<i16>>,
         Bound<'py, PyArray4<u8>>,
         Bound<'py, PyArray5<u16>>,
@@ -1593,6 +1654,7 @@ impl EnvironmentGroup {
                 let len = environment_count * candidate_count;
                 if let Err(err) = worker.send(WorkerCommand::GetStateFeaturesAfterCandidates {
                     frontier_neighbor_count: self.frontier_neighbor_count,
+                    frontier_window_size: self.frontier_window_size,
                     environment_start: start - worker.start,
                     environment_count,
                     candidate_count,
@@ -1614,6 +1676,7 @@ impl EnvironmentGroup {
             snapshot_count,
             frontier_count,
             self.frontier_neighbor_count,
+            self.frontier_window_size,
         );
         let pack_start = Instant::now();
         py.detach(|| {
@@ -1635,6 +1698,7 @@ impl EnvironmentGroup {
                         room_count,
                         frontier_count,
                         self.frontier_neighbor_count,
+                        self.frontier_window_size,
                     ),
                 }) {
                     set_first_error(&mut first_error, err);
@@ -1718,6 +1782,14 @@ impl EnvironmentGroup {
                 candidate_count,
                 frontier_count,
                 7,
+            )?,
+            pyarray4_from_flat_vec(
+                py,
+                buffers.frontier_occupancy,
+                environment_count,
+                candidate_count,
+                frontier_count,
+                self.frontier_window_size * self.frontier_window_size,
             )?,
             pyarray4_from_flat_vec(
                 py,

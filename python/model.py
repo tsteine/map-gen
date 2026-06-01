@@ -338,7 +338,7 @@ class CausalTransformerModel(torch.nn.Module):
 class FrontierStateModel(torch.nn.Module):
     uses_state_features = True
 
-    def __init__(self, num_rooms, output_metadata: OutputMetadata, map_x, map_y, embedding_width, hidden_width, num_layers, **_):
+    def __init__(self, num_rooms, output_metadata: OutputMetadata, map_x, map_y, embedding_width, hidden_width, num_layers, frontier_window_size=16, **_):
         super().__init__()
         self.num_rooms = num_rooms
         self.map_x = map_x
@@ -348,33 +348,33 @@ class FrontierStateModel(torch.nn.Module):
             torch.randn([output_metadata.num_room_connection_variants, embedding_width]) / math.sqrt(embedding_width))
         self.orientation_embedding = torch.nn.Embedding(2, embedding_width)
         self.kind_embedding = torch.nn.Embedding(256, embedding_width)
-        self.node_numeric = torch.nn.Linear(7, embedding_width)
+        self.node_numeric = torch.nn.Linear(7 + frontier_window_size**2, embedding_width, bias=False)
         self.source_message_layers = torch.nn.ModuleList([
-            torch.nn.Linear(embedding_width, hidden_width)
+            torch.nn.Linear(embedding_width, hidden_width, bias=False)
             for _ in range(num_layers)
         ])
         self.pair_message_layers = torch.nn.ModuleList([
-            torch.nn.Linear(11, hidden_width)
+            torch.nn.Linear(11, hidden_width, bias=False)
             for _ in range(num_layers)
         ])
         self.message_output_layers = torch.nn.ModuleList([
             torch.nn.Sequential(
                 torch.nn.GELU(),
-                torch.nn.Linear(hidden_width, embedding_width),
+                torch.nn.Linear(hidden_width, embedding_width, bias=False),
             )
             for _ in range(num_layers)
         ])
         self.update_layers = torch.nn.ModuleList([
             torch.nn.Sequential(
-                torch.nn.Linear(embedding_width * 2, hidden_width),
+                torch.nn.Linear(embedding_width * 2, hidden_width, bias=False),
                 torch.nn.GELU(),
-                torch.nn.Linear(hidden_width, embedding_width),
+                torch.nn.Linear(hidden_width, embedding_width, bias=False),
             ) for _ in range(num_layers)
         ])
         self.global_mlp = torch.nn.Sequential(
-            torch.nn.Linear(embedding_width * 3, hidden_width),
+            torch.nn.Linear(embedding_width * 3, hidden_width, bias=False),
             torch.nn.GELU(),
-            torch.nn.Linear(hidden_width, embedding_width),
+            torch.nn.Linear(hidden_width, embedding_width, bias=False),
         )
         self.pos_embedding_x = torch.nn.Parameter(
             torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
@@ -438,7 +438,7 @@ class FrontierStateModel(torch.nn.Module):
             (self.map_y - node[:, :, 2].to(torch.float32)) / self.map_y,
         ], dim=-1)
         # X: [b, f, e]
-        X = self.node_numeric(numeric)
+        X = self.node_numeric(torch.cat([numeric, features.frontier_occupancy.to(torch.float32)], dim=-1))
         X = X + self.orientation_embedding(node[:, :, 3].to(torch.int64))
         X = X + self.kind_embedding(node[:, :, 4].to(torch.int64))
         X = X * node_mask.unsqueeze(-1)
