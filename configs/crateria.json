@@ -22,6 +22,7 @@
   },
   "generation": {
     "num_environments": 2048,
+    "num_iterations": 1,
     "action_candidates": 8,
     "lookahead_outcomes": false,
     "temperature0": 10.0,

@@ -43,6 +43,7 @@ class OptimizerConfig(BaseModel):
 
 class GenerationConfig(BaseModel):
     num_environments: int  # number of maps to generate in parallel
+    num_iterations: int = 1  # number of sequential parallel batches to generate per training round
     action_candidates: int  # number of candidates to score for each room placement step
     lookahead_outcomes: bool  # use post-candidate known outcomes when scoring candidates (greater CPU usage, better accuracy)
     temperature0: float  # initial temperature (higher = candidates selected more randomly)
@@ -102,6 +103,8 @@ config = Config.parse_file(args.config)
 
 verify_outcome_consistency = args.verify_outcome_consistency
 profiler = ProfileStats(args.profile)
+if config.generation.num_iterations <= 0:
+    raise ValueError("generation.num_iterations must be greater than zero")
 if config.generation.state_candidate_chunk <= 0:
     raise ValueError("generation.state_candidate_chunk must be greater than zero")
 if config.generation.state_environment_chunk <= 0:
@@ -132,9 +135,10 @@ if verify_outcome_consistency:
 if profiler.enabled:
     logging.info("Profiling enabled. CUDA timings synchronize the device and change throughput.")
 
-if config.train.fresh_pass_factor != 0.0 and config.generation.num_environments % config.train.batch_size != 0:
+episodes_per_round = config.generation.num_iterations * config.generation.num_environments
+if config.train.fresh_pass_factor != 0.0 and episodes_per_round % config.train.batch_size != 0:
     raise ValueError(
-        "train.batch_size must evenly divide generation.num_environments when "
+        "train.batch_size must evenly divide the number of episodes generated per round when "
         "train.fresh_pass_factor is non-zero"
     )
 
@@ -309,7 +313,6 @@ def get_gen_config(frac):
     )
 
 
-episodes_per_round = config.generation.num_environments
 experience_path = f"{run_path}/experience"
 experience = ExperienceStorage(num_rooms, experience_path, episodes_per_round)
 
@@ -444,17 +447,40 @@ try:
         frac = min(num_episodes / config.annealing_episodes, 1.0)
 
         # Generate new maps:
-        gen_config = get_gen_config(frac)
+        action_iterations = []
+        outcome_iterations = []
         with profiler.timer("round.generate"):
-            actions, gen_outcomes = generate(
-                gen_env,
-                ema_model,
-                gen_config,
-                device,
-                verify_outcome_consistency=verify_outcome_consistency,
-                profiler=profiler,
+            for iteration in range(config.generation.num_iterations):
+                iteration_frac = min(
+                    (num_episodes + iteration * config.generation.num_environments)
+                    / config.annealing_episodes,
+                    1.0,
+                )
+                gen_config = get_gen_config(iteration_frac)
+                iteration_actions, iteration_outcomes = generate(
+                    gen_env,
+                    ema_model,
+                    gen_config,
+                    device,
+                    verify_outcome_consistency=verify_outcome_consistency,
+                    profiler=profiler,
+                )
+                action_iterations.append(iteration_actions)
+                outcome_iterations.append(iteration_outcomes)
+        actions = Actions(
+            room_idx=torch.cat([actions.room_idx for actions in action_iterations]),
+            room_x=torch.cat([actions.room_x for actions in action_iterations]),
+            room_y=torch.cat([actions.room_y for actions in action_iterations]),
+        )
+        gen_outcomes = Outcomes(
+            door_invalid=torch.cat(
+                [outcomes.door_invalid for outcomes in outcome_iterations]
+            ),
+            connection_invalid=torch.cat(
+                [outcomes.connection_invalid for outcomes in outcome_iterations]
             )
-        num_episodes += config.generation.num_environments
+        )
+        num_episodes += episodes_per_round
 
         # Train the model on the episodes generated in this round.
         total_loss = 0.0
