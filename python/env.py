@@ -95,8 +95,8 @@ class Engine:
     engine: map_gen.Engine
     rooms: list[dict]
 
-    def __init__(self, rooms: list[dict]):
-        self.engine = map_gen.Engine(json.dumps(rooms))
+    def __init__(self, rooms: list[dict], state_features: dict[str, bool] | None = None):
+        self.engine = map_gen.Engine(json.dumps(rooms), json.dumps(state_features or {}))
         self.rooms = rooms
 
     def create_environment_group(

@@ -1,7 +1,7 @@
 {
   "experiment_name": "norfair-initial-testing",
   "room_set": "room_definitions/norfair.json",
-  "annealing_episodes": 1000000,
+  "annealing_episodes": 2000000,
   "total_episodes": 4000000,
   "map_size": [72, 72],
   "model": {
@@ -34,6 +34,20 @@
     "frontier_neighbor_count": 4,
     "frontier_window_size": 16,
     "num_threads": 32
+  },
+  "state_features": {
+    "inventory": true,
+    "room_position": true,
+    "frontier_mask": true,
+    "frontier_position": true,
+    "frontier_orientation": true,
+    "frontier_kind": true,
+    "frontier_candidate_count": true,
+    "frontier_occupancy": true,
+    "frontier_neighbor": true,
+    "frontier_neighbor_position": true,
+    "frontier_neighbor_flags": true,
+    "frontier_obstruction": true
   },
   "train": {
     "batch_size": 512,

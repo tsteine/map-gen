@@ -2,7 +2,7 @@
 /// EnvironmentGroup classes. It handles the creation and management of worker threads that run
 /// environment simulations in parallel.
 use crate::common::{Action, CommonData, Coord, DoorValidOutcome, Room, RoomIdx};
-use crate::environment::{Environment, StateFeatureProfile, StateFeatures};
+use crate::environment::{Environment, StateFeatureConfig, StateFeatureProfile, StateFeatures};
 use crossbeam_channel as channel;
 use numpy::{
     Element, IntoPyArray, PyArray2, PyArray3, PyArray4, PyArray5, PyArrayMethods, PyReadonlyArray1,
@@ -238,6 +238,7 @@ impl Drop for WorkerHandle {
 fn worker_loop(
     mut environments: Vec<Environment>,
     common_data: Arc<CommonData>,
+    state_features: StateFeatureConfig,
     command_rx: channel::Receiver<WorkerCommand>,
     response_tx: channel::Sender<WorkerResponse>,
 ) {
@@ -494,6 +495,7 @@ fn worker_loop(
                     .map(|env| {
                         env.state_features(
                             &common_data,
+                            &state_features,
                             frontier_neighbor_count,
                             frontier_window_size,
                         )
@@ -524,9 +526,14 @@ fn worker_loop(
                     .take(environment_count)
                     .enumerate()
                 {
-                    let start = Instant::now();
-                    let occupancy_prefix = env.occupancy_prefix();
-                    profile.occupancy_prefix_ns += start.elapsed().as_nanos() as u64;
+                    let occupancy_prefix = if state_features.frontier_obstruction {
+                        let start = Instant::now();
+                        let occupancy_prefix = env.occupancy_prefix();
+                        profile.occupancy_prefix_ns += start.elapsed().as_nanos() as u64;
+                        occupancy_prefix
+                    } else {
+                        vec![]
+                    };
                     for candidate_idx in 0..candidate_count {
                         let idx = env_idx * candidate_count + candidate_idx;
                         let (features, candidate_profile) = env
@@ -537,6 +544,7 @@ fn worker_loop(
                                     x: room_x[idx],
                                     y: room_y[idx],
                                 },
+                                &state_features,
                                 &occupancy_prefix,
                                 frontier_neighbor_count,
                                 frontier_window_size,
@@ -569,13 +577,22 @@ fn spawn_worker(
     start: usize,
     environments: Vec<Environment>,
     common_data: Arc<CommonData>,
+    state_features: StateFeatureConfig,
 ) -> PyResult<WorkerHandle> {
     let len = environments.len();
     let (command_tx, command_rx) = channel::bounded(1);
     let (response_tx, response_rx) = channel::bounded(1);
     let join_handle = thread::Builder::new()
         .name(format!("map-gen-worker-{worker_idx}"))
-        .spawn(move || worker_loop(environments, common_data, command_rx, response_tx))
+        .spawn(move || {
+            worker_loop(
+                environments,
+                common_data,
+                state_features,
+                command_rx,
+                response_tx,
+            )
+        })
         .map_err(|err| PyRuntimeError::new_err(format!("failed to spawn worker thread: {err}")))?;
 
     Ok(WorkerHandle {
@@ -660,11 +677,13 @@ fn max_state_feature_frontier_count(features: &[StateFeatures]) -> usize {
 #[pyclass(module = "map_gen")]
 pub struct Engine {
     common_data: Arc<CommonData>, // pre-computed data that can be shared across environments
+    state_features: StateFeatureConfig,
 }
 
 #[pyclass(module = "map_gen")]
 pub struct EnvironmentGroup {
     common_data: Arc<CommonData>,
+    state_features: StateFeatureConfig,
     workers: Vec<WorkerHandle>, // fixed worker-owned environment shards
     num_environments: usize,
     frontier_neighbor_count: usize,
@@ -768,6 +787,9 @@ impl StateFeatureOutputShards {
 impl StateFeatureOutputSlices<'_> {
     fn write_features(&mut self, idx: usize, features: &StateFeatures) {
         fn copy_row<T: Copy>(dst: &mut [T], row: &[T], idx: usize, stride: usize) {
+            if row.is_empty() {
+                return;
+            }
             dst[idx * stride..idx * stride + row.len()].copy_from_slice(row);
         }
 
@@ -778,6 +800,9 @@ impl StateFeatureOutputSlices<'_> {
             frontier_count: usize,
             frontier_window_size: usize,
         ) {
+            if src.is_empty() {
+                return;
+            }
             let window_area = frontier_window_size * frontier_window_size;
             let packed_window_size = window_area.div_ceil(8);
             let dst = &mut dst[idx * frontier_count * packed_window_size
@@ -846,31 +871,66 @@ impl StateFeatureOutputSlices<'_> {
 impl StateFeatureBuffers {
     fn new(
         common_data: &CommonData,
+        state_features: &StateFeatureConfig,
         snapshot_count: usize,
         frontier_count: usize,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> Self {
         Self {
-            inventory: vec![0; snapshot_count * common_data.connection_variant_rooms.len()],
-            room_x: vec![0; snapshot_count * common_data.room.len()],
-            room_y: vec![0; snapshot_count * common_data.room.len()],
-            room_placed: vec![0; snapshot_count * common_data.room.len()],
+            inventory: vec![
+                0;
+                snapshot_count
+                    * common_data.connection_variant_rooms.len()
+                    * usize::from(state_features.inventory)
+            ],
+            room_x: vec![
+                0;
+                snapshot_count
+                    * common_data.room.len()
+                    * usize::from(state_features.room_position)
+            ],
+            room_y: vec![
+                0;
+                snapshot_count
+                    * common_data.room.len()
+                    * usize::from(state_features.room_position)
+            ],
+            room_placed: vec![
+                0;
+                snapshot_count
+                    * common_data.room.len()
+                    * usize::from(state_features.room_position)
+            ],
             frontier: vec![0; snapshot_count * frontier_count * 7],
             frontier_occupancy: vec![
                 0;
                 snapshot_count
                     * frontier_count
                     * (frontier_window_size * frontier_window_size).div_ceil(8)
+                    * usize::from(state_features.frontier_occupancy)
             ],
-            frontier_neighbor: vec![-1; snapshot_count * frontier_count * frontier_neighbor_count],
+            frontier_neighbor: vec![
+                -1;
+                snapshot_count
+                    * frontier_count
+                    * frontier_neighbor_count
+                    * usize::from(state_features.frontier_neighbor)
+            ],
             frontier_neighbor_pair: vec![
                 0;
-                snapshot_count * frontier_count * frontier_neighbor_count
+                snapshot_count
+                    * frontier_count
+                    * frontier_neighbor_count
+                    * usize::from(state_features.frontier_neighbor_flags)
             ],
             frontier_obstruction: vec![
                 0;
-                snapshot_count * frontier_count * frontier_neighbor_count * 3
+                snapshot_count
+                    * frontier_count
+                    * frontier_neighbor_count
+                    * 3
+                    * usize::from(state_features.frontier_obstruction)
             ],
         }
     }
@@ -884,15 +944,25 @@ impl StateFeatureBuffers {
         frontier_count: usize,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
+        state_features: &StateFeatureConfig,
     ) -> StateFeatureOutputShards {
         fn output_shard<T>(values: &mut [T], start: usize, len: usize) -> OutputShard<T> {
             OutputShard::from_slice(&mut values[start..start + len])
         }
 
+        let inventory_count = inventory_count * usize::from(state_features.inventory);
+        let room_count = room_count * usize::from(state_features.room_position);
         let inventory_start = snapshot_start * inventory_count;
         let room_start = snapshot_start * room_count;
         let frontier_start = snapshot_start * frontier_count;
-        let packed_window_size = (frontier_window_size * frontier_window_size).div_ceil(8);
+        let packed_window_size = (frontier_window_size * frontier_window_size).div_ceil(8)
+            * usize::from(state_features.frontier_occupancy);
+        let output_neighbor_count =
+            frontier_neighbor_count * usize::from(state_features.frontier_neighbor);
+        let pair_neighbor_count =
+            frontier_neighbor_count * usize::from(state_features.frontier_neighbor_flags);
+        let obstruction_neighbor_count =
+            frontier_neighbor_count * usize::from(state_features.frontier_obstruction);
         StateFeatureOutputShards {
             inventory: output_shard(
                 &mut self.inventory,
@@ -918,18 +988,18 @@ impl StateFeatureBuffers {
             ),
             frontier_neighbor: output_shard(
                 &mut self.frontier_neighbor,
-                frontier_start * frontier_neighbor_count,
-                snapshot_count * frontier_count * frontier_neighbor_count,
+                frontier_start * output_neighbor_count,
+                snapshot_count * frontier_count * output_neighbor_count,
             ),
             frontier_neighbor_pair: output_shard(
                 &mut self.frontier_neighbor_pair,
-                frontier_start * frontier_neighbor_count,
-                snapshot_count * frontier_count * frontier_neighbor_count,
+                frontier_start * pair_neighbor_count,
+                snapshot_count * frontier_count * pair_neighbor_count,
             ),
             frontier_obstruction: output_shard(
                 &mut self.frontier_obstruction,
-                frontier_start * frontier_neighbor_count * 3,
-                snapshot_count * frontier_count * frontier_neighbor_count * 3,
+                frontier_start * obstruction_neighbor_count * 3,
+                snapshot_count * frontier_count * obstruction_neighbor_count * 3,
             ),
             inventory_count,
             room_count,
@@ -951,13 +1021,21 @@ impl Drop for EnvironmentGroup {
 #[pymethods]
 impl Engine {
     #[new]
-    #[pyo3(signature = (rooms_json))]
-    fn new(rooms_json: &str) -> PyResult<Self> {
+    #[pyo3(signature = (rooms_json, state_features_json="{}"))]
+    fn new(rooms_json: &str, state_features_json: &str) -> PyResult<Self> {
         let rooms: Vec<Room> = serde_json::from_str(rooms_json)
             .map_err(|err| PyValueError::new_err(format!("failed to parse rooms JSON: {err}")))?;
-        let common_data = Arc::new(CommonData::new(rooms)?);
+        let state_features: StateFeatureConfig = serde_json::from_str(state_features_json)
+            .map_err(|err| {
+                PyValueError::new_err(format!("failed to parse state features JSON: {err}"))
+            })?;
+        state_features.validate().map_err(PyValueError::new_err)?;
+        let common_data = Arc::new(CommonData::new(rooms, state_features.frontier_obstruction)?);
 
-        Ok(Self { common_data })
+        Ok(Self {
+            common_data,
+            state_features,
+        })
     }
 
     fn num_rooms(&self) -> usize {
@@ -976,6 +1054,7 @@ impl Engine {
     ) -> PyResult<EnvironmentGroup> {
         EnvironmentGroup::new(
             Arc::clone(&self.common_data),
+            self.state_features,
             map_size,
             num_environments,
             seed,
@@ -1037,6 +1116,7 @@ impl Engine {
 impl EnvironmentGroup {
     fn new(
         common_data: Arc<CommonData>,
+        state_features: StateFeatureConfig,
         map_size: (Coord, Coord),
         num_environments: usize,
         seed: u64,
@@ -1077,12 +1157,14 @@ impl EnvironmentGroup {
                 start,
                 environments,
                 Arc::clone(&common_data),
+                state_features,
             )?);
             start = end;
         }
 
         Ok(Self {
             common_data,
+            state_features,
             workers,
             num_environments,
             frontier_neighbor_count,
@@ -1552,6 +1634,7 @@ impl EnvironmentGroup {
         })?;
         let mut buffers = StateFeatureBuffers::new(
             &self.common_data,
+            &self.state_features,
             environment_count,
             frontier_count,
             self.frontier_neighbor_count,
@@ -1575,6 +1658,7 @@ impl EnvironmentGroup {
                         frontier_count,
                         self.frontier_neighbor_count,
                         self.frontier_window_size,
+                        &self.state_features,
                     ),
                 }) {
                     set_first_error(&mut first_error, err);
@@ -1585,39 +1669,62 @@ impl EnvironmentGroup {
             wait_for_done_responses(&self.workers, sent_workers, first_error)
         })?;
         Ok((
-            pyarray2_from_flat_vec(py, buffers.inventory, environment_count, inventory_count)?,
-            pyarray2_from_flat_vec(py, buffers.room_x, environment_count, room_count)?,
-            pyarray2_from_flat_vec(py, buffers.room_y, environment_count, room_count)?,
-            pyarray2_from_flat_vec(py, buffers.room_placed, environment_count, room_count)?,
+            pyarray2_from_flat_vec(
+                py,
+                buffers.inventory,
+                environment_count,
+                inventory_count * usize::from(self.state_features.inventory),
+            )?,
+            pyarray2_from_flat_vec(
+                py,
+                buffers.room_x,
+                environment_count,
+                room_count * usize::from(self.state_features.room_position),
+            )?,
+            pyarray2_from_flat_vec(
+                py,
+                buffers.room_y,
+                environment_count,
+                room_count * usize::from(self.state_features.room_position),
+            )?,
+            pyarray2_from_flat_vec(
+                py,
+                buffers.room_placed,
+                environment_count,
+                room_count * usize::from(self.state_features.room_position),
+            )?,
             pyarray3_from_flat_vec(py, buffers.frontier, environment_count, frontier_count, 7)?,
             pyarray3_from_flat_vec(
                 py,
                 buffers.frontier_occupancy,
                 environment_count,
                 frontier_count,
-                (self.frontier_window_size * self.frontier_window_size).div_ceil(8),
+                (self.frontier_window_size * self.frontier_window_size).div_ceil(8)
+                    * usize::from(self.state_features.frontier_occupancy),
             )?,
             pyarray3_from_flat_vec(
                 py,
                 buffers.frontier_neighbor,
                 environment_count,
                 frontier_count,
-                self.frontier_neighbor_count,
+                self.frontier_neighbor_count * usize::from(self.state_features.frontier_neighbor),
             )?,
             pyarray3_from_flat_vec(
                 py,
                 buffers.frontier_neighbor_pair,
                 environment_count,
                 frontier_count,
-                self.frontier_neighbor_count,
+                self.frontier_neighbor_count
+                    * usize::from(self.state_features.frontier_neighbor_flags),
             )?,
             pyarray4_from_flat_vec(
                 py,
                 buffers.frontier_obstruction,
                 environment_count,
                 frontier_count,
-                self.frontier_neighbor_count,
-                3,
+                self.frontier_neighbor_count
+                    * usize::from(self.state_features.frontier_obstruction),
+                3 * usize::from(self.state_features.frontier_obstruction),
             )?,
         ))
     }
@@ -1698,6 +1805,7 @@ impl EnvironmentGroup {
             .fetch_add(worker_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         let mut buffers = StateFeatureBuffers::new(
             &self.common_data,
+            &self.state_features,
             snapshot_count,
             frontier_count,
             self.frontier_neighbor_count,
@@ -1724,6 +1832,7 @@ impl EnvironmentGroup {
                         frontier_count,
                         self.frontier_neighbor_count,
                         self.frontier_window_size,
+                        &self.state_features,
                     ),
                 }) {
                     set_first_error(&mut first_error, err);
@@ -1777,28 +1886,28 @@ impl EnvironmentGroup {
                 buffers.inventory,
                 environment_count,
                 candidate_count,
-                inventory_count,
+                inventory_count * usize::from(self.state_features.inventory),
             )?,
             pyarray3_from_flat_vec(
                 py,
                 buffers.room_x,
                 environment_count,
                 candidate_count,
-                room_count,
+                room_count * usize::from(self.state_features.room_position),
             )?,
             pyarray3_from_flat_vec(
                 py,
                 buffers.room_y,
                 environment_count,
                 candidate_count,
-                room_count,
+                room_count * usize::from(self.state_features.room_position),
             )?,
             pyarray3_from_flat_vec(
                 py,
                 buffers.room_placed,
                 environment_count,
                 candidate_count,
-                room_count,
+                room_count * usize::from(self.state_features.room_position),
             )?,
             pyarray4_from_flat_vec(
                 py,
@@ -1814,7 +1923,8 @@ impl EnvironmentGroup {
                 environment_count,
                 candidate_count,
                 frontier_count,
-                (self.frontier_window_size * self.frontier_window_size).div_ceil(8),
+                (self.frontier_window_size * self.frontier_window_size).div_ceil(8)
+                    * usize::from(self.state_features.frontier_occupancy),
             )?,
             pyarray4_from_flat_vec(
                 py,
@@ -1822,7 +1932,7 @@ impl EnvironmentGroup {
                 environment_count,
                 candidate_count,
                 frontier_count,
-                self.frontier_neighbor_count,
+                self.frontier_neighbor_count * usize::from(self.state_features.frontier_neighbor),
             )?,
             pyarray4_from_flat_vec(
                 py,
@@ -1830,7 +1940,8 @@ impl EnvironmentGroup {
                 environment_count,
                 candidate_count,
                 frontier_count,
-                self.frontier_neighbor_count,
+                self.frontier_neighbor_count
+                    * usize::from(self.state_features.frontier_neighbor_flags),
             )?,
             pyarray5_from_flat_vec(
                 py,
@@ -1838,8 +1949,9 @@ impl EnvironmentGroup {
                 environment_count,
                 candidate_count,
                 frontier_count,
-                self.frontier_neighbor_count,
-                3,
+                self.frontier_neighbor_count
+                    * usize::from(self.state_features.frontier_obstruction),
+                3 * usize::from(self.state_features.frontier_obstruction),
             )?,
         ))
     }

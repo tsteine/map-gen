@@ -2,6 +2,7 @@ use bitvec::vec::BitVec;
 use hashbrown::HashMap;
 use rand::SeedableRng;
 use rand::prelude::*;
+use serde::Deserialize;
 use std::time::Instant;
 
 use crate::common::{
@@ -34,7 +35,73 @@ pub struct Outcomes {
     pub connections_valid: Vec<DoorValidOutcome>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StateFeatureConfig {
+    pub inventory: bool,
+    pub room_position: bool,
+    pub frontier_mask: bool,
+    pub frontier_position: bool,
+    pub frontier_orientation: bool,
+    pub frontier_kind: bool,
+    pub frontier_candidate_count: bool,
+    pub frontier_occupancy: bool,
+    pub frontier_neighbor: bool,
+    pub frontier_neighbor_position: bool,
+    pub frontier_neighbor_flags: bool,
+    pub frontier_obstruction: bool,
+}
+
+impl StateFeatureConfig {
+    pub fn is_empty(&self) -> bool {
+        !self.inventory && !self.room_position && !self.has_frontier_features()
+    }
+
+    pub fn has_frontier_features(&self) -> bool {
+        self.frontier_mask
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if (self.frontier_position
+            || self.frontier_orientation
+            || self.frontier_kind
+            || self.frontier_candidate_count
+            || self.frontier_occupancy
+            || self.frontier_neighbor)
+            && !self.frontier_mask
+        {
+            return Err("frontier features require frontier_mask");
+        }
+        if (self.frontier_neighbor_position
+            || self.frontier_neighbor_flags
+            || self.frontier_obstruction)
+            && !self.frontier_neighbor
+        {
+            return Err("frontier neighbor pair features require frontier_neighbor");
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn all() -> Self {
+        Self {
+            inventory: true,
+            room_position: true,
+            frontier_mask: true,
+            frontier_position: true,
+            frontier_orientation: true,
+            frontier_kind: true,
+            frontier_candidate_count: true,
+            frontier_occupancy: true,
+            frontier_neighbor: true,
+            frontier_neighbor_position: true,
+            frontier_neighbor_flags: true,
+            frontier_obstruction: true,
+        }
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct StateFeatures {
     pub inventory: Vec<u8>,
     pub room_x: Vec<Coord>,
@@ -570,12 +637,18 @@ impl Environment {
     pub fn state_features(
         &self,
         common: &CommonData,
+        config: &StateFeatureConfig,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> StateFeatures {
-        let occupancy_prefix = self.occupancy_prefix();
+        let occupancy_prefix = if config.frontier_obstruction {
+            self.occupancy_prefix()
+        } else {
+            vec![]
+        };
         self.state_features_with_occupancy(
             common,
+            config,
             &occupancy_prefix,
             &self.occupancy,
             None,
@@ -604,6 +677,7 @@ impl Environment {
     fn state_features_with_occupancy(
         &self,
         common: &CommonData,
+        config: &StateFeatureConfig,
         occupancy_prefix: &[u16],
         occupancy: &[u8],
         extra_occupied: Option<(&GeometryData, Coord, Coord)>,
@@ -613,26 +687,55 @@ impl Environment {
     ) -> StateFeatures {
         let setup_start = Instant::now();
         assert!(self.frontier.len() <= Self::max_frontiers(common));
-        let frontier_count = self.frontier.len();
-        let mut inventory = self
-            .connection_variant_unused_count
-            .iter()
-            .map(|&count| count as u8)
-            .collect::<Vec<_>>();
-        let room_placed = self
-            .room_used
-            .iter()
-            .map(|bit| u8::from(*bit))
-            .collect::<Vec<_>>();
+        let frontier_count = if config.has_frontier_features() {
+            self.frontier.len()
+        } else {
+            0
+        };
+        let inventory = if config.inventory {
+            self.connection_variant_unused_count
+                .iter()
+                .map(|&count| count as u8)
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+        let room_placed = if config.room_position {
+            self.room_used
+                .iter()
+                .map(|bit| u8::from(*bit))
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
         let mut frontier = vec![0; frontier_count * 7];
-        let mut frontier_occupancy =
-            vec![0; frontier_count * frontier_window_size * frontier_window_size];
-        let mut frontier_neighbor = vec![-1; frontier_count * frontier_neighbor_count];
-        let mut frontier_neighbor_pair = vec![0; frontier_count * frontier_neighbor_count];
-        let mut frontier_obstruction = vec![0; frontier_count * frontier_neighbor_count * 3];
+        let mut frontier_occupancy = if config.frontier_occupancy {
+            vec![0; frontier_count * frontier_window_size * frontier_window_size]
+        } else {
+            vec![]
+        };
+        let mut frontier_neighbor = if config.frontier_neighbor {
+            vec![-1; frontier_count * frontier_neighbor_count]
+        } else {
+            vec![]
+        };
+        let mut frontier_neighbor_pair = if config.frontier_neighbor_flags {
+            vec![0; frontier_count * frontier_neighbor_count]
+        } else {
+            vec![]
+        };
+        let mut frontier_obstruction = if config.frontier_obstruction {
+            vec![0; frontier_count * frontier_neighbor_count * 3]
+        } else {
+            vec![]
+        };
         let setup_ns = setup_start.elapsed().as_nanos() as u64;
         let frontier_start = Instant::now();
-        let mut sorted_frontiers = self.frontier.iter().collect::<Vec<_>>();
+        let mut sorted_frontiers = if config.has_frontier_features() {
+            self.frontier.iter().collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
         let map_width = self.map_size.0 as usize;
         let prefix_width = map_width + 1;
@@ -647,13 +750,26 @@ impl Environment {
         };
         for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
             let row = idx * 7;
-            frontier[row] = 1;
-            frontier[row + 1] = location.x() as i16;
-            frontier[row + 2] = location.y() as i16;
-            frontier[row + 3] = location.vertical() as i16;
-            frontier[row + 4] = data.kind as i16;
-            frontier[row + 5] = data.candidates.len() as i16;
-            frontier[row + 6] = data.component as i16;
+            frontier[row] = i16::from(config.frontier_mask);
+            if config.frontier_position
+                || config.frontier_neighbor_position
+                || config.frontier_obstruction
+            {
+                frontier[row + 1] = location.x() as i16;
+                frontier[row + 2] = location.y() as i16;
+            }
+            if config.frontier_orientation {
+                frontier[row + 3] = location.vertical() as i16;
+            }
+            if config.frontier_kind {
+                frontier[row + 4] = data.kind as i16;
+            }
+            if config.frontier_candidate_count {
+                frontier[row + 5] = data.candidates.len() as i16;
+            }
+            if !config.frontier_occupancy {
+                continue;
+            }
             let window_start_x = location.x() as isize - frontier_window_size as isize / 2;
             let window_start_y = location.y() as isize - frontier_window_size as isize / 2;
             let window_start = idx * frontier_window_size * frontier_window_size;
@@ -697,92 +813,102 @@ impl Environment {
         let neighbor_start = Instant::now();
         let mut neighbors = vec![usize::MAX; frontier_neighbor_count];
         let mut neighbor_keys = vec![(Coord::MAX, usize::MAX, usize::MAX); frontier_neighbor_count];
-        for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
-            let distance = |dst_idx: usize| {
-                let dst_location = sorted_frontiers[dst_idx].0;
-                (
-                    (src_location.x() - dst_location.x()).abs()
-                        + (src_location.y() - dst_location.y()).abs(),
-                    usize::from(dst_idx != src_idx),
-                    dst_idx,
-                )
-            };
-            neighbors.fill(usize::MAX);
-            neighbor_keys.fill((Coord::MAX, usize::MAX, usize::MAX));
-            let mut neighbor_count = 0;
-            for dst_idx in 0..sorted_frontiers.len() {
-                let dst_key = distance(dst_idx);
-                let insert_idx = (0..neighbor_count)
-                    .position(|idx| neighbor_keys[idx] > dst_key)
-                    .unwrap_or(neighbor_count);
-                if insert_idx >= frontier_neighbor_count {
-                    continue;
+        if config.frontier_neighbor {
+            for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
+                let distance = |dst_idx: usize| {
+                    let dst_location = sorted_frontiers[dst_idx].0;
+                    (
+                        (src_location.x() - dst_location.x()).abs()
+                            + (src_location.y() - dst_location.y()).abs(),
+                        usize::from(dst_idx != src_idx),
+                        dst_idx,
+                    )
+                };
+                neighbors.fill(usize::MAX);
+                neighbor_keys.fill((Coord::MAX, usize::MAX, usize::MAX));
+                let mut neighbor_count = 0;
+                for dst_idx in 0..sorted_frontiers.len() {
+                    let dst_key = distance(dst_idx);
+                    let insert_idx = (0..neighbor_count)
+                        .position(|idx| neighbor_keys[idx] > dst_key)
+                        .unwrap_or(neighbor_count);
+                    if insert_idx >= frontier_neighbor_count {
+                        continue;
+                    }
+                    neighbor_count = (neighbor_count + 1).min(frontier_neighbor_count);
+                    for idx in (insert_idx + 1..neighbor_count).rev() {
+                        neighbors[idx] = neighbors[idx - 1];
+                        neighbor_keys[idx] = neighbor_keys[idx - 1];
+                    }
+                    neighbors[insert_idx] = dst_idx;
+                    neighbor_keys[insert_idx] = dst_key;
                 }
-                neighbor_count = (neighbor_count + 1).min(frontier_neighbor_count);
-                for idx in (insert_idx + 1..neighbor_count).rev() {
-                    neighbors[idx] = neighbors[idx - 1];
-                    neighbor_keys[idx] = neighbor_keys[idx - 1];
+                for (neighbor_idx, &dst_idx) in neighbors[..neighbor_count].iter().enumerate() {
+                    frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx] =
+                        dst_idx as i16;
                 }
-                neighbors[insert_idx] = dst_idx;
-                neighbor_keys[insert_idx] = dst_key;
-            }
-            for (neighbor_idx, &dst_idx) in neighbors[..neighbor_count].iter().enumerate() {
-                frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx] =
-                    dst_idx as i16;
             }
         }
         let neighbor_ns = neighbor_start.elapsed().as_nanos() as u64;
         let pair_flags_start = Instant::now();
-        for (src_idx, (_, src)) in sorted_frontiers.iter().enumerate() {
-            for neighbor_idx in 0..frontier_neighbor_count {
-                let dst_idx = frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx];
-                if dst_idx < 0 {
-                    break;
+        if config.frontier_neighbor_flags {
+            for (src_idx, (_, src)) in sorted_frontiers.iter().enumerate() {
+                for neighbor_idx in 0..frontier_neighbor_count {
+                    let dst_idx =
+                        frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx];
+                    if dst_idx < 0 {
+                        break;
+                    }
+                    let dst_idx = dst_idx as usize;
+                    let (_, dst) = sorted_frontiers[dst_idx];
+                    let mut flags = 0;
+                    if src.component == dst.component {
+                        flags |= 1;
+                    }
+                    if self.scc_dag.can_reach(src.component, dst.component) {
+                        flags |= 2;
+                    }
+                    if self.scc_dag.can_reach(dst.component, src.component) {
+                        flags |= 4;
+                    }
+                    let pair_idx = src_idx * frontier_neighbor_count + neighbor_idx;
+                    frontier_neighbor_pair[pair_idx] = flags;
                 }
-                let dst_idx = dst_idx as usize;
-                let (_, dst) = sorted_frontiers[dst_idx];
-                let mut flags = 0;
-                if src.component == dst.component {
-                    flags |= 1;
-                }
-                if self.scc_dag.can_reach(src.component, dst.component) {
-                    flags |= 2;
-                }
-                if self.scc_dag.can_reach(dst.component, src.component) {
-                    flags |= 4;
-                }
-                let pair_idx = src_idx * frontier_neighbor_count + neighbor_idx;
-                frontier_neighbor_pair[pair_idx] = flags;
             }
         }
         let pair_flags_ns = pair_flags_start.elapsed().as_nanos() as u64;
         let pair_obstruction_base_start = Instant::now();
-        for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
-            for neighbor_idx in 0..frontier_neighbor_count {
-                let dst_idx = frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx];
-                if dst_idx < 0 {
-                    break;
+        if config.frontier_obstruction {
+            for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
+                for neighbor_idx in 0..frontier_neighbor_count {
+                    let dst_idx =
+                        frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx];
+                    if dst_idx < 0 {
+                        break;
+                    }
+                    let dst_idx = dst_idx as usize;
+                    let (dst_location, _) = sorted_frontiers[dst_idx];
+                    let pair_idx = src_idx * frontier_neighbor_count + neighbor_idx;
+                    let min_x = src_location.x().min(dst_location.x());
+                    let max_x = src_location.x().max(dst_location.x());
+                    let min_y = src_location.y().min(dst_location.y());
+                    let max_y = src_location.y().max(dst_location.y());
+                    let obstruction_idx = pair_idx * 3;
+                    frontier_obstruction[obstruction_idx] = rect_sum(min_x, min_y, max_x, max_y);
+                    frontier_obstruction[obstruction_idx + 1] =
+                        rect_sum(min_x, src_location.y(), max_x, src_location.y())
+                            + rect_sum(dst_location.x(), min_y, dst_location.x(), max_y);
+                    frontier_obstruction[obstruction_idx + 2] =
+                        rect_sum(min_x, dst_location.y(), max_x, dst_location.y())
+                            + rect_sum(src_location.x(), min_y, src_location.x(), max_y);
                 }
-                let dst_idx = dst_idx as usize;
-                let (dst_location, _) = sorted_frontiers[dst_idx];
-                let pair_idx = src_idx * frontier_neighbor_count + neighbor_idx;
-                let min_x = src_location.x().min(dst_location.x());
-                let max_x = src_location.x().max(dst_location.x());
-                let min_y = src_location.y().min(dst_location.y());
-                let max_y = src_location.y().max(dst_location.y());
-                let obstruction_idx = pair_idx * 3;
-                frontier_obstruction[obstruction_idx] = rect_sum(min_x, min_y, max_x, max_y);
-                frontier_obstruction[obstruction_idx + 1] =
-                    rect_sum(min_x, src_location.y(), max_x, src_location.y())
-                        + rect_sum(dst_location.x(), min_y, dst_location.x(), max_y);
-                frontier_obstruction[obstruction_idx + 2] =
-                    rect_sum(min_x, dst_location.y(), max_x, dst_location.y())
-                        + rect_sum(src_location.x(), min_y, src_location.x(), max_y);
             }
         }
         let pair_obstruction_base_ns = pair_obstruction_base_start.elapsed().as_nanos() as u64;
         let pair_obstruction_candidate_start = Instant::now();
-        if let Some((geometry, offset_x, offset_y)) = extra_occupied {
+        if config.frontier_obstruction
+            && let Some((geometry, offset_x, offset_y)) = extra_occupied
+        {
             let candidate_rect_sum = |x0: Coord, y0: Coord, x1: Coord, y1: Coord| {
                 geometry.occupied_rect_sum(
                     x0 as isize - offset_x as isize,
@@ -822,9 +948,17 @@ impl Environment {
         let pair_ns = pair_flags_ns + pair_obstruction_ns;
         let output_start = Instant::now();
         let features = StateFeatures {
-            inventory: std::mem::take(&mut inventory),
-            room_x: self.room_x.clone(),
-            room_y: self.room_y.clone(),
+            inventory,
+            room_x: if config.room_position {
+                self.room_x.clone()
+            } else {
+                vec![]
+            },
+            room_y: if config.room_position {
+                self.room_y.clone()
+            } else {
+                vec![]
+            },
             room_placed,
             frontier,
             frontier_occupancy,
@@ -852,6 +986,7 @@ impl Environment {
         &self,
         common: &CommonData,
         candidate: Action,
+        config: &StateFeatureConfig,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> StateFeatures {
@@ -859,6 +994,7 @@ impl Environment {
         self.state_features_after_candidate_with_occupancy(
             common,
             candidate,
+            config,
             &occupancy_prefix,
             frontier_neighbor_count,
             frontier_window_size,
@@ -870,12 +1006,18 @@ impl Environment {
         &self,
         common: &CommonData,
         candidate: Action,
+        config: &StateFeatureConfig,
         occupancy_prefix: &[u16],
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> (StateFeatures, StateFeatureProfile) {
         let mut profile = StateFeatureProfile::default();
-        let extra_occupied = if candidate.room_idx < common.room.len() as RoomIdx {
+        if config.is_empty() {
+            return (StateFeatures::default(), profile);
+        }
+        let extra_occupied = if (config.frontier_occupancy || config.frontier_obstruction)
+            && candidate.room_idx < common.room.len() as RoomIdx
+        {
             let geometry_idx = common.room[candidate.room_idx as usize].geometry_idx;
             Some((
                 &common.geometry[geometry_idx as usize],
@@ -894,6 +1036,7 @@ impl Environment {
         let start = Instant::now();
         let features = env.state_features_with_occupancy(
             common,
+            config,
             occupancy_prefix,
             &self.occupancy,
             extra_occupied,
@@ -1006,7 +1149,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms).unwrap();
+        let common = CommonData::new(rooms, true).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1060,7 +1203,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms).unwrap();
+        let common = CommonData::new(rooms, true).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1095,7 +1238,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms).unwrap();
+        let common = CommonData::new(rooms, true).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1144,7 +1287,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms).unwrap();
+        let common = CommonData::new(rooms, true).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1205,7 +1348,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms).unwrap();
+        let common = CommonData::new(rooms, true).unwrap();
         let mut env = Environment::new(&common, (4, 1), 0);
 
         env.step(
@@ -1246,7 +1389,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms).unwrap();
+        let common = CommonData::new(rooms, true).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1308,7 +1451,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms).unwrap();
+        let common = CommonData::new(rooms, true).unwrap();
         assert_eq!(Environment::max_frontiers(&common), 3);
         let mut env = Environment::new(&common, (4, 4), 0);
         env.step(
@@ -1324,9 +1467,10 @@ mod tests {
             x: 1,
             y: 0,
         };
-        let simulated = env.state_features_after_candidate(&common, candidate, 4, 4);
+        let config = StateFeatureConfig::all();
+        let simulated = env.state_features_after_candidate(&common, candidate, &config, 4, 4);
         env.step(candidate, &common);
-        assert_eq!(simulated, env.state_features(&common, 4, 4));
+        assert_eq!(simulated, env.state_features(&common, &config, 4, 4));
         assert_eq!(env.occupancy[0], 1);
         assert_eq!(env.occupancy[1], 1);
         let mut sorted_frontiers = env.frontier.iter().collect::<Vec<_>>();
@@ -1345,5 +1489,51 @@ mod tests {
                 0, 0, 0, 0,
             ]
         );
+    }
+
+    #[test]
+    fn state_feature_config_validates_dependencies() {
+        assert!(
+            StateFeatureConfig {
+                frontier_position: true,
+                ..StateFeatureConfig::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            StateFeatureConfig {
+                frontier_neighbor_flags: true,
+                ..StateFeatureConfig::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(StateFeatureConfig::default().validate().is_ok());
+        assert!(StateFeatureConfig::all().validate().is_ok());
+    }
+
+    #[test]
+    fn disabled_state_features_skip_candidate_simulation() {
+        let rooms: Vec<Room> =
+            serde_json::from_str(r#"[{"map": [[1]], "doors": [], "connections": []}]"#).unwrap();
+        let common = CommonData::new(rooms, false).unwrap();
+        let env = Environment::new(&common, (4, 4), 0);
+        let (features, profile) = env.state_features_after_candidate_with_occupancy(
+            &common,
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &StateFeatureConfig::default(),
+            &[],
+            4,
+            4,
+        );
+        assert_eq!(features, StateFeatures::default());
+        assert_eq!(profile.clone_ns, 0);
+        assert_eq!(profile.step_ns, 0);
+        assert_eq!(profile.assemble_ns, 0);
     }
 }

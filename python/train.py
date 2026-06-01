@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 
 from aim import Run
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pathlib import Path
 
 from env import Actions, Engine, GenerateConfig, Outcomes
@@ -56,7 +56,22 @@ class GenerationConfig(BaseModel):
     frontier_window_size: int = 16
     num_threads: int | None = None
 
-    
+
+class StateFeatureConfig(BaseModel):
+    inventory: bool = False
+    room_position: bool = False
+    frontier_mask: bool = False
+    frontier_position: bool = False
+    frontier_orientation: bool = False
+    frontier_kind: bool = False
+    frontier_candidate_count: bool = False
+    frontier_occupancy: bool = False
+    frontier_neighbor: bool = False
+    frontier_neighbor_position: bool = False
+    frontier_neighbor_flags: bool = False
+    frontier_obstruction: bool = False
+
+
 class TrainConfig(BaseModel):
     batch_size: int  # number of episodes per training batch
     fresh_pass_factor: float  # number of passes over just-generated episodes
@@ -79,6 +94,7 @@ class Config(BaseModel):
     model: ModelConfig
     optimizer: OptimizerConfig
     generation: GenerationConfig
+    state_features: StateFeatureConfig = Field(default_factory=StateFeatureConfig)
     train: TrainConfig
 
 
@@ -129,6 +145,21 @@ if config.train.state_prefix_samples <= 0:
     raise ValueError("train.state_prefix_samples must be greater than zero")
 if config.train.state_batch_chunk <= 0:
     raise ValueError("train.state_batch_chunk must be greater than zero")
+if (
+    config.state_features.frontier_position
+    or config.state_features.frontier_orientation
+    or config.state_features.frontier_kind
+    or config.state_features.frontier_candidate_count
+    or config.state_features.frontier_occupancy
+    or config.state_features.frontier_neighbor
+) and not config.state_features.frontier_mask:
+    raise ValueError("frontier state features require state_features.frontier_mask")
+if (
+    config.state_features.frontier_neighbor_position
+    or config.state_features.frontier_neighbor_flags
+    or config.state_features.frontier_obstruction
+) and not config.state_features.frontier_neighbor:
+    raise ValueError("frontier neighbor pair features require state_features.frontier_neighbor")
 
 
 start_time = datetime.now()
@@ -239,7 +270,7 @@ logging.info(
     ", ".join(str(generation_device) for generation_device in generation_devices),
 )
 
-engine = Engine(rooms)
+engine = Engine(rooms, config.state_features.model_dump())
 generation_environment_counts = [
     config.generation.num_environments // len(generation_devices)
     for _ in generation_devices
@@ -284,6 +315,7 @@ main_model = model_class(
     hidden_width=config.model.hidden_width,
     num_layers=config.model.num_layers,
     frontier_window_size=config.generation.frontier_window_size,
+    state_features=config.state_features.model_dump(),
 ).to(device)
 
 ema_model = copy.deepcopy(main_model).to(device)

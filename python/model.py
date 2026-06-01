@@ -353,50 +353,80 @@ class CausalTransformerModel(torch.nn.Module):
 class FrontierStateModel(torch.nn.Module):
     uses_state_features = True
 
-    def __init__(self, num_rooms, output_metadata: OutputMetadata, map_x, map_y, embedding_width, hidden_width, num_layers, frontier_window_size=16, **_):
+    def __init__(self, num_rooms, output_metadata: OutputMetadata, map_x, map_y, embedding_width, hidden_width, num_layers, frontier_window_size=16, state_features=None, **_):
         super().__init__()
+        self.state_features = state_features or {}
         self.num_rooms = num_rooms
         self.map_x = map_x
         self.map_y = map_y
+        self.embedding_width = embedding_width
         self.output_sizes = output_metadata.get_output_sizes()
         self.inventory_embedding = torch.nn.Parameter(
-            torch.randn([output_metadata.num_room_connection_variants, embedding_width]) / math.sqrt(embedding_width))
-        self.orientation_embedding = torch.nn.Embedding(2, embedding_width)
-        self.kind_embedding = torch.nn.Embedding(256, embedding_width)
-        self.node_numeric = torch.nn.Linear(7 + frontier_window_size**2, embedding_width, bias=False)
+            torch.randn([output_metadata.num_room_connection_variants, embedding_width]) / math.sqrt(embedding_width)
+        ) if self.state_features.get("inventory", False) else None
+        self.orientation_embedding = (
+            torch.nn.Embedding(2, embedding_width)
+            if self.state_features.get("frontier_orientation", False) else None
+        )
+        self.kind_embedding = (
+            torch.nn.Embedding(256, embedding_width)
+            if self.state_features.get("frontier_kind", False) else None
+        )
+        node_numeric_width = (
+            6 * self.state_features.get("frontier_position", False)
+            + self.state_features.get("frontier_candidate_count", False)
+            + frontier_window_size**2 * self.state_features.get("frontier_occupancy", False)
+        )
+        self.node_numeric = (
+            torch.nn.Linear(node_numeric_width, embedding_width, bias=False)
+            if node_numeric_width > 0 else None
+        )
         self.frontier_window_area = frontier_window_size**2
         self.register_buffer(
             "frontier_occupancy_bits",
             1 << torch.arange(8, dtype=torch.uint8),
             persistent=False,
         )
+        pair_width = (
+            5 * self.state_features.get("frontier_neighbor_position", False)
+            + 3 * self.state_features.get("frontier_neighbor_flags", False)
+            + 3 * self.state_features.get("frontier_obstruction", False)
+        )
+        use_neighbors = self.state_features.get("frontier_neighbor", False)
         self.source_message_layers = torch.nn.ModuleList([
             torch.nn.Linear(embedding_width, hidden_width, bias=False)
-            for _ in range(num_layers)
+            for _ in range(num_layers if use_neighbors else 0)
         ])
-        self.pair_message_layers = torch.nn.ModuleList([
-            torch.nn.Linear(11, hidden_width, bias=False)
-            for _ in range(num_layers)
-        ])
+        self.pair_message_layers = (
+            torch.nn.ModuleList([
+                torch.nn.Linear(pair_width, hidden_width, bias=False)
+                for _ in range(num_layers if use_neighbors else 0)
+            ])
+            if pair_width > 0 else [None] * (num_layers if use_neighbors else 0)
+        )
         self.message_output_layers = torch.nn.ModuleList([
             torch.nn.Sequential(
                 torch.nn.GELU(),
                 torch.nn.Linear(hidden_width, embedding_width, bias=False),
             )
-            for _ in range(num_layers)
+            for _ in range(num_layers if use_neighbors else 0)
         ])
         self.update_layers = torch.nn.ModuleList([
             torch.nn.Sequential(
                 torch.nn.Linear(embedding_width * 2, hidden_width, bias=False),
                 torch.nn.GELU(),
                 torch.nn.Linear(hidden_width, embedding_width, bias=False),
-            ) for _ in range(num_layers)
+            ) for _ in range(num_layers if use_neighbors else 0)
         ])
+        global_width = embedding_width * (
+            self.state_features.get("inventory", False)
+            + 2 * self.state_features.get("frontier_mask", False)
+        )
         self.global_mlp = torch.nn.Sequential(
-            torch.nn.Linear(embedding_width * 3, hidden_width, bias=False),
+            torch.nn.Linear(global_width, hidden_width, bias=False),
             torch.nn.GELU(),
             torch.nn.Linear(hidden_width, embedding_width, bias=False),
-        )
+        ) if global_width > 0 else None
         self.pos_embedding_x = torch.nn.Parameter(
             torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
         self.pos_embedding_y = torch.nn.Parameter(
@@ -406,41 +436,52 @@ class FrontierStateModel(torch.nn.Module):
         self.connection_output = FactorizedOutcomeHead(
             output_metadata.connection, output_metadata.num_connection_variants, embedding_width)
 
-    def _pair_features(self, features, node_mask):
+    def _pair_features(self, features):
         node = features.frontier
         neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
-        raw_x = node[:, :, 1].to(torch.int64)
-        raw_y = node[:, :, 2].to(torch.int64)
-        x = raw_x.clamp(0, self.map_x - 1)
-        y = raw_y.clamp(0, self.map_y - 1)
         def gather_neighbor(values):
             return torch.gather(
                 values.unsqueeze(2).expand(-1, -1, neighbor.shape[2]), 1, neighbor
             )
-        x0, x1 = x.unsqueeze(2), gather_neighbor(x)
-        y0, y1 = y.unsqueeze(2), gather_neighbor(y)
-        raw_x0, raw_x1 = raw_x.unsqueeze(2), gather_neighbor(raw_x)
-        raw_y0, raw_y1 = raw_y.unsqueeze(2), gather_neighbor(raw_y)
-        min_x, max_x = torch.minimum(x0, x1), torch.maximum(x0, x1)
-        min_y, max_y = torch.minimum(y0, y1), torch.maximum(y0, y1)
-        area = (max_x - min_x + 1) * (max_y - min_y + 1)
-        path_length = (max_x - min_x + 1) + (max_y - min_y + 1)
-        flags = features.frontier_neighbor_pair
-        obstruction = features.frontier_obstruction.to(torch.float32)
-        pair = torch.stack([
-            (raw_x1 - raw_x0).to(torch.float32) / self.map_x,
-            (raw_y1 - raw_y0).to(torch.float32) / self.map_y,
-            ((raw_x1 - raw_x0).abs() + (raw_y1 - raw_y0).abs()).to(torch.float32) / (self.map_x + self.map_y),
-            (raw_x0 == raw_x1).to(torch.float32),
-            (raw_y0 == raw_y1).to(torch.float32),
-            (flags & 1 != 0).to(torch.float32),
-            (flags & 2 != 0).to(torch.float32),
-            (flags & 4 != 0).to(torch.float32),
-            obstruction[:, :, :, 0] / area.clamp_min(1),
-            obstruction[:, :, :, 1] / path_length.clamp_min(1),
-            obstruction[:, :, :, 2] / path_length.clamp_min(1),
-        ], dim=-1)
-        return pair * (features.frontier_neighbor >= 0).unsqueeze(-1)
+        values = []
+        use_position = self.state_features.get("frontier_neighbor_position", False)
+        use_obstruction = self.state_features.get("frontier_obstruction", False)
+        if use_position or use_obstruction:
+            raw_x = node[:, :, 1].to(torch.int64)
+            raw_y = node[:, :, 2].to(torch.int64)
+            x = raw_x.clamp(0, self.map_x - 1)
+            y = raw_y.clamp(0, self.map_y - 1)
+            x0, x1 = x.unsqueeze(2), gather_neighbor(x)
+            y0, y1 = y.unsqueeze(2), gather_neighbor(y)
+            raw_x0, raw_x1 = raw_x.unsqueeze(2), gather_neighbor(raw_x)
+            raw_y0, raw_y1 = raw_y.unsqueeze(2), gather_neighbor(raw_y)
+        if use_position:
+            values.extend([
+                (raw_x1 - raw_x0).to(torch.float32) / self.map_x,
+                (raw_y1 - raw_y0).to(torch.float32) / self.map_y,
+                ((raw_x1 - raw_x0).abs() + (raw_y1 - raw_y0).abs()).to(torch.float32) / (self.map_x + self.map_y),
+                (raw_x0 == raw_x1).to(torch.float32),
+                (raw_y0 == raw_y1).to(torch.float32),
+            ])
+        if self.state_features.get("frontier_neighbor_flags", False):
+            flags = features.frontier_neighbor_pair
+            values.extend([
+                (flags & 1 != 0).to(torch.float32),
+                (flags & 2 != 0).to(torch.float32),
+                (flags & 4 != 0).to(torch.float32),
+            ])
+        if use_obstruction:
+            min_x, max_x = torch.minimum(x0, x1), torch.maximum(x0, x1)
+            min_y, max_y = torch.minimum(y0, y1), torch.maximum(y0, y1)
+            area = (max_x - min_x + 1) * (max_y - min_y + 1)
+            path_length = (max_x - min_x + 1) + (max_y - min_y + 1)
+            obstruction = features.frontier_obstruction.to(torch.float32)
+            values.extend([
+                obstruction[:, :, :, 0] / area.clamp_min(1),
+                obstruction[:, :, :, 1] / path_length.clamp_min(1),
+                obstruction[:, :, :, 2] / path_length.clamp_min(1),
+            ])
+        return torch.stack(values, dim=-1) if values else None
 
     def forward(self, features: StateFeatures):
         # Shapes below use: b=batch, f=frontiers, k=neighbors, e=embedding width,
@@ -449,31 +490,44 @@ class FrontierStateModel(torch.nn.Module):
         node = features.frontier
         node_mask = node[:, :, 0] != 0
         # numeric: [b, f, 7]
-        numeric = torch.stack([
-            node[:, :, 1].to(torch.float32) / self.map_x,
-            node[:, :, 2].to(torch.float32) / self.map_y,
-            node[:, :, 5].to(torch.float32) / max(self.num_rooms, 1),
-            node[:, :, 1].to(torch.float32) / self.map_x,
-            (self.map_x - node[:, :, 1].to(torch.float32)) / self.map_x,
-            node[:, :, 2].to(torch.float32) / self.map_y,
-            (self.map_y - node[:, :, 2].to(torch.float32)) / self.map_y,
-        ], dim=-1)
-        frontier_occupancy = (
-            features.frontier_occupancy.unsqueeze(-1)
-            .bitwise_and(self.frontier_occupancy_bits)
-            .ne(0)
-            .flatten(-2)[..., :self.frontier_window_area]
-        )
+        numeric = []
+        if self.state_features.get("frontier_position", False):
+            numeric.extend([
+                node[:, :, 1].to(torch.float32) / self.map_x,
+                node[:, :, 2].to(torch.float32) / self.map_y,
+            ])
+        if self.state_features.get("frontier_candidate_count", False):
+            numeric.append(node[:, :, 5].to(torch.float32) / max(self.num_rooms, 1))
+        if self.state_features.get("frontier_position", False):
+            numeric.extend([
+                node[:, :, 1].to(torch.float32) / self.map_x,
+                (self.map_x - node[:, :, 1].to(torch.float32)) / self.map_x,
+                node[:, :, 2].to(torch.float32) / self.map_y,
+                (self.map_y - node[:, :, 2].to(torch.float32)) / self.map_y,
+            ])
+        if self.state_features.get("frontier_occupancy", False):
+            numeric.append(
+                features.frontier_occupancy.unsqueeze(-1)
+                .bitwise_and(self.frontier_occupancy_bits)
+                .ne(0)
+                .flatten(-2)[..., :self.frontier_window_area]
+                .to(torch.float32)
+            )
         # X: [b, f, e]
-        X = self.node_numeric(torch.cat([numeric, frontier_occupancy.to(torch.float32)], dim=-1))
-        X = X + self.orientation_embedding(node[:, :, 3].to(torch.int64))
-        X = X + self.kind_embedding(node[:, :, 4].to(torch.int64))
+        X = node.new_zeros([node.shape[0], node.shape[1], self.embedding_width], dtype=torch.float32)
+        if self.node_numeric is not None:
+            numeric = [value.unsqueeze(-1) if value.ndim == 2 else value for value in numeric]
+            X = X + self.node_numeric(torch.cat(numeric, dim=-1))
+        if self.orientation_embedding is not None:
+            X = X + self.orientation_embedding(node[:, :, 3].to(torch.int64))
+        if self.kind_embedding is not None:
+            X = X + self.kind_embedding(node[:, :, 4].to(torch.int64))
         X = X * node_mask.unsqueeze(-1)
         if node.shape[1] == 0:
             mean_pool = max_pool = X.new_zeros([X.shape[0], X.shape[2]])
         else:
             # pair: [b, f, k, 11], neighbor: [b, f, k], pair_mask: [b, f, k, 1]
-            pair = self._pair_features(features, node_mask)
+            pair = self._pair_features(features)
             neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
             pair_mask = (features.frontier_neighbor >= 0).unsqueeze(-1)
             for source_layer, pair_layer, output_layer, update_layer in zip(
@@ -491,7 +545,8 @@ class FrontierStateModel(torch.nn.Module):
                     neighbor.flatten(1).unsqueeze(-1).expand(-1, -1, source.shape[-1]),
                 ).view(*neighbor.shape, source.shape[-1])
                 # messages: [b, f, k, e], then [b, f, e] after neighbor pooling
-                messages = output_layer(source + pair_layer(pair)) * pair_mask
+                messages = source if pair_layer is None else source + pair_layer(pair)
+                messages = output_layer(messages) * pair_mask
                 messages = messages.sum(2) / pair_mask.sum(2).clamp_min(1)
                 X = X + update_layer(torch.cat([X, messages], dim=-1))
                 X = X * node_mask.unsqueeze(-1)
@@ -500,11 +555,24 @@ class FrontierStateModel(torch.nn.Module):
             max_pool = torch.where(node_mask.unsqueeze(-1), X, -torch.inf).max(1).values
             max_pool = torch.where(torch.isfinite(max_pool), max_pool, 0)
         # inventory, mean_pool, max_pool, global_state: [b, e]
-        inventory = torch.matmul(features.inventory.to(torch.float32), self.inventory_embedding)
-        global_state = self.global_mlp(torch.cat([inventory, mean_pool, max_pool], dim=-1))
-        room_x = (features.room_x.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
-        room_y = (features.room_y.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
-        room_placed = features.room_placed.to(torch.bool).unsqueeze(1)
+        global_inputs = []
+        if self.inventory_embedding is not None:
+            global_inputs.append(torch.matmul(features.inventory.to(torch.float32), self.inventory_embedding))
+        if self.state_features.get("frontier_mask", False):
+            global_inputs.extend([mean_pool, max_pool])
+        global_state = (
+            self.global_mlp(torch.cat(global_inputs, dim=-1))
+            if self.global_mlp is not None
+            else X.new_zeros([X.shape[0], self.embedding_width])
+        )
+        if self.state_features.get("room_position", False):
+            room_x = (features.room_x.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
+            room_y = (features.room_y.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
+            room_placed = features.room_placed.to(torch.bool).unsqueeze(1)
+        else:
+            room_x = torch.full([X.shape[0], 1, self.num_rooms], COORD_OFFSET, dtype=torch.int64, device=X.device)
+            room_y = room_x
+            room_placed = torch.zeros([X.shape[0], 1, self.num_rooms], dtype=torch.bool, device=X.device)
         # X: [b, 1, e]
         X = global_state.unsqueeze(1)
         door = self.door_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)

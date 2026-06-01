@@ -251,7 +251,7 @@ impl ConnectionsKey {
 }
 
 impl GeometryData {
-    fn new(key: &GeometryKey) -> Result<Self> {
+    fn new(key: &GeometryKey, build_occupied_prefix: bool) -> Result<Self> {
         let mut min_x = Coord::MAX;
         let mut max_x = Coord::MIN;
         let mut min_y = Coord::MAX;
@@ -260,7 +260,11 @@ impl GeometryData {
         let room_width = key.map[0].len() as Coord;
         let room_height = key.map.len() as Coord;
         let prefix_width = room_width as usize + 1;
-        let mut occupied_prefix = vec![0; prefix_width * (room_height as usize + 1)];
+        let mut occupied_prefix = if build_occupied_prefix {
+            vec![0; prefix_width * (room_height as usize + 1)]
+        } else {
+            vec![]
+        };
         for y in 0..room_height {
             let mut row_sum = 0;
             for x in 0..room_width {
@@ -272,8 +276,10 @@ impl GeometryData {
                     max_y = max_y.max(y);
                     row_sum += 1;
                 }
-                occupied_prefix[(y as usize + 1) * prefix_width + x as usize + 1] =
-                    occupied_prefix[y as usize * prefix_width + x as usize + 1] + row_sum;
+                if build_occupied_prefix {
+                    occupied_prefix[(y as usize + 1) * prefix_width + x as usize + 1] =
+                        occupied_prefix[y as usize * prefix_width + x as usize + 1] + row_sum;
+                }
             }
         }
         for door in key.doors.iter() {
@@ -320,7 +326,7 @@ impl GeometryData {
 }
 
 impl CommonData {
-    pub fn new(rooms: Vec<Room>) -> Result<Self> {
+    pub fn new(rooms: Vec<Room>, build_occupied_prefix: bool) -> Result<Self> {
         if rooms.len() > RoomIdx::MAX as usize {
             bail!(
                 "room set has {} rooms, exceeding the maximum {} supported by RoomIdx plus one dummy action",
@@ -409,7 +415,7 @@ impl CommonData {
                     );
                 }
                 let geometry_idx = geometry_data.len() as GeometryIdx;
-                let geometry = GeometryData::new(&geometry_key)?;
+                let geometry = GeometryData::new(&geometry_key, build_occupied_prefix)?;
                 for door in geometry.doors.iter() {
                     geometry_dir_door[door.direction as usize].push(GeometryDirDoorData {
                         geometry_idx,
@@ -720,7 +726,7 @@ mod tests {
         )
         .unwrap();
 
-        let common = CommonData::new(rooms).unwrap();
+        let common = CommonData::new(rooms, true).unwrap();
         let door_output: Vec<_> = common
             .door_output
             .iter()
@@ -747,5 +753,15 @@ mod tests {
             .collect();
         assert_eq!(room_connection_variant_idx, vec![0, 0, 1]);
         assert_eq!(common.connection_variant_rooms.len(), 2);
+    }
+
+    #[test]
+    fn geometry_occupancy_prefix_is_optional() {
+        let rooms: Vec<Room> =
+            serde_json::from_str(r#"[{"map": [[1]], "doors": [], "connections": []}]"#).unwrap();
+        let without_prefix = CommonData::new(rooms.clone(), false).unwrap();
+        let with_prefix = CommonData::new(rooms, true).unwrap();
+        assert!(without_prefix.geometry[0].occupied_prefix.is_empty());
+        assert!(!with_prefix.geometry[0].occupied_prefix.is_empty());
     }
 }
