@@ -49,6 +49,12 @@ class Outcomes:
     # -1 = unknown, 0 = valid (connection has return path), 1 = invalid (connection does not have return path)
     connection_invalid: torch.Tensor
 
+    def to(self, device: torch.device) -> "Outcomes":
+        return Outcomes(
+            self.door_invalid.to(device),
+            self.connection_invalid.to(device),
+        )
+
 
 @dataclass
 class StateFeatures:
