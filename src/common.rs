@@ -187,6 +187,8 @@ pub struct GeometryData {
     pub map: Vec<Vec<u8>>,
     pub occupied_tiles: Vec<(Coord, Coord)>,
     occupied_prefix: Vec<u16>,
+    occupied_prefix_width: usize,
+    occupied_prefix_height: usize,
     doors: Vec<GeometryDoorData>,
     pub min_x: Coord,
     pub max_x: Coord,
@@ -285,6 +287,8 @@ impl GeometryData {
             map: key.map.clone(),
             occupied_tiles,
             occupied_prefix,
+            occupied_prefix_width: prefix_width,
+            occupied_prefix_height: room_height as usize + 1,
             doors: key.doors.clone(),
             min_x,
             max_x,
@@ -293,9 +297,10 @@ impl GeometryData {
         })
     }
 
+    #[inline]
     pub fn occupied_rect_sum(&self, x0: isize, y0: isize, x1: isize, y1: isize) -> u16 {
-        let width = self.map[0].len() as isize;
-        let height = self.map.len() as isize;
+        let width = self.occupied_prefix_width as isize - 1;
+        let height = self.occupied_prefix_height as isize - 1;
         let x0 = x0.max(0).min(width);
         let y0 = y0.max(0).min(height);
         let x1 = (x1 + 1).max(0).min(width);
@@ -303,14 +308,14 @@ impl GeometryData {
         if x0 >= x1 || y0 >= y1 {
             return 0;
         }
-        let prefix_width = width as usize + 1;
         let x0 = x0 as usize;
         let y0 = y0 as usize;
         let x1 = x1 as usize;
         let y1 = y1 as usize;
-        self.occupied_prefix[y1 * prefix_width + x1] + self.occupied_prefix[y0 * prefix_width + x0]
-            - self.occupied_prefix[y1 * prefix_width + x0]
-            - self.occupied_prefix[y0 * prefix_width + x1]
+        self.occupied_prefix[y1 * self.occupied_prefix_width + x1]
+            + self.occupied_prefix[y0 * self.occupied_prefix_width + x0]
+            - self.occupied_prefix[y1 * self.occupied_prefix_width + x0]
+            - self.occupied_prefix[y0 * self.occupied_prefix_width + x1]
     }
 }
 
