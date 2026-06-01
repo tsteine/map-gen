@@ -2,6 +2,7 @@ use bitvec::vec::BitVec;
 use hashbrown::HashMap;
 use rand::SeedableRng;
 use rand::prelude::*;
+use std::time::Instant;
 
 use crate::common::{
     Action, CommonData, ConnectionVariantIdx, Coord, DirDoorIdx, DoorLocation, DoorValidOutcome,
@@ -48,6 +49,41 @@ pub struct StateFeatures {
     pub frontier_neighbor_pair: Vec<u8>,
     // Occupied tile counts: bounding rectangle and the two Manhattan L paths.
     pub frontier_obstruction: Vec<u16>,
+}
+
+#[derive(Default)]
+pub struct StateFeatureProfile {
+    pub occupancy_prefix_ns: u64,
+    pub clone_ns: u64,
+    pub step_ns: u64,
+    pub assemble_ns: u64,
+    pub assemble_setup_ns: u64,
+    pub assemble_frontier_ns: u64,
+    pub assemble_neighbor_ns: u64,
+    pub assemble_pair_ns: u64,
+    pub assemble_pair_flags_ns: u64,
+    pub assemble_pair_obstruction_ns: u64,
+    pub assemble_pair_obstruction_base_ns: u64,
+    pub assemble_pair_obstruction_candidate_ns: u64,
+    pub assemble_output_ns: u64,
+}
+
+impl StateFeatureProfile {
+    pub fn add(&mut self, other: &Self) {
+        self.occupancy_prefix_ns += other.occupancy_prefix_ns;
+        self.clone_ns += other.clone_ns;
+        self.step_ns += other.step_ns;
+        self.assemble_ns += other.assemble_ns;
+        self.assemble_setup_ns += other.assemble_setup_ns;
+        self.assemble_frontier_ns += other.assemble_frontier_ns;
+        self.assemble_neighbor_ns += other.assemble_neighbor_ns;
+        self.assemble_pair_ns += other.assemble_pair_ns;
+        self.assemble_pair_flags_ns += other.assemble_pair_flags_ns;
+        self.assemble_pair_obstruction_ns += other.assemble_pair_obstruction_ns;
+        self.assemble_pair_obstruction_base_ns += other.assemble_pair_obstruction_base_ns;
+        self.assemble_pair_obstruction_candidate_ns += other.assemble_pair_obstruction_candidate_ns;
+        self.assemble_output_ns += other.assemble_output_ns;
+    }
 }
 
 pub struct Environment {
@@ -215,19 +251,11 @@ impl Environment {
         self.connection_variant_unused_count[connection_variant_idx as usize] -= 1;
         self.add_room_components_and_edges(action, common);
         if update_outcomes_and_occupancy {
-            for (dy, row) in common.geometry[action_geometry_idx as usize]
-                .map
-                .iter()
-                .enumerate()
-            {
-                for (dx, &tile) in row.iter().enumerate() {
-                    if tile != 0 {
-                        let x = action.x + dx as Coord;
-                        let y = action.y + dy as Coord;
-                        if x >= 0 && y >= 0 && x < self.map_size.0 && y < self.map_size.1 {
-                            self.occupancy[y as usize * self.map_size.0 as usize + x as usize] = 1;
-                        }
-                    }
+            for &(dx, dy) in &common.geometry[action_geometry_idx as usize].occupied_tiles {
+                let x = action.x + dx;
+                let y = action.y + dy;
+                if x >= 0 && y >= 0 && x < self.map_size.0 && y < self.map_size.1 {
+                    self.occupancy[y as usize * self.map_size.0 as usize + x as usize] = 1;
                 }
             }
         }
@@ -543,7 +571,13 @@ impl Environment {
         frontier_neighbor_count: usize,
     ) -> StateFeatures {
         let occupancy_prefix = self.occupancy_prefix();
-        self.state_features_with_occupancy(common, &occupancy_prefix, &[], frontier_neighbor_count)
+        self.state_features_with_occupancy(
+            common,
+            &occupancy_prefix,
+            None,
+            frontier_neighbor_count,
+            None,
+        )
     }
 
     pub(crate) fn occupancy_prefix(&self) -> Vec<u16> {
@@ -566,9 +600,11 @@ impl Environment {
         &self,
         common: &CommonData,
         occupancy_prefix: &[u16],
-        extra_occupied: &[(Coord, Coord)],
+        extra_occupied: Option<(&[(Coord, Coord)], Coord, Coord)>,
         frontier_neighbor_count: usize,
+        profile: Option<&mut StateFeatureProfile>,
     ) -> StateFeatures {
+        let setup_start = Instant::now();
         assert!(self.frontier.len() <= Self::max_frontiers(common));
         let frontier_count = self.frontier.len();
         let mut inventory = self
@@ -585,6 +621,8 @@ impl Environment {
         let mut frontier_neighbor = vec![-1; frontier_count * frontier_neighbor_count];
         let mut frontier_neighbor_pair = vec![0; frontier_count * frontier_neighbor_count];
         let mut frontier_obstruction = vec![0; frontier_count * frontier_neighbor_count * 3];
+        let setup_ns = setup_start.elapsed().as_nanos() as u64;
+        let frontier_start = Instant::now();
         let mut sorted_frontiers = self.frontier.iter().collect::<Vec<_>>();
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
         let map_width = self.map_size.0 as usize;
@@ -594,16 +632,9 @@ impl Environment {
             let y0 = y0.clamp(0, self.map_size.1 - 1) as usize;
             let x1 = x1.clamp(0, self.map_size.0 - 1) as usize + 1;
             let y1 = y1.clamp(0, self.map_size.1 - 1) as usize + 1;
-            let base = occupancy_prefix[y1 * prefix_width + x1]
-                + occupancy_prefix[y0 * prefix_width + x0]
+            occupancy_prefix[y1 * prefix_width + x1] + occupancy_prefix[y0 * prefix_width + x0]
                 - occupancy_prefix[y1 * prefix_width + x0]
-                - occupancy_prefix[y0 * prefix_width + x1];
-            base + extra_occupied
-                .iter()
-                .filter(|&&(x, y)| {
-                    x >= x0 as Coord && x < x1 as Coord && y >= y0 as Coord && y < y1 as Coord
-                })
-                .count() as u16
+                - occupancy_prefix[y0 * prefix_width + x1]
         };
         for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
             let row = idx * 7;
@@ -615,8 +646,10 @@ impl Environment {
             frontier[row + 5] = data.candidates.len() as i16;
             frontier[row + 6] = data.component as i16;
         }
+        let frontier_ns = frontier_start.elapsed().as_nanos() as u64;
+        let neighbor_start = Instant::now();
         let mut neighbors = vec![usize::MAX; frontier_neighbor_count];
-        for (src_idx, (src_location, src)) in sorted_frontiers.iter().enumerate() {
+        for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
             let distance = |dst_idx: usize| {
                 let dst_location = sorted_frontiers[dst_idx].0;
                 (
@@ -642,7 +675,20 @@ impl Environment {
                 neighbors[insert_idx] = dst_idx;
             }
             for (neighbor_idx, &dst_idx) in neighbors[..neighbor_count].iter().enumerate() {
-                let (dst_location, dst) = sorted_frontiers[dst_idx];
+                frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx] =
+                    dst_idx as i16;
+            }
+        }
+        let neighbor_ns = neighbor_start.elapsed().as_nanos() as u64;
+        let pair_flags_start = Instant::now();
+        for (src_idx, (_, src)) in sorted_frontiers.iter().enumerate() {
+            for neighbor_idx in 0..frontier_neighbor_count {
+                let dst_idx = frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx];
+                if dst_idx < 0 {
+                    break;
+                }
+                let dst_idx = dst_idx as usize;
+                let (_, dst) = sorted_frontiers[dst_idx];
                 let mut flags = 0;
                 if src.component == dst.component {
                     flags |= 1;
@@ -654,8 +700,20 @@ impl Environment {
                     flags |= 4;
                 }
                 let pair_idx = src_idx * frontier_neighbor_count + neighbor_idx;
-                frontier_neighbor[pair_idx] = dst_idx as i16;
                 frontier_neighbor_pair[pair_idx] = flags;
+            }
+        }
+        let pair_flags_ns = pair_flags_start.elapsed().as_nanos() as u64;
+        let pair_obstruction_base_start = Instant::now();
+        for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
+            for neighbor_idx in 0..frontier_neighbor_count {
+                let dst_idx = frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx];
+                if dst_idx < 0 {
+                    break;
+                }
+                let dst_idx = dst_idx as usize;
+                let (dst_location, _) = sorted_frontiers[dst_idx];
+                let pair_idx = src_idx * frontier_neighbor_count + neighbor_idx;
                 let min_x = src_location.x().min(dst_location.x());
                 let max_x = src_location.x().max(dst_location.x());
                 let min_y = src_location.y().min(dst_location.y());
@@ -670,7 +728,50 @@ impl Environment {
                         + rect_sum(src_location.x(), min_y, src_location.x(), max_y);
             }
         }
-        StateFeatures {
+        let pair_obstruction_base_ns = pair_obstruction_base_start.elapsed().as_nanos() as u64;
+        let pair_obstruction_candidate_start = Instant::now();
+        if let Some((occupied_tiles, offset_x, offset_y)) = extra_occupied {
+            let candidate_rect_sum = |x0: Coord, y0: Coord, x1: Coord, y1: Coord| {
+                occupied_tiles
+                    .iter()
+                    .filter(|&&(dx, dy)| {
+                        let x = offset_x + dx;
+                        let y = offset_y + dy;
+                        x >= x0 && x <= x1 && y >= y0 && y <= y1
+                    })
+                    .count() as u16
+            };
+            for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
+                for neighbor_idx in 0..frontier_neighbor_count {
+                    let dst_idx =
+                        frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx];
+                    if dst_idx < 0 {
+                        break;
+                    }
+                    let (dst_location, _) = sorted_frontiers[dst_idx as usize];
+                    let pair_idx = src_idx * frontier_neighbor_count + neighbor_idx;
+                    let min_x = src_location.x().min(dst_location.x());
+                    let max_x = src_location.x().max(dst_location.x());
+                    let min_y = src_location.y().min(dst_location.y());
+                    let max_y = src_location.y().max(dst_location.y());
+                    let obstruction_idx = pair_idx * 3;
+                    frontier_obstruction[obstruction_idx] +=
+                        candidate_rect_sum(min_x, min_y, max_x, max_y);
+                    frontier_obstruction[obstruction_idx + 1] +=
+                        candidate_rect_sum(min_x, src_location.y(), max_x, src_location.y())
+                            + candidate_rect_sum(dst_location.x(), min_y, dst_location.x(), max_y);
+                    frontier_obstruction[obstruction_idx + 2] +=
+                        candidate_rect_sum(min_x, dst_location.y(), max_x, dst_location.y())
+                            + candidate_rect_sum(src_location.x(), min_y, src_location.x(), max_y);
+                }
+            }
+        }
+        let pair_obstruction_candidate_ns =
+            pair_obstruction_candidate_start.elapsed().as_nanos() as u64;
+        let pair_obstruction_ns = pair_obstruction_base_ns + pair_obstruction_candidate_ns;
+        let pair_ns = pair_flags_ns + pair_obstruction_ns;
+        let output_start = Instant::now();
+        let features = StateFeatures {
             inventory: std::mem::take(&mut inventory),
             room_x: self.room_x.clone(),
             room_y: self.room_y.clone(),
@@ -679,7 +780,20 @@ impl Environment {
             frontier_neighbor,
             frontier_neighbor_pair,
             frontier_obstruction,
+        };
+        let output_ns = output_start.elapsed().as_nanos() as u64;
+        if let Some(profile) = profile {
+            profile.assemble_setup_ns += setup_ns;
+            profile.assemble_frontier_ns += frontier_ns;
+            profile.assemble_neighbor_ns += neighbor_ns;
+            profile.assemble_pair_ns += pair_ns;
+            profile.assemble_pair_flags_ns += pair_flags_ns;
+            profile.assemble_pair_obstruction_ns += pair_obstruction_ns;
+            profile.assemble_pair_obstruction_base_ns += pair_obstruction_base_ns;
+            profile.assemble_pair_obstruction_candidate_ns += pair_obstruction_candidate_ns;
+            profile.assemble_output_ns += output_ns;
         }
+        features
     }
 
     #[cfg(test)]
@@ -696,6 +810,7 @@ impl Environment {
             &occupancy_prefix,
             frontier_neighbor_count,
         )
+        .0
     }
 
     pub fn state_features_after_candidate_with_occupancy(
@@ -704,31 +819,36 @@ impl Environment {
         candidate: Action,
         occupancy_prefix: &[u16],
         frontier_neighbor_count: usize,
-    ) -> StateFeatures {
+    ) -> (StateFeatures, StateFeatureProfile) {
+        let mut profile = StateFeatureProfile::default();
         let extra_occupied = if candidate.room_idx < common.room.len() as RoomIdx {
             let geometry_idx = common.room[candidate.room_idx as usize].geometry_idx;
-            common.geometry[geometry_idx as usize]
-                .map
-                .iter()
-                .enumerate()
-                .flat_map(|(dy, row)| {
-                    row.iter().enumerate().filter_map(move |(dx, &tile)| {
-                        (tile != 0)
-                            .then_some((candidate.x + dx as Coord, candidate.y + dy as Coord))
-                    })
-                })
-                .collect::<Vec<_>>()
+            Some((
+                common.geometry[geometry_idx as usize]
+                    .occupied_tiles
+                    .as_slice(),
+                candidate.x,
+                candidate.y,
+            ))
         } else {
-            vec![]
+            None
         };
+        let start = Instant::now();
         let mut env = self.clone_for_state_features();
+        profile.clone_ns = start.elapsed().as_nanos() as u64;
+        let start = Instant::now();
         env.step_for_state_features(candidate, common);
-        env.state_features_with_occupancy(
+        profile.step_ns = start.elapsed().as_nanos() as u64;
+        let start = Instant::now();
+        let features = env.state_features_with_occupancy(
             common,
             occupancy_prefix,
-            &extra_occupied,
+            extra_occupied,
             frontier_neighbor_count,
-        )
+            Some(&mut profile),
+        );
+        profile.assemble_ns = start.elapsed().as_nanos() as u64;
+        (features, profile)
     }
 
     pub fn actions(&self) -> &[Action] {

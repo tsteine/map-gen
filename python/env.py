@@ -233,5 +233,8 @@ class EnvironmentGroup:
         )
         return self._state_features(values, device)
 
+    def take_state_feature_profile(self) -> list[float]:
+        return self.env.take_state_feature_profile()
+
     def finish(self):
         self.env.finish()

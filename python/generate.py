@@ -171,6 +171,45 @@ def generate(
                                     features = env.get_state_features_after_candidates(
                                         env_chunk, torch.device("cpu"), env_start
                                     ).flatten_candidates()
+                                if profiler.enabled:
+                                    (
+                                        worker_seconds,
+                                        pack_seconds,
+                                        profile_calls,
+                                        occupancy_prefix_cpu_seconds,
+                                        clone_cpu_seconds,
+                                        step_cpu_seconds,
+                                        assemble_cpu_seconds,
+                                        assemble_setup_cpu_seconds,
+                                        assemble_frontier_cpu_seconds,
+                                        assemble_neighbor_cpu_seconds,
+                                        assemble_pair_cpu_seconds,
+                                        assemble_pair_flags_cpu_seconds,
+                                        assemble_pair_obstruction_cpu_seconds,
+                                        assemble_pair_obstruction_base_cpu_seconds,
+                                        assemble_pair_obstruction_candidate_cpu_seconds,
+                                        assemble_output_cpu_seconds,
+                                    ) = env.take_state_feature_profile()
+                                    if profile_calls != 1:
+                                        raise RuntimeError(
+                                            "unexpected state feature profile call count: "
+                                            f"{profile_calls}"
+                                        )
+                                    profiler.add("gen.cpu_extract_worker", worker_seconds)
+                                    profiler.add("gen.cpu_extract_pack", pack_seconds)
+                                    profiler.add("gen.cpu_extract_occupancy_prefix_sum", occupancy_prefix_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_clone_sum", clone_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_step_sum", step_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_sum", assemble_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_setup_sum", assemble_setup_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_frontier_sum", assemble_frontier_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_neighbor_sum", assemble_neighbor_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_pair_sum", assemble_pair_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_pair_flags_sum", assemble_pair_flags_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_pair_obstruction_sum", assemble_pair_obstruction_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_pair_obstruction_base_sum", assemble_pair_obstruction_base_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_pair_obstruction_candidate_sum", assemble_pair_obstruction_candidate_cpu_seconds)
+                                    profiler.add("gen.cpu_extract_assemble_output_sum", assemble_output_cpu_seconds)
                                 return env_start, env_end, features
 
                             for env_start, env_end, features in prefetcher.map(

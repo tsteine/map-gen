@@ -2,7 +2,7 @@
 /// EnvironmentGroup classes. It handles the creation and management of worker threads that run
 /// environment simulations in parallel.
 use crate::common::{Action, CommonData, Coord, DoorValidOutcome, Room, RoomIdx};
-use crate::environment::{Environment, StateFeatures};
+use crate::environment::{Environment, StateFeatureProfile, StateFeatures};
 use crossbeam_channel as channel;
 use numpy::{
     Element, IntoPyArray, PyArray2, PyArray3, PyArray4, PyArray5, PyArrayMethods, PyReadonlyArray1,
@@ -13,7 +13,9 @@ use pyo3::prelude::*;
 use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
 fn pyarray2_from_flat_vec<'py, T: Element>(
     py: Python<'py>,
@@ -178,7 +180,7 @@ enum WorkerCommand {
 // to include error reporting or other types of responses if needed.
 enum WorkerResponse {
     Done,
-    StateFeatures(Vec<StateFeatures>),
+    StateFeatures(Vec<StateFeatures>, StateFeatureProfile),
 }
 
 struct WorkerHandle {
@@ -209,7 +211,7 @@ impl WorkerHandle {
     fn recv_done(&self) -> PyResult<()> {
         match self.recv()? {
             WorkerResponse::Done => Ok(()),
-            WorkerResponse::StateFeatures(_) => Err(PyRuntimeError::new_err(
+            WorkerResponse::StateFeatures(_, _) => Err(PyRuntimeError::new_err(
                 "engine worker thread returned unexpected state features",
             )),
         }
@@ -485,7 +487,7 @@ fn worker_loop(
                     .take(environment_count)
                     .map(|env| env.state_features(&common_data, frontier_neighbor_count))
                     .collect::<Vec<_>>();
-                WorkerResponse::StateFeatures(snapshots)
+                WorkerResponse::StateFeatures(snapshots, StateFeatureProfile::default())
             }
             WorkerCommand::GetStateFeaturesAfterCandidates {
                 frontier_neighbor_count,
@@ -500,28 +502,34 @@ fn worker_loop(
                 let room_x = unsafe { room_x.into_slice() };
                 let room_y = unsafe { room_y.into_slice() };
                 let mut snapshots = Vec::with_capacity(environment_count * candidate_count);
+                let mut profile = StateFeatureProfile::default();
                 for (env_idx, env) in environments
                     .iter()
                     .skip(environment_start)
                     .take(environment_count)
                     .enumerate()
                 {
+                    let start = Instant::now();
                     let occupancy_prefix = env.occupancy_prefix();
+                    profile.occupancy_prefix_ns += start.elapsed().as_nanos() as u64;
                     for candidate_idx in 0..candidate_count {
                         let idx = env_idx * candidate_count + candidate_idx;
-                        snapshots.push(env.state_features_after_candidate_with_occupancy(
-                            &common_data,
-                            Action {
-                                room_idx: room_idx[idx],
-                                x: room_x[idx],
-                                y: room_y[idx],
-                            },
-                            &occupancy_prefix,
-                            frontier_neighbor_count,
-                        ));
+                        let (features, candidate_profile) = env
+                            .state_features_after_candidate_with_occupancy(
+                                &common_data,
+                                Action {
+                                    room_idx: room_idx[idx],
+                                    x: room_x[idx],
+                                    y: room_y[idx],
+                                },
+                                &occupancy_prefix,
+                                frontier_neighbor_count,
+                            );
+                        snapshots.push(features);
+                        profile.add(&candidate_profile);
                     }
                 }
-                WorkerResponse::StateFeatures(snapshots)
+                WorkerResponse::StateFeatures(snapshots, profile)
             }
             WorkerCommand::Shutdown => break,
         };
@@ -593,12 +601,14 @@ fn collect_state_feature_responses(
     workers: &[WorkerHandle],
     sent_workers: Vec<usize>,
     mut first_error: Option<PyErr>,
-) -> PyResult<Vec<StateFeatures>> {
+) -> PyResult<(Vec<StateFeatures>, StateFeatureProfile)> {
     let mut snapshots = Vec::new();
+    let mut profile = StateFeatureProfile::default();
     for worker_idx in sent_workers {
         match workers[worker_idx].recv() {
-            Ok(WorkerResponse::StateFeatures(mut worker_snapshots)) => {
+            Ok(WorkerResponse::StateFeatures(mut worker_snapshots, worker_profile)) => {
                 snapshots.append(&mut worker_snapshots);
+                profile.add(&worker_profile);
             }
             Ok(WorkerResponse::Done) => set_first_error(
                 &mut first_error,
@@ -611,7 +621,7 @@ fn collect_state_feature_responses(
     if let Some(err) = first_error {
         Err(err)
     } else {
-        Ok(snapshots)
+        Ok((snapshots, profile))
     }
 }
 
@@ -627,6 +637,22 @@ pub struct EnvironmentGroup {
     num_environments: usize,
     frontier_neighbor_count: usize,
     action_count: usize,
+    state_feature_worker_ns: AtomicU64,
+    state_feature_pack_ns: AtomicU64,
+    state_feature_profile_calls: AtomicUsize,
+    state_feature_occupancy_prefix_ns: AtomicU64,
+    state_feature_clone_ns: AtomicU64,
+    state_feature_step_ns: AtomicU64,
+    state_feature_assemble_ns: AtomicU64,
+    state_feature_assemble_setup_ns: AtomicU64,
+    state_feature_assemble_frontier_ns: AtomicU64,
+    state_feature_assemble_neighbor_ns: AtomicU64,
+    state_feature_assemble_pair_ns: AtomicU64,
+    state_feature_assemble_pair_flags_ns: AtomicU64,
+    state_feature_assemble_pair_obstruction_ns: AtomicU64,
+    state_feature_assemble_pair_obstruction_base_ns: AtomicU64,
+    state_feature_assemble_pair_obstruction_candidate_ns: AtomicU64,
+    state_feature_assemble_output_ns: AtomicU64,
 }
 
 fn output_sizes(common_data: &CommonData) -> (usize, usize) {
@@ -880,6 +906,22 @@ impl EnvironmentGroup {
             num_environments,
             frontier_neighbor_count,
             action_count: 0,
+            state_feature_worker_ns: AtomicU64::new(0),
+            state_feature_pack_ns: AtomicU64::new(0),
+            state_feature_profile_calls: AtomicUsize::new(0),
+            state_feature_occupancy_prefix_ns: AtomicU64::new(0),
+            state_feature_clone_ns: AtomicU64::new(0),
+            state_feature_step_ns: AtomicU64::new(0),
+            state_feature_assemble_ns: AtomicU64::new(0),
+            state_feature_assemble_setup_ns: AtomicU64::new(0),
+            state_feature_assemble_frontier_ns: AtomicU64::new(0),
+            state_feature_assemble_neighbor_ns: AtomicU64::new(0),
+            state_feature_assemble_pair_ns: AtomicU64::new(0),
+            state_feature_assemble_pair_flags_ns: AtomicU64::new(0),
+            state_feature_assemble_pair_obstruction_ns: AtomicU64::new(0),
+            state_feature_assemble_pair_obstruction_base_ns: AtomicU64::new(0),
+            state_feature_assemble_pair_obstruction_candidate_ns: AtomicU64::new(0),
+            state_feature_assemble_output_ns: AtomicU64::new(0),
         })
     }
 }
@@ -1303,7 +1345,7 @@ impl EnvironmentGroup {
                 "state feature range must fit within the environment group",
             ));
         }
-        let snapshots = py.detach(|| {
+        let (snapshots, _) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -1401,7 +1443,8 @@ impl EnvironmentGroup {
         let room_count = self.common_data.room.len();
         let environment_count = shape[0];
         let snapshot_count = environment_count * candidate_count;
-        let snapshots = py.detach(|| {
+        let worker_start = Instant::now();
+        let (snapshots, worker_profile) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -1429,12 +1472,53 @@ impl EnvironmentGroup {
             }
             collect_state_feature_responses(&self.workers, sent_workers, first_error)
         })?;
+        self.state_feature_worker_ns
+            .fetch_add(worker_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        self.state_feature_occupancy_prefix_ns
+            .fetch_add(worker_profile.occupancy_prefix_ns, Ordering::Relaxed);
+        self.state_feature_clone_ns
+            .fetch_add(worker_profile.clone_ns, Ordering::Relaxed);
+        self.state_feature_step_ns
+            .fetch_add(worker_profile.step_ns, Ordering::Relaxed);
+        self.state_feature_assemble_ns
+            .fetch_add(worker_profile.assemble_ns, Ordering::Relaxed);
+        self.state_feature_assemble_setup_ns
+            .fetch_add(worker_profile.assemble_setup_ns, Ordering::Relaxed);
+        self.state_feature_assemble_frontier_ns
+            .fetch_add(worker_profile.assemble_frontier_ns, Ordering::Relaxed);
+        self.state_feature_assemble_neighbor_ns
+            .fetch_add(worker_profile.assemble_neighbor_ns, Ordering::Relaxed);
+        self.state_feature_assemble_pair_ns
+            .fetch_add(worker_profile.assemble_pair_ns, Ordering::Relaxed);
+        self.state_feature_assemble_pair_flags_ns
+            .fetch_add(worker_profile.assemble_pair_flags_ns, Ordering::Relaxed);
+        self.state_feature_assemble_pair_obstruction_ns.fetch_add(
+            worker_profile.assemble_pair_obstruction_ns,
+            Ordering::Relaxed,
+        );
+        self.state_feature_assemble_pair_obstruction_base_ns
+            .fetch_add(
+                worker_profile.assemble_pair_obstruction_base_ns,
+                Ordering::Relaxed,
+            );
+        self.state_feature_assemble_pair_obstruction_candidate_ns
+            .fetch_add(
+                worker_profile.assemble_pair_obstruction_candidate_ns,
+                Ordering::Relaxed,
+            );
+        self.state_feature_assemble_output_ns
+            .fetch_add(worker_profile.assemble_output_ns, Ordering::Relaxed);
         debug_assert_eq!(snapshots.len(), snapshot_count);
+        let pack_start = Instant::now();
         let (buffers, frontier_count) = StateFeatureBuffers::from_features(
             &self.common_data,
             self.frontier_neighbor_count,
             &snapshots,
         );
+        self.state_feature_pack_ns
+            .fetch_add(pack_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        self.state_feature_profile_calls
+            .fetch_add(1, Ordering::Relaxed);
         Ok((
             pyarray3_from_flat_vec(
                 py,
@@ -1498,5 +1582,46 @@ impl EnvironmentGroup {
                 3,
             )?,
         ))
+    }
+
+    fn take_state_feature_profile(&self) -> Vec<f64> {
+        vec![
+            self.state_feature_worker_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
+            self.state_feature_pack_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
+            self.state_feature_profile_calls.swap(0, Ordering::Relaxed) as f64,
+            self.state_feature_occupancy_prefix_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+            self.state_feature_clone_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
+            self.state_feature_step_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
+            self.state_feature_assemble_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
+            self.state_feature_assemble_setup_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+            self.state_feature_assemble_frontier_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+            self.state_feature_assemble_neighbor_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+            self.state_feature_assemble_pair_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+            self.state_feature_assemble_pair_flags_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+            self.state_feature_assemble_pair_obstruction_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+            self.state_feature_assemble_pair_obstruction_base_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+            self.state_feature_assemble_pair_obstruction_candidate_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+            self.state_feature_assemble_output_ns
+                .swap(0, Ordering::Relaxed) as f64
+                / 1_000_000_000.0,
+        ]
     }
 }

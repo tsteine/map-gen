@@ -5,25 +5,31 @@
   "total_episodes": 4000000,
   "map_size": [72, 72],
   "model": {
+    "type": "frontier_state",
+    "compile": "true",
     "embedding_width": 256,
     "key_width": 64,
     "value_width": 64,
     "attn_heads": 16,
     "head_groups": 4,
-    "hidden_width": 512,
-    "num_layers": 4
+    "hidden_width": 256,
+    "num_layers": 2
   },
   "optimizer": {
     "lr": 0.0005,
     "beta1": 0.95,
-    "beta2": 0.95
+    "beta2": 0.99
   },
   "generation": {
-    "num_environments": 8192,
-    "action_candidates": 16,
+    "num_environments": 1024,
+    "action_candidates": 8,
     "lookahead_outcomes": false,
     "temperature0": 10.0,
-    "temperature1": 0.03
+    "temperature1": 0.03,
+    "state_candidate_chunk": 16,
+    "state_environment_chunk": 256,
+    "frontier_neighbor_count": 4,
+    "num_threads": 32
   },
   "train": {
     "batch_size": 512,
@@ -33,6 +39,8 @@
     "ema_decay": 0.995,
     "hist_c": 3.0,
     "door_weight": 1.0,
-    "connection_weight": 1.0
+    "connection_weight": 1.0,
+    "state_prefix_samples": 8,
+    "state_batch_chunk": 512
   }
 }

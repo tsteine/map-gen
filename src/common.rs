@@ -185,6 +185,7 @@ struct ConnectionsKey {
 
 pub struct GeometryData {
     pub map: Vec<Vec<u8>>,
+    pub occupied_tiles: Vec<(Coord, Coord)>,
     doors: Vec<GeometryDoorData>,
     pub min_x: Coord,
     pub max_x: Coord,
@@ -252,11 +253,13 @@ impl GeometryData {
         let mut max_x = Coord::MIN;
         let mut min_y = Coord::MAX;
         let mut max_y = Coord::MIN;
+        let mut occupied_tiles = vec![];
         let room_width = key.map[0].len() as Coord;
         let room_height = key.map.len() as Coord;
         for y in 0..room_height {
             for x in 0..room_width {
                 if key.map[y as usize][x as usize] != 0 {
+                    occupied_tiles.push((x, y));
                     min_x = min_x.min(x);
                     max_x = max_x.max(x);
                     min_y = min_y.min(y);
@@ -273,6 +276,7 @@ impl GeometryData {
         }
         Ok(Self {
             map: key.map.clone(),
+            occupied_tiles,
             doors: key.doors.clone(),
             min_x,
             max_x,
