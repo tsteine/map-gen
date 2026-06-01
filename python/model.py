@@ -349,6 +349,12 @@ class FrontierStateModel(torch.nn.Module):
         self.orientation_embedding = torch.nn.Embedding(2, embedding_width)
         self.kind_embedding = torch.nn.Embedding(256, embedding_width)
         self.node_numeric = torch.nn.Linear(7 + frontier_window_size**2, embedding_width, bias=False)
+        self.frontier_window_area = frontier_window_size**2
+        self.register_buffer(
+            "frontier_occupancy_bits",
+            1 << torch.arange(8, dtype=torch.uint8),
+            persistent=False,
+        )
         self.source_message_layers = torch.nn.ModuleList([
             torch.nn.Linear(embedding_width, hidden_width, bias=False)
             for _ in range(num_layers)
@@ -437,8 +443,14 @@ class FrontierStateModel(torch.nn.Module):
             node[:, :, 2].to(torch.float32) / self.map_y,
             (self.map_y - node[:, :, 2].to(torch.float32)) / self.map_y,
         ], dim=-1)
+        frontier_occupancy = (
+            features.frontier_occupancy.unsqueeze(-1)
+            .bitwise_and(self.frontier_occupancy_bits)
+            .ne(0)
+            .flatten(-2)[..., :self.frontier_window_area]
+        )
         # X: [b, f, e]
-        X = self.node_numeric(torch.cat([numeric, features.frontier_occupancy.to(torch.float32)], dim=-1))
+        X = self.node_numeric(torch.cat([numeric, frontier_occupancy.to(torch.float32)], dim=-1))
         X = X + self.orientation_embedding(node[:, :, 3].to(torch.int64))
         X = X + self.kind_embedding(node[:, :, 4].to(torch.int64))
         X = X * node_mask.unsqueeze(-1)

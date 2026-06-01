@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use crate::common::{
     Action, CommonData, ConnectionVariantIdx, Coord, DirDoorIdx, DoorLocation, DoorValidOutcome,
-    GeometryIdx, NUM_DIRS, PartIdx, RoomIdx, RoomPartIdx, get_behind_door_position,
+    GeometryData, GeometryIdx, NUM_DIRS, PartIdx, RoomIdx, RoomPartIdx, get_behind_door_position,
 };
 use crate::scc_dag::SccDag;
 
@@ -606,7 +606,7 @@ impl Environment {
         common: &CommonData,
         occupancy_prefix: &[u16],
         occupancy: &[u8],
-        extra_occupied: Option<(&[(Coord, Coord)], Coord, Coord)>,
+        extra_occupied: Option<(&GeometryData, Coord, Coord)>,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
         profile: Option<&mut StateFeatureProfile>,
@@ -677,8 +677,8 @@ impl Environment {
                         .copy_from_slice(&occupancy[src_start..src_start + copy_width]);
                 }
             }
-            if let Some((occupied_tiles, offset_x, offset_y)) = extra_occupied {
-                for &(dx, dy) in occupied_tiles {
+            if let Some((geometry, offset_x, offset_y)) = extra_occupied {
+                for &(dx, dy) in &geometry.occupied_tiles {
                     let window_x = offset_x as isize + dx as isize - window_start_x;
                     let window_y = offset_y as isize + dy as isize - window_start_y;
                     if window_x >= 0
@@ -777,16 +777,14 @@ impl Environment {
         }
         let pair_obstruction_base_ns = pair_obstruction_base_start.elapsed().as_nanos() as u64;
         let pair_obstruction_candidate_start = Instant::now();
-        if let Some((occupied_tiles, offset_x, offset_y)) = extra_occupied {
+        if let Some((geometry, offset_x, offset_y)) = extra_occupied {
             let candidate_rect_sum = |x0: Coord, y0: Coord, x1: Coord, y1: Coord| {
-                occupied_tiles
-                    .iter()
-                    .filter(|&&(dx, dy)| {
-                        let x = offset_x + dx;
-                        let y = offset_y + dy;
-                        x >= x0 && x <= x1 && y >= y0 && y <= y1
-                    })
-                    .count() as u16
+                geometry.occupied_rect_sum(
+                    x0 as isize - offset_x as isize,
+                    y0 as isize - offset_y as isize,
+                    x1 as isize - offset_x as isize,
+                    y1 as isize - offset_y as isize,
+                )
             };
             for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
                 for neighbor_idx in 0..frontier_neighbor_count {
@@ -875,9 +873,7 @@ impl Environment {
         let extra_occupied = if candidate.room_idx < common.room.len() as RoomIdx {
             let geometry_idx = common.room[candidate.room_idx as usize].geometry_idx;
             Some((
-                common.geometry[geometry_idx as usize]
-                    .occupied_tiles
-                    .as_slice(),
+                &common.geometry[geometry_idx as usize],
                 candidate.x,
                 candidate.y,
             ))

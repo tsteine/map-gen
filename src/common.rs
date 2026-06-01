@@ -186,6 +186,7 @@ struct ConnectionsKey {
 pub struct GeometryData {
     pub map: Vec<Vec<u8>>,
     pub occupied_tiles: Vec<(Coord, Coord)>,
+    occupied_prefix: Vec<u16>,
     doors: Vec<GeometryDoorData>,
     pub min_x: Coord,
     pub max_x: Coord,
@@ -256,7 +257,10 @@ impl GeometryData {
         let mut occupied_tiles = vec![];
         let room_width = key.map[0].len() as Coord;
         let room_height = key.map.len() as Coord;
+        let prefix_width = room_width as usize + 1;
+        let mut occupied_prefix = vec![0; prefix_width * (room_height as usize + 1)];
         for y in 0..room_height {
+            let mut row_sum = 0;
             for x in 0..room_width {
                 if key.map[y as usize][x as usize] != 0 {
                     occupied_tiles.push((x, y));
@@ -264,7 +268,10 @@ impl GeometryData {
                     max_x = max_x.max(x);
                     min_y = min_y.min(y);
                     max_y = max_y.max(y);
+                    row_sum += 1;
                 }
+                occupied_prefix[(y as usize + 1) * prefix_width + x as usize + 1] =
+                    occupied_prefix[y as usize * prefix_width + x as usize + 1] + row_sum;
             }
         }
         for door in key.doors.iter() {
@@ -277,12 +284,33 @@ impl GeometryData {
         Ok(Self {
             map: key.map.clone(),
             occupied_tiles,
+            occupied_prefix,
             doors: key.doors.clone(),
             min_x,
             max_x,
             min_y,
             max_y,
         })
+    }
+
+    pub fn occupied_rect_sum(&self, x0: isize, y0: isize, x1: isize, y1: isize) -> u16 {
+        let width = self.map[0].len() as isize;
+        let height = self.map.len() as isize;
+        let x0 = x0.max(0).min(width);
+        let y0 = y0.max(0).min(height);
+        let x1 = (x1 + 1).max(0).min(width);
+        let y1 = (y1 + 1).max(0).min(height);
+        if x0 >= x1 || y0 >= y1 {
+            return 0;
+        }
+        let prefix_width = width as usize + 1;
+        let x0 = x0 as usize;
+        let y0 = y0 as usize;
+        let x1 = x1 as usize;
+        let y1 = y1 as usize;
+        self.occupied_prefix[y1 * prefix_width + x1] + self.occupied_prefix[y0 * prefix_width + x0]
+            - self.occupied_prefix[y1 * prefix_width + x0]
+            - self.occupied_prefix[y0 * prefix_width + x1]
     }
 }
 

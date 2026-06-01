@@ -771,6 +771,30 @@ impl StateFeatureOutputSlices<'_> {
             dst[idx * stride..idx * stride + row.len()].copy_from_slice(row);
         }
 
+        fn pack_occupancy_windows(
+            dst: &mut [u8],
+            src: &[u8],
+            idx: usize,
+            frontier_count: usize,
+            frontier_window_size: usize,
+        ) {
+            let window_area = frontier_window_size * frontier_window_size;
+            let packed_window_size = window_area.div_ceil(8);
+            let dst = &mut dst[idx * frontier_count * packed_window_size
+                ..(idx + 1) * frontier_count * packed_window_size];
+            for (src_window, dst_window) in src
+                .chunks_exact(window_area)
+                .zip(dst.chunks_exact_mut(packed_window_size))
+            {
+                for (dst_byte, src_bits) in dst_window.iter_mut().zip(src_window.chunks(8)) {
+                    *dst_byte = src_bits
+                        .iter()
+                        .enumerate()
+                        .fold(0, |byte, (bit_idx, &bit)| byte | (bit << bit_idx));
+                }
+            }
+        }
+
         copy_row(
             &mut self.inventory,
             &features.inventory,
@@ -791,11 +815,12 @@ impl StateFeatureOutputSlices<'_> {
             idx,
             self.frontier_count * 7,
         );
-        copy_row(
+        pack_occupancy_windows(
             &mut self.frontier_occupancy,
             &features.frontier_occupancy,
             idx,
-            self.frontier_count * self.frontier_window_size * self.frontier_window_size,
+            self.frontier_count,
+            self.frontier_window_size,
         );
         copy_row(
             &mut self.frontier_neighbor,
@@ -836,8 +861,7 @@ impl StateFeatureBuffers {
                 0;
                 snapshot_count
                     * frontier_count
-                    * frontier_window_size
-                    * frontier_window_size
+                    * (frontier_window_size * frontier_window_size).div_ceil(8)
             ],
             frontier_neighbor: vec![-1; snapshot_count * frontier_count * frontier_neighbor_count],
             frontier_neighbor_pair: vec![
@@ -868,6 +892,7 @@ impl StateFeatureBuffers {
         let inventory_start = snapshot_start * inventory_count;
         let room_start = snapshot_start * room_count;
         let frontier_start = snapshot_start * frontier_count;
+        let packed_window_size = (frontier_window_size * frontier_window_size).div_ceil(8);
         StateFeatureOutputShards {
             inventory: output_shard(
                 &mut self.inventory,
@@ -888,8 +913,8 @@ impl StateFeatureBuffers {
             ),
             frontier_occupancy: output_shard(
                 &mut self.frontier_occupancy,
-                frontier_start * frontier_window_size * frontier_window_size,
-                snapshot_count * frontier_count * frontier_window_size * frontier_window_size,
+                frontier_start * packed_window_size,
+                snapshot_count * frontier_count * packed_window_size,
             ),
             frontier_neighbor: output_shard(
                 &mut self.frontier_neighbor,
@@ -1570,7 +1595,7 @@ impl EnvironmentGroup {
                 buffers.frontier_occupancy,
                 environment_count,
                 frontier_count,
-                self.frontier_window_size * self.frontier_window_size,
+                (self.frontier_window_size * self.frontier_window_size).div_ceil(8),
             )?,
             pyarray3_from_flat_vec(
                 py,
@@ -1789,7 +1814,7 @@ impl EnvironmentGroup {
                 environment_count,
                 candidate_count,
                 frontier_count,
-                self.frontier_window_size * self.frontier_window_size,
+                (self.frontier_window_size * self.frontier_window_size).div_ceil(8),
             )?,
             pyarray4_from_flat_vec(
                 py,
