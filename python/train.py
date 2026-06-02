@@ -70,6 +70,8 @@ class StateFeatureConfig(BaseModel):
     frontier_neighbor_position: bool = False
     frontier_neighbor_flags: bool = False
     frontier_obstruction: bool = False
+    connection_reachability: bool = False
+    frontier_connection_reachability: bool = False
 
 
 class TrainConfig(BaseModel):
@@ -152,6 +154,7 @@ if (
     or config.state_features.frontier_candidate_count
     or config.state_features.frontier_occupancy
     or config.state_features.frontier_neighbor
+    or config.state_features.frontier_connection_reachability
 ) and not config.state_features.frontier_mask:
     raise ValueError("frontier state features require state_features.frontier_mask")
 if (

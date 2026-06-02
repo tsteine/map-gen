@@ -67,6 +67,8 @@ class StateFeatures:
     frontier_neighbor: torch.Tensor
     frontier_neighbor_pair: torch.Tensor
     frontier_obstruction: torch.Tensor
+    connection_reachability: torch.Tensor
+    frontier_connection_reachability: torch.Tensor
 
     def to(self, device: torch.device) -> "StateFeatures":
         return StateFeatures(*(value.to(device) for value in vars(self).values()))

@@ -50,11 +50,16 @@ pub struct StateFeatureConfig {
     pub frontier_neighbor_position: bool,
     pub frontier_neighbor_flags: bool,
     pub frontier_obstruction: bool,
+    pub connection_reachability: bool,
+    pub frontier_connection_reachability: bool,
 }
 
 impl StateFeatureConfig {
     pub fn is_empty(&self) -> bool {
-        !self.inventory && !self.room_position && !self.has_frontier_features()
+        !self.inventory
+            && !self.room_position
+            && !self.connection_reachability
+            && !self.has_frontier_features()
     }
 
     pub fn has_frontier_features(&self) -> bool {
@@ -67,7 +72,8 @@ impl StateFeatureConfig {
             || self.frontier_kind
             || self.frontier_candidate_count
             || self.frontier_occupancy
-            || self.frontier_neighbor)
+            || self.frontier_neighbor
+            || self.frontier_connection_reachability)
             && !self.frontier_mask
         {
             return Err("frontier features require frontier_mask");
@@ -97,6 +103,8 @@ impl StateFeatureConfig {
             frontier_neighbor_position: true,
             frontier_neighbor_flags: true,
             frontier_obstruction: true,
+            connection_reachability: true,
+            frontier_connection_reachability: true,
         }
     }
 }
@@ -118,6 +126,11 @@ pub struct StateFeatures {
     pub frontier_neighbor_pair: Vec<u8>,
     // Occupied tile counts: bounding rectangle and the two Manhattan L paths.
     pub frontier_obstruction: Vec<u16>,
+    // Whether each required closure edge already has an interior path.
+    pub connection_reachability: Vec<u8>,
+    // Bit flags per frontier and required closure edge: source reaches frontier,
+    // frontier reaches destination.
+    pub frontier_connection_reachability: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -729,6 +742,16 @@ impl Environment {
         } else {
             vec![]
         };
+        let mut connection_reachability = if config.connection_reachability {
+            vec![0; common.room_connection.len()]
+        } else {
+            vec![]
+        };
+        let mut frontier_connection_reachability = if config.frontier_connection_reachability {
+            vec![0; frontier_count * common.room_connection.len()]
+        } else {
+            vec![]
+        };
         let setup_ns = setup_start.elapsed().as_nanos() as u64;
         let frontier_start = Instant::now();
         let mut sorted_frontiers = if config.has_frontier_features() {
@@ -810,6 +833,33 @@ impl Environment {
             }
         }
         let frontier_ns = frontier_start.elapsed().as_nanos() as u64;
+        for (connection_idx, connection) in common.room_connection.iter().enumerate() {
+            if !self.room_used[connection.room_idx as usize] {
+                continue;
+            }
+            let from_component =
+                self.room_part_component(common, connection.room_idx, connection.from_part);
+            let to_component =
+                self.room_part_component(common, connection.room_idx, connection.to_part);
+            if config.connection_reachability
+                && self.scc_dag.can_reach(from_component, to_component)
+            {
+                connection_reachability[connection_idx] = 1;
+            }
+            if config.frontier_connection_reachability {
+                for (frontier_idx, (_, frontier)) in sorted_frontiers.iter().enumerate() {
+                    let mut flags = 0;
+                    if self.scc_dag.can_reach(from_component, frontier.component) {
+                        flags |= 1;
+                    }
+                    if self.scc_dag.can_reach(frontier.component, to_component) {
+                        flags |= 2;
+                    }
+                    frontier_connection_reachability
+                        [frontier_idx * common.room_connection.len() + connection_idx] = flags;
+                }
+            }
+        }
         let neighbor_start = Instant::now();
         let mut neighbors = vec![usize::MAX; frontier_neighbor_count];
         let mut neighbor_keys = vec![(Coord::MAX, usize::MAX, usize::MAX); frontier_neighbor_count];
@@ -965,6 +1015,8 @@ impl Environment {
             frontier_neighbor,
             frontier_neighbor_pair,
             frontier_obstruction,
+            connection_reachability,
+            frontier_connection_reachability,
         };
         let output_ns = output_start.elapsed().as_nanos() as u64;
         if let Some(profile) = profile {
@@ -1096,11 +1148,11 @@ impl Environment {
                     self.room_part_component(common, connection.room_idx, connection.from_part);
                 let to_component =
                     self.room_part_component(common, connection.room_idx, connection.to_part);
-                if self.scc_dag.can_reach(to_component, from_component) {
+                if self.scc_dag.can_reach(from_component, to_component) {
                     DoorValidOutcome::Valid
                 } else if frontier_merged_scc_dag.can_reach(
-                    frontier_merged_component_remap[to_component],
                     frontier_merged_component_remap[from_component],
+                    frontier_merged_component_remap[to_component],
                 ) {
                     DoorValidOutcome::Unknown
                 } else {
@@ -1137,14 +1189,16 @@ mod tests {
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": [[0, 1]]
+                "connections": [[0, 1]],
+                "missing_connections": [[1, 0]]
             },
             {
                 "map": [[1]],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": []
+                "connections": [],
+                "missing_connections": []
             }
         ]
         "#;
@@ -1189,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_outcome_is_valid_when_destination_reaches_source() {
+    fn strongly_connected_room_has_no_missing_connection_outcomes() {
         let rooms_json = r#"
         [
             {
@@ -1198,7 +1252,8 @@ mod tests {
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": [[0, 1], [1, 0]]
+                "connections": [[0, 1], [1, 0]],
+                "missing_connections": []
             }
         ]
         "#;
@@ -1216,11 +1271,7 @@ mod tests {
         );
 
         let outcomes = env.outcomes(&common);
-        assert_eq!(outcomes.connections_valid.len(), 2);
-        assert!(matches!(
-            outcomes.connections_valid.as_slice(),
-            [DoorValidOutcome::Valid, DoorValidOutcome::Valid]
-        ));
+        assert!(outcomes.connections_valid.is_empty());
     }
 
     #[test]
@@ -1233,7 +1284,8 @@ mod tests {
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": [[0, 1]]
+                "connections": [[0, 1]],
+                "missing_connections": [[1, 0]]
             }
         ]
         "#;
@@ -1275,14 +1327,16 @@ mod tests {
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": [[0, 1]]
+                "connections": [[0, 1]],
+                "missing_connections": [[1, 0]]
             },
             {
                 "map": [[1]],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": []
+                "connections": [],
+                "missing_connections": []
             }
         ]
         "#;
@@ -1329,21 +1383,24 @@ mod tests {
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": [[0, 1]]
+                "connections": [[0, 1]],
+                "missing_connections": [[1, 0]]
             },
             {
                 "map": [[1]],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": []
+                "connections": [],
+                "missing_connections": []
             },
             {
                 "map": [[1]],
                 "doors": [
                     [{"direction": "up", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": []
+                "connections": [],
+                "missing_connections": []
             }
         ]
         "#;
@@ -1377,14 +1434,16 @@ mod tests {
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": [[0, 1]]
+                "connections": [[0, 1]],
+                "missing_connections": [[1, 0]]
             },
             {
                 "map": [[1]],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": []
+                "connections": [],
+                "missing_connections": []
             }
         ]
         "#;
@@ -1439,14 +1498,16 @@ mod tests {
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": []
+                "connections": [],
+                "missing_connections": [[0, 1], [1, 2], [2, 0]]
             },
             {
                 "map": [[1]],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
-                "connections": []
+                "connections": [],
+                "missing_connections": []
             }
         ]
         "#;
@@ -1514,9 +1575,48 @@ mod tests {
     }
 
     #[test]
+    fn state_features_include_missing_connection_reachability() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [{
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [[0, 1]],
+                "missing_connections": [[1, 0]]
+            }]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms, false).unwrap();
+        let mut env = Environment::new(&common, (4, 4), 0);
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        let config = StateFeatureConfig {
+            frontier_mask: true,
+            connection_reachability: true,
+            frontier_connection_reachability: true,
+            ..StateFeatureConfig::default()
+        };
+        let features = env.state_features(&common, &config, 1, 1);
+        assert_eq!(features.connection_reachability, vec![0]);
+        assert_eq!(features.frontier_connection_reachability, vec![1, 2]);
+    }
+
+    #[test]
     fn disabled_state_features_skip_candidate_simulation() {
-        let rooms: Vec<Room> =
-            serde_json::from_str(r#"[{"map": [[1]], "doors": [], "connections": []}]"#).unwrap();
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"[{"map": [[1]], "doors": [], "connections": [], "missing_connections": []}]"#,
+        )
+        .unwrap();
         let common = CommonData::new(rooms, false).unwrap();
         let env = Environment::new(&common, (4, 4), 0);
         let (features, profile) = env.state_features_after_candidate_with_occupancy(

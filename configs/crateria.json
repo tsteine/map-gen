@@ -45,7 +45,9 @@
     "frontier_neighbor": true,
     "frontier_neighbor_position": true,
     "frontier_neighbor_flags": true,
-    "frontier_obstruction": true
+    "frontier_obstruction": true,
+    "connection_reachability": true,
+    "frontier_connection_reachability": true
   },
   "train": {
     "batch_size": 512,

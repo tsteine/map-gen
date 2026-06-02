@@ -27,6 +27,7 @@ pub struct Room {
     map: Vec<Vec<u8>>,
     doors: Vec<Vec<Door>>,
     connections: Vec<(PartIdx, PartIdx)>,
+    missing_connections: Vec<(PartIdx, PartIdx)>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -181,6 +182,7 @@ struct GeometryKey {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ConnectionsKey {
     connections: Vec<(PartIdx, PartIdx)>,
+    missing_connections: Vec<(PartIdx, PartIdx)>,
 }
 
 pub struct GeometryData {
@@ -246,8 +248,94 @@ impl ConnectionsKey {
     fn from_room(room: &Room) -> Self {
         let mut connections = room.connections.clone();
         connections.sort_unstable();
-        Self { connections }
+        let mut missing_connections = room.missing_connections.clone();
+        missing_connections.sort_unstable();
+        Self {
+            connections,
+            missing_connections,
+        }
     }
+}
+
+fn validate_missing_connections(room_idx: usize, room: &Room) -> Result<()> {
+    let part_count = room.doors.len();
+    let mut reachable = vec![vec![false; part_count]; part_count];
+    for (part_idx, row) in reachable.iter_mut().enumerate() {
+        row[part_idx] = true;
+    }
+    for &(from_part, to_part) in &room.connections {
+        reachable[from_part as usize][to_part as usize] = true;
+    }
+    for via in 0..part_count {
+        for from in 0..part_count {
+            for to in 0..part_count {
+                reachable[from][to] |= reachable[from][via] && reachable[via][to];
+            }
+        }
+    }
+    let mut component = vec![usize::MAX; part_count];
+    let mut component_count = 0;
+    for from in 0..part_count {
+        if component[from] != usize::MAX {
+            continue;
+        }
+        for to in 0..part_count {
+            if reachable[from][to] && reachable[to][from] {
+                component[to] = component_count;
+            }
+        }
+        component_count += 1;
+    }
+    let minimum_count = if component_count <= 1 {
+        0
+    } else {
+        let mut has_predecessor = vec![false; component_count];
+        let mut has_successor = vec![false; component_count];
+        for &(from_part, to_part) in &room.connections {
+            let from = component[from_part as usize];
+            let to = component[to_part as usize];
+            if from != to {
+                has_successor[from] = true;
+                has_predecessor[to] = true;
+            }
+        }
+        has_predecessor
+            .iter()
+            .filter(|&&value| !value)
+            .count()
+            .max(has_successor.iter().filter(|&&value| !value).count())
+    };
+    if room.missing_connections.len() != minimum_count {
+        bail!(
+            "room {room_idx} has {} missing connections, expected the minimum {minimum_count}",
+            room.missing_connections.len()
+        );
+    }
+    let mut closure = room.connections.clone();
+    for &connection in &room.missing_connections {
+        if closure.contains(&connection) {
+            bail!("room {room_idx} has duplicate connection {connection:?}");
+        }
+        closure.push(connection);
+    }
+    let mut reachable = vec![vec![false; part_count]; part_count];
+    for (part_idx, row) in reachable.iter_mut().enumerate() {
+        row[part_idx] = true;
+    }
+    for &(from_part, to_part) in &closure {
+        reachable[from_part as usize][to_part as usize] = true;
+    }
+    for via in 0..part_count {
+        for from in 0..part_count {
+            for to in 0..part_count {
+                reachable[from][to] |= reachable[from][via] && reachable[via][to];
+            }
+        }
+    }
+    if reachable.iter().flatten().any(|&value| !value) {
+        bail!("room {room_idx} connections and missing_connections are not strongly connected");
+    }
+    Ok(())
 }
 
 impl GeometryData {
@@ -364,7 +452,7 @@ impl CommonData {
                     RoomPartIdx::MAX
                 );
             }
-            for &(from_part, to_part) in &room.connections {
+            for &(from_part, to_part) in room.connections.iter().chain(&room.missing_connections) {
                 if from_part as usize >= room.doors.len() || to_part as usize >= room.doors.len() {
                     bail!(
                         "room {room_idx} has connection ({from_part}, {to_part}) outside its {} door groups",
@@ -372,6 +460,17 @@ impl CommonData {
                     );
                 }
             }
+            for (connection_idx, connection) in room.connections.iter().enumerate() {
+                if room.connections[..connection_idx].contains(connection) {
+                    bail!("room {room_idx} has duplicate connection {connection:?}");
+                }
+            }
+            for (connection_idx, connection) in room.missing_connections.iter().enumerate() {
+                if room.missing_connections[..connection_idx].contains(connection) {
+                    bail!("room {room_idx} has duplicate missing connection {connection:?}");
+                }
+            }
+            validate_missing_connections(room_idx, room)?;
 
             let mut door_data = vec![];
             for (part_idx, door_group) in room.doors.iter().enumerate() {
@@ -455,7 +554,7 @@ impl CommonData {
             for part_idx in 0..room.doors.len() {
                 room_part.push((room_idx as RoomIdx, part_idx as PartIdx));
             }
-            for &(from_part, to_part) in &room.connections {
+            for &(from_part, to_part) in &room.missing_connections {
                 room_connection.push(RoomConnectionData {
                     room_idx: room_idx as RoomIdx,
                     from_part,
@@ -703,7 +802,8 @@ mod tests {
                         {"direction": "left", "x": 0, "y": 0, "kind": 0},
                         {"direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
-                    "connections": []
+                    "connections": [],
+                "missing_connections": []
                 },
                 {
                     "map": [[1]],
@@ -711,7 +811,8 @@ mod tests {
                         {"direction": "left", "x": 0, "y": 0, "kind": 0},
                         {"direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
-                    "connections": []
+                    "connections": [],
+                "missing_connections": []
                 },
                 {
                     "map": [[1]],
@@ -719,7 +820,8 @@ mod tests {
                         {"direction": "left", "x": 0, "y": 0, "kind": 0},
                         {"direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
-                    "connections": [[0, 0]]
+                    "connections": [[0, 0]],
+                    "missing_connections": []
                 }
             ]
             "#,
@@ -743,8 +845,8 @@ mod tests {
             .iter()
             .map(|output| (output.room_idx, output.variant_outcome_idx))
             .collect();
-        assert_eq!(connection_output, vec![(2, 0)]);
-        assert_eq!(common.num_connection_output_variants, 1);
+        assert!(connection_output.is_empty());
+        assert_eq!(common.num_connection_output_variants, 0);
 
         let room_connection_variant_idx: Vec<_> = common
             .room
@@ -757,11 +859,27 @@ mod tests {
 
     #[test]
     fn geometry_occupancy_prefix_is_optional() {
-        let rooms: Vec<Room> =
-            serde_json::from_str(r#"[{"map": [[1]], "doors": [], "connections": []}]"#).unwrap();
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"[{"map": [[1]], "doors": [], "connections": [], "missing_connections": []}]"#,
+        )
+        .unwrap();
         let without_prefix = CommonData::new(rooms.clone(), false).unwrap();
         let with_prefix = CommonData::new(rooms, true).unwrap();
         assert!(without_prefix.geometry[0].occupied_prefix.is_empty());
         assert!(!with_prefix.geometry[0].occupied_prefix.is_empty());
+    }
+
+    #[test]
+    fn missing_connections_must_be_a_minimum_strong_completion() {
+        let parse = |missing_connections| {
+            serde_json::from_str::<Vec<Room>>(&format!(
+                r#"[{{"map": [[1]], "doors": [[], []], "connections": [], "missing_connections": {missing_connections}}}]"#
+            ))
+            .unwrap()
+        };
+        assert!(CommonData::new(parse("[[0, 1], [1, 0]]"), false).is_ok());
+        assert!(CommonData::new(parse("[]"), false).is_err());
+        assert!(CommonData::new(parse("[[0, 1], [1, 0], [0, 1]]"), false).is_err());
+        assert!(CommonData::new(parse("[[0, 1], [0, 1]]"), false).is_err());
     }
 }

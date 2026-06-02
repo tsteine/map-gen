@@ -361,6 +361,7 @@ class FrontierStateModel(torch.nn.Module):
         self.map_y = map_y
         self.embedding_width = embedding_width
         self.output_sizes = output_metadata.get_output_sizes()
+        self.num_connection_outputs = len(output_metadata.connection)
         self.inventory_embedding = torch.nn.Parameter(
             torch.randn([output_metadata.num_room_connection_variants, embedding_width]) / math.sqrt(embedding_width)
         ) if self.state_features.get("inventory", False) else None
@@ -376,6 +377,7 @@ class FrontierStateModel(torch.nn.Module):
             6 * self.state_features.get("frontier_position", False)
             + self.state_features.get("frontier_candidate_count", False)
             + frontier_window_size**2 * self.state_features.get("frontier_occupancy", False)
+            + 2 * self.num_connection_outputs * self.state_features.get("frontier_connection_reachability", False)
         )
         self.node_numeric = (
             torch.nn.Linear(node_numeric_width, embedding_width, bias=False)
@@ -421,12 +423,21 @@ class FrontierStateModel(torch.nn.Module):
         global_width = embedding_width * (
             self.state_features.get("inventory", False)
             + 2 * self.state_features.get("frontier_mask", False)
+            + (
+                self.state_features.get("connection_reachability", False)
+                and self.num_connection_outputs > 0
+            )
         )
         self.global_mlp = torch.nn.Sequential(
             torch.nn.Linear(global_width, hidden_width, bias=False),
             torch.nn.GELU(),
             torch.nn.Linear(hidden_width, embedding_width, bias=False),
         ) if global_width > 0 else None
+        self.connection_reachability_embedding = (
+            torch.nn.Linear(self.num_connection_outputs, embedding_width, bias=False)
+            if self.state_features.get("connection_reachability", False)
+            and self.num_connection_outputs > 0 else None
+        )
         self.pos_embedding_x = torch.nn.Parameter(
             torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
         self.pos_embedding_y = torch.nn.Parameter(
@@ -513,6 +524,12 @@ class FrontierStateModel(torch.nn.Module):
                 .flatten(-2)[..., :self.frontier_window_area]
                 .to(torch.float32)
             )
+        if self.state_features.get("frontier_connection_reachability", False):
+            flags = features.frontier_connection_reachability
+            numeric.append(torch.stack([
+                (flags & 1 != 0).to(torch.float32),
+                (flags & 2 != 0).to(torch.float32),
+            ], dim=-1).flatten(-2))
         # X: [b, f, e]
         X = node.new_zeros([node.shape[0], node.shape[1], self.embedding_width], dtype=torch.float32)
         if self.node_numeric is not None:
@@ -560,6 +577,10 @@ class FrontierStateModel(torch.nn.Module):
             global_inputs.append(torch.matmul(features.inventory.to(torch.float32), self.inventory_embedding))
         if self.state_features.get("frontier_mask", False):
             global_inputs.extend([mean_pool, max_pool])
+        if self.connection_reachability_embedding is not None:
+            global_inputs.append(self.connection_reachability_embedding(
+                features.connection_reachability.to(torch.float32)
+            ))
         global_state = (
             self.global_mlp(torch.cat(global_inputs, dim=-1))
             if self.global_mlp is not None

@@ -14,7 +14,8 @@
                 {"direction": "up",    "x": 4, "y": 0, "kind": 1}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 133,
@@ -32,7 +33,8 @@
                 {"direction": "right", "x": 0, "y": 2, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 134,
@@ -46,7 +48,8 @@
                 {"direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 135,
@@ -66,7 +69,8 @@
                 {"direction": "right", "x": 0, "y": 1, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 136,
@@ -84,7 +88,8 @@
         ],
         "connections": [
             [0, 1]
-        ]
+        ],
+        "missing_connections": [[1, 0]]
     },
     {
         "room_id": 137,
@@ -104,7 +109,8 @@
                 {"direction": "down",  "x": 2, "y": 4, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 312,
@@ -115,7 +121,8 @@
         "doors": [
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 138,
@@ -131,7 +138,8 @@
                 {"direction": "up",   "x": 5, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 139,
@@ -145,7 +153,8 @@
                 {"direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 140,
@@ -159,7 +168,8 @@
                 {"direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 141,
@@ -173,7 +183,8 @@
                 {"direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 142,
@@ -188,7 +199,8 @@
                 {"direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 143,
@@ -199,7 +211,8 @@
         "doors": [
             [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 144,
@@ -216,7 +229,8 @@
         ],
         "connections": [
             [1, 0]
-        ]
+        ],
+        "missing_connections": [[0, 1]]
     },
     {
         "room_id": 145,
@@ -236,7 +250,8 @@
                 {"direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 146,
@@ -256,7 +271,8 @@
         ],
         "connections": [
             [0, 1]
-        ]
+        ],
+        "missing_connections": [[1, 0]]
     },
     {
         "room_id": 147,
@@ -270,7 +286,8 @@
         ],
         "connections": [
             [1, 0]
-        ]
+        ],
+        "missing_connections": [[0, 1]]
     },
     {
         "room_id": 148,
@@ -286,7 +303,8 @@
                 {"direction": "right", "x": 3, "y": 2, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 149,
@@ -302,7 +320,8 @@
         ],
         "connections": [
             [0, 1]
-        ]
+        ],
+        "missing_connections": [[1, 0]]
     },
     {
         "room_id": 150,
@@ -317,7 +336,8 @@
         ],
         "connections": [
             [0, 1]
-        ]
+        ],
+        "missing_connections": [[1, 0]]
     },
     {
         "room_id": 151,
@@ -334,7 +354,8 @@
                 {"direction": "right", "x": 0, "y": 1, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 152,
@@ -345,7 +366,8 @@
         "doors": [
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 153,
@@ -359,7 +381,8 @@
         ],
         "connections": [
             [0, 1]
-        ]
+        ],
+        "missing_connections": [[1, 0]]
     },
     {
         "room_id": 86,
@@ -383,7 +406,8 @@
                 {"direction": "right", "x": 0, "y": 6, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 87,
@@ -394,7 +418,8 @@
         "doors": [
             [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 88,
@@ -409,7 +434,8 @@
                 {"direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 89,
@@ -420,7 +446,8 @@
         "doors": [
             [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 90,
@@ -435,7 +462,8 @@
                 {"direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 91,
@@ -450,7 +478,8 @@
                 {"direction": "right", "x": 2, "y": 1, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 92,
@@ -464,7 +493,8 @@
                 {"direction": "right", "x": 4, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 93,
@@ -478,7 +508,8 @@
                 {"direction": "right", "x": 7, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 94,
@@ -494,7 +525,8 @@
                 {"direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 95,
@@ -511,7 +543,8 @@
                 {"direction": "up",    "x": 0, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 96,
@@ -522,7 +555,8 @@
         "doors": [
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 302,
@@ -536,7 +570,8 @@
                 {"direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 97,
@@ -558,7 +593,8 @@
                 {"direction": "down",  "x": 0, "y": 3, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 307,
@@ -569,7 +605,8 @@
         "doors": [
             [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 98,
@@ -583,7 +620,8 @@
                 {"direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 99,
@@ -594,7 +632,8 @@
         "doors": [
             [{"direction": "right", "x": 1, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 100,
@@ -609,7 +648,8 @@
                 {"direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 101,
@@ -624,7 +664,8 @@
                 {"direction": "right", "x": 11, "y": 1, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 102,
@@ -635,7 +676,8 @@
         "doors": [
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 103,
@@ -659,7 +701,8 @@
         ],
         "connections": [
             [1, 0]
-        ]
+        ],
+        "missing_connections": [[0, 1]]
     },
     {
         "room_id": 104,
@@ -675,7 +718,8 @@
                 {"direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 105,
@@ -686,7 +730,8 @@
         "doors": [
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 106,
@@ -709,7 +754,8 @@
         ],
         "connections": [
             [1, 0]
-        ]
+        ],
+        "missing_connections": [[0, 1]]
     },
     {
         "room_id": 107,
@@ -723,7 +769,8 @@
                 {"direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 108,
@@ -740,7 +787,8 @@
                 {"direction": "right", "x": 0, "y": 2, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 109,
@@ -751,7 +799,8 @@
         "doors": [
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 110,
@@ -765,7 +814,8 @@
                 {"direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 111,
@@ -782,7 +832,8 @@
                 {"direction": "right", "x": 0, "y": 3, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 308,
@@ -796,7 +847,8 @@
                 {"direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 112,
@@ -810,7 +862,8 @@
                 {"direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 113,
@@ -828,7 +881,8 @@
                 {"direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 114,
@@ -842,7 +896,8 @@
                 {"direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 115,
@@ -858,7 +913,8 @@
                 {"direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 116,
@@ -874,7 +930,8 @@
                 {"direction": "left", "x": 0, "y": 2, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 117,
@@ -888,7 +945,8 @@
                 {"direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 118,
@@ -904,7 +962,8 @@
                 {"direction": "down",  "x": 0, "y": 2, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 119,
@@ -919,7 +978,8 @@
                 {"direction": "up",    "x": 3, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 120,
@@ -942,7 +1002,8 @@
         ],
         "connections": [
             [0, 1]
-        ]
+        ],
+        "missing_connections": [[1, 0]]
     },
     {
         "room_id": 121,
@@ -957,7 +1018,8 @@
         ],
         "connections": [
             [1, 0]
-        ]
+        ],
+        "missing_connections": [[0, 1]]
     },
     {
         "room_id": 122,
@@ -971,7 +1033,8 @@
         ],
         "connections": [
             [1, 0]
-        ]
+        ],
+        "missing_connections": [[0, 1]]
     },
     {
         "room_id": 123,
@@ -988,7 +1051,8 @@
                 {"direction": "down",  "x": 0, "y": 1, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 124,
@@ -999,7 +1063,8 @@
         "doors": [
             [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 125,
@@ -1019,7 +1084,8 @@
                 {"direction": "up",    "x": 0, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 126,
@@ -1030,7 +1096,8 @@
         "doors": [
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 127,
@@ -1046,7 +1113,8 @@
                 {"direction": "up",   "x": 6, "y": 2, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 128,
@@ -1062,7 +1130,8 @@
                 {"direction": "right", "x": 0, "y": 2, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 129,
@@ -1076,7 +1145,8 @@
                 {"direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 130,
@@ -1092,7 +1162,8 @@
                 {"direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 131,
@@ -1107,7 +1178,8 @@
         ],
         "connections": [
             [0, 1]
-        ]
+        ],
+        "missing_connections": [[1, 0]]
     },
     {
         "room_id": 303,
@@ -1118,7 +1190,8 @@
         "doors": [
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 311,
@@ -1129,7 +1202,8 @@
         "doors": [
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 309,
@@ -1144,7 +1218,8 @@
                 {"direction": "down",  "x": 0, "y": 0, "kind": 1}
             ]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     },
     {
         "room_id": 310,
@@ -1155,6 +1230,7 @@
         "doors": [
             [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
-        "connections": []
+        "connections": [],
+        "missing_connections": []
     }
 ]

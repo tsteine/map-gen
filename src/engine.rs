@@ -727,6 +727,8 @@ struct StateFeatureBuffers {
     frontier_neighbor: Vec<i16>,
     frontier_neighbor_pair: Vec<u8>,
     frontier_obstruction: Vec<u16>,
+    connection_reachability: Vec<u8>,
+    frontier_connection_reachability: Vec<u8>,
 }
 
 struct StateFeatureOutputShards {
@@ -739,8 +741,11 @@ struct StateFeatureOutputShards {
     frontier_neighbor: OutputShard<i16>,
     frontier_neighbor_pair: OutputShard<u8>,
     frontier_obstruction: OutputShard<u16>,
+    connection_reachability: OutputShard<u8>,
+    frontier_connection_reachability: OutputShard<u8>,
     inventory_count: usize,
     room_count: usize,
+    connection_count: usize,
     frontier_count: usize,
     frontier_neighbor_count: usize,
     frontier_window_size: usize,
@@ -756,8 +761,11 @@ struct StateFeatureOutputSlices<'a> {
     frontier_neighbor: &'a mut [i16],
     frontier_neighbor_pair: &'a mut [u8],
     frontier_obstruction: &'a mut [u16],
+    connection_reachability: &'a mut [u8],
+    frontier_connection_reachability: &'a mut [u8],
     inventory_count: usize,
     room_count: usize,
+    connection_count: usize,
     frontier_count: usize,
     frontier_neighbor_count: usize,
     frontier_window_size: usize,
@@ -775,8 +783,13 @@ impl StateFeatureOutputShards {
             frontier_neighbor: unsafe { self.frontier_neighbor.into_mut_slice() },
             frontier_neighbor_pair: unsafe { self.frontier_neighbor_pair.into_mut_slice() },
             frontier_obstruction: unsafe { self.frontier_obstruction.into_mut_slice() },
+            connection_reachability: unsafe { self.connection_reachability.into_mut_slice() },
+            frontier_connection_reachability: unsafe {
+                self.frontier_connection_reachability.into_mut_slice()
+            },
             inventory_count: self.inventory_count,
             room_count: self.room_count,
+            connection_count: self.connection_count,
             frontier_count: self.frontier_count,
             frontier_neighbor_count: self.frontier_neighbor_count,
             frontier_window_size: self.frontier_window_size,
@@ -865,6 +878,18 @@ impl StateFeatureOutputSlices<'_> {
             idx,
             self.frontier_count * self.frontier_neighbor_count * 3,
         );
+        copy_row(
+            &mut self.connection_reachability,
+            &features.connection_reachability,
+            idx,
+            self.connection_count,
+        );
+        copy_row(
+            &mut self.frontier_connection_reachability,
+            &features.frontier_connection_reachability,
+            idx,
+            self.frontier_count * self.connection_count,
+        );
     }
 }
 
@@ -932,6 +957,21 @@ impl StateFeatureBuffers {
                     * 3
                     * usize::from(state_features.frontier_obstruction)
             ],
+            connection_reachability: vec![
+                0;
+                snapshot_count
+                    * common_data.room_connection.len()
+                    * usize::from(state_features.connection_reachability)
+            ],
+            frontier_connection_reachability: vec![
+                0;
+                snapshot_count
+                    * frontier_count
+                    * common_data.room_connection.len()
+                    * usize::from(
+                        state_features.frontier_connection_reachability
+                    )
+            ],
         }
     }
 
@@ -941,6 +981,7 @@ impl StateFeatureBuffers {
         snapshot_count: usize,
         inventory_count: usize,
         room_count: usize,
+        connection_count: usize,
         frontier_count: usize,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
@@ -963,6 +1004,11 @@ impl StateFeatureBuffers {
             frontier_neighbor_count * usize::from(state_features.frontier_neighbor_flags);
         let obstruction_neighbor_count =
             frontier_neighbor_count * usize::from(state_features.frontier_obstruction);
+        let direct_connection_count =
+            connection_count * usize::from(state_features.connection_reachability);
+        let frontier_connection_count =
+            connection_count * usize::from(state_features.frontier_connection_reachability);
+        let connection_start = snapshot_start * direct_connection_count;
         StateFeatureOutputShards {
             inventory: output_shard(
                 &mut self.inventory,
@@ -1001,8 +1047,19 @@ impl StateFeatureBuffers {
                 frontier_start * obstruction_neighbor_count * 3,
                 snapshot_count * frontier_count * obstruction_neighbor_count * 3,
             ),
+            connection_reachability: output_shard(
+                &mut self.connection_reachability,
+                connection_start,
+                snapshot_count * direct_connection_count,
+            ),
+            frontier_connection_reachability: output_shard(
+                &mut self.frontier_connection_reachability,
+                frontier_start * frontier_connection_count,
+                snapshot_count * frontier_count * frontier_connection_count,
+            ),
             inventory_count,
             room_count,
+            connection_count: direct_connection_count.max(frontier_connection_count),
             frontier_count,
             frontier_neighbor_count,
             frontier_window_size,
@@ -1595,9 +1652,12 @@ impl EnvironmentGroup {
         Bound<'py, PyArray3<i16>>,
         Bound<'py, PyArray3<u8>>,
         Bound<'py, PyArray4<u16>>,
+        Bound<'py, PyArray2<u8>>,
+        Bound<'py, PyArray3<u8>>,
     )> {
         let inventory_count = self.common_data.connection_variant_rooms.len();
         let room_count = self.common_data.room.len();
+        let connection_count = self.common_data.room_connection.len();
         let Some(remaining_environments) = self.num_environments.checked_sub(environment_start)
         else {
             return Err(PyValueError::new_err(
@@ -1655,6 +1715,7 @@ impl EnvironmentGroup {
                         end - start,
                         inventory_count,
                         room_count,
+                        connection_count,
                         frontier_count,
                         self.frontier_neighbor_count,
                         self.frontier_window_size,
@@ -1726,6 +1787,20 @@ impl EnvironmentGroup {
                     * usize::from(self.state_features.frontier_obstruction),
                 3 * usize::from(self.state_features.frontier_obstruction),
             )?,
+            pyarray2_from_flat_vec(
+                py,
+                buffers.connection_reachability,
+                environment_count,
+                connection_count * usize::from(self.state_features.connection_reachability),
+            )?,
+            pyarray3_from_flat_vec(
+                py,
+                buffers.frontier_connection_reachability,
+                environment_count,
+                frontier_count,
+                connection_count
+                    * usize::from(self.state_features.frontier_connection_reachability),
+            )?,
         ))
     }
 
@@ -1747,6 +1822,8 @@ impl EnvironmentGroup {
         Bound<'py, PyArray4<i16>>,
         Bound<'py, PyArray4<u8>>,
         Bound<'py, PyArray5<u16>>,
+        Bound<'py, PyArray3<u8>>,
+        Bound<'py, PyArray4<u8>>,
     )> {
         let shape = room_idx.as_array().shape().to_vec();
         if room_x.as_array().shape() != shape
@@ -1769,6 +1846,7 @@ impl EnvironmentGroup {
             .map_err(|_| PyValueError::new_err("room_y must be contiguous"))?;
         let inventory_count = self.common_data.connection_variant_rooms.len();
         let room_count = self.common_data.room.len();
+        let connection_count = self.common_data.room_connection.len();
         let environment_count = shape[0];
         let snapshot_count = environment_count * candidate_count;
         let worker_start = Instant::now();
@@ -1829,6 +1907,7 @@ impl EnvironmentGroup {
                         snapshot_count,
                         inventory_count,
                         room_count,
+                        connection_count,
                         frontier_count,
                         self.frontier_neighbor_count,
                         self.frontier_window_size,
@@ -1952,6 +2031,22 @@ impl EnvironmentGroup {
                 self.frontier_neighbor_count
                     * usize::from(self.state_features.frontier_obstruction),
                 3 * usize::from(self.state_features.frontier_obstruction),
+            )?,
+            pyarray3_from_flat_vec(
+                py,
+                buffers.connection_reachability,
+                environment_count,
+                candidate_count,
+                connection_count * usize::from(self.state_features.connection_reachability),
+            )?,
+            pyarray4_from_flat_vec(
+                py,
+                buffers.frontier_connection_reachability,
+                environment_count,
+                candidate_count,
+                frontier_count,
+                connection_count
+                    * usize::from(self.state_features.frontier_connection_reachability),
             )?,
         ))
     }
