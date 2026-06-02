@@ -66,7 +66,6 @@ class StateFeatureConfig(BaseModel):
     frontier_position: bool = False
     frontier_orientation: bool = False
     frontier_kind: bool = False
-    frontier_candidate_count: bool = False
     frontier_occupancy: bool = False
     frontier_neighbor: bool = False
     frontier_neighbor_position: bool = False
@@ -153,7 +152,6 @@ if (
     config.state_features.frontier_position
     or config.state_features.frontier_orientation
     or config.state_features.frontier_kind
-    or config.state_features.frontier_candidate_count
     or config.state_features.frontier_occupancy
     or config.state_features.frontier_neighbor
     or config.state_features.frontier_connection_reachability

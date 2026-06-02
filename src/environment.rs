@@ -15,6 +15,7 @@ use crate::common::{
 use crate::scc_dag::SccDag;
 
 const NO_COMPONENT: usize = usize::MAX;
+pub const STATE_FEATURE_FRONTIER_WIDTH: usize = 5;
 
 #[derive(Clone, Copy, Debug)]
 struct FrontierEdge {
@@ -62,7 +63,6 @@ pub struct StateFeatureConfig {
     pub frontier_position: bool,
     pub frontier_orientation: bool,
     pub frontier_kind: bool,
-    pub frontier_candidate_count: bool,
     pub frontier_occupancy: bool,
     pub frontier_neighbor: bool,
     pub frontier_neighbor_position: bool,
@@ -88,7 +88,6 @@ impl StateFeatureConfig {
         if (self.frontier_position
             || self.frontier_orientation
             || self.frontier_kind
-            || self.frontier_candidate_count
             || self.frontier_occupancy
             || self.frontier_neighbor
             || self.frontier_connection_reachability)
@@ -115,7 +114,6 @@ impl StateFeatureConfig {
             frontier_position: true,
             frontier_orientation: true,
             frontier_kind: true,
-            frontier_candidate_count: true,
             frontier_occupancy: true,
             frontier_neighbor: true,
             frontier_neighbor_position: true,
@@ -133,7 +131,7 @@ pub struct StateFeatures {
     pub room_x: Vec<Coord>,
     pub room_y: Vec<Coord>,
     pub room_placed: Vec<u8>,
-    // mask, x, y, vertical, kind, feasible attachment count, SCC component
+    // mask, x, y, vertical, kind
     pub frontier: Vec<i16>,
     // Occupied tiles in a square window centered on each frontier, flattened row-major.
     pub frontier_occupancy: Vec<u8>,
@@ -904,7 +902,7 @@ impl Environment {
         } else {
             vec![]
         };
-        let mut frontier = vec![0; frontier_count * 7];
+        let mut frontier = vec![0; frontier_count * STATE_FEATURE_FRONTIER_WIDTH];
         let mut frontier_occupancy = if config.frontier_occupancy {
             vec![0; frontier_count * frontier_window_size * frontier_window_size]
         } else {
@@ -955,7 +953,7 @@ impl Environment {
                 - occupancy_prefix[y0 * prefix_width + x1]
         };
         for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
-            let row = idx * 7;
+            let row = idx * STATE_FEATURE_FRONTIER_WIDTH;
             frontier[row] = i16::from(config.frontier_mask);
             if config.frontier_position
                 || config.frontier_neighbor_position
@@ -969,9 +967,6 @@ impl Environment {
             }
             if config.frontier_kind {
                 frontier[row + 4] = data.kind as i16;
-            }
-            if config.frontier_candidate_count {
-                frontier[row + 5] = data.candidates.len() as i16;
             }
             if !config.frontier_occupancy {
                 continue;

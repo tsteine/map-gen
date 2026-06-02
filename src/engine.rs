@@ -3,7 +3,8 @@
 /// environment simulations in parallel.
 use crate::common::{Action, CommonData, Coord, DoorValidOutcome, Room, RoomIdx};
 use crate::environment::{
-    Environment, FrontierNeighborAlgorithm, StateFeatureConfig, StateFeatureProfile, StateFeatures,
+    Environment, FrontierNeighborAlgorithm, STATE_FEATURE_FRONTIER_WIDTH, StateFeatureConfig,
+    StateFeatureProfile, StateFeatures,
 };
 use crossbeam_channel as channel;
 use numpy::{
@@ -677,7 +678,7 @@ fn collect_state_feature_profiles(
 fn max_state_feature_frontier_count(features: &[StateFeatures]) -> usize {
     features
         .iter()
-        .map(|features| features.frontier.len() / 7)
+        .map(|features| features.frontier.len() / STATE_FEATURE_FRONTIER_WIDTH)
         .max()
         .unwrap_or(0)
 }
@@ -860,7 +861,7 @@ impl StateFeatureOutputSlices<'_> {
             &mut self.frontier,
             &features.frontier,
             idx,
-            self.frontier_count * 7,
+            self.frontier_count * STATE_FEATURE_FRONTIER_WIDTH,
         );
         pack_occupancy_windows(
             &mut self.frontier_occupancy,
@@ -936,7 +937,7 @@ impl StateFeatureBuffers {
                     * common_data.room.len()
                     * usize::from(state_features.room_position)
             ],
-            frontier: vec![0; snapshot_count * frontier_count * 7],
+            frontier: vec![0; snapshot_count * frontier_count * STATE_FEATURE_FRONTIER_WIDTH],
             frontier_occupancy: vec![
                 0;
                 snapshot_count
@@ -1033,8 +1034,8 @@ impl StateFeatureBuffers {
             ),
             frontier: output_shard(
                 &mut self.frontier,
-                frontier_start * 7,
-                snapshot_count * frontier_count * 7,
+                frontier_start * STATE_FEATURE_FRONTIER_WIDTH,
+                snapshot_count * frontier_count * STATE_FEATURE_FRONTIER_WIDTH,
             ),
             frontier_occupancy: output_shard(
                 &mut self.frontier_occupancy,
@@ -1778,7 +1779,13 @@ impl EnvironmentGroup {
                 environment_count,
                 room_count * usize::from(self.state_features.room_position),
             )?,
-            pyarray3_from_flat_vec(py, buffers.frontier, environment_count, frontier_count, 7)?,
+            pyarray3_from_flat_vec(
+                py,
+                buffers.frontier,
+                environment_count,
+                frontier_count,
+                STATE_FEATURE_FRONTIER_WIDTH,
+            )?,
             pyarray3_from_flat_vec(
                 py,
                 buffers.frontier_occupancy,
@@ -2019,7 +2026,7 @@ impl EnvironmentGroup {
                 environment_count,
                 candidate_count,
                 frontier_count,
-                7,
+                STATE_FEATURE_FRONTIER_WIDTH,
             )?,
             pyarray4_from_flat_vec(
                 py,

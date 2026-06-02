@@ -375,7 +375,6 @@ class FrontierStateModel(torch.nn.Module):
         )
         node_numeric_width = (
             6 * self.state_features.get("frontier_position", False)
-            + self.state_features.get("frontier_candidate_count", False)
             + frontier_window_size**2 * self.state_features.get("frontier_occupancy", False)
             + 2 * self.num_connection_outputs * self.state_features.get("frontier_connection_reachability", False)
         )
@@ -497,18 +496,16 @@ class FrontierStateModel(torch.nn.Module):
     def forward(self, features: StateFeatures):
         # Shapes below use: b=batch, f=frontiers, k=neighbors, e=embedding width,
         # h=message hidden width.
-        # node: [b, f, 7]
+        # node: [b, f, 5]
         node = features.frontier
         node_mask = node[:, :, 0] != 0
-        # numeric: [b, f, 7]
+        # numeric: [b, f, numeric_width]
         numeric = []
         if self.state_features.get("frontier_position", False):
             numeric.extend([
                 node[:, :, 1].to(torch.float32) / self.map_x,
                 node[:, :, 2].to(torch.float32) / self.map_y,
             ])
-        if self.state_features.get("frontier_candidate_count", False):
-            numeric.append(node[:, :, 5].to(torch.float32) / max(self.num_rooms, 1))
         if self.state_features.get("frontier_position", False):
             numeric.extend([
                 node[:, :, 1].to(torch.float32) / self.map_x,

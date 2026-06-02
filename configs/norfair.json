@@ -43,7 +43,6 @@
     "frontier_position": true,
     "frontier_orientation": true,
     "frontier_kind": true,
-    "frontier_candidate_count": true,
     "frontier_occupancy": true,
     "frontier_neighbor": true,
     "frontier_neighbor_position": true,
