@@ -52,7 +52,7 @@ class GenerationConfig(BaseModel):
     temperature1: float  # final temperature
     state_candidate_chunk: int = 1
     state_environment_chunk: int = 8
-    frontier_neighbor_count: int = 4
+    frontier_neighbor_count: int = 4  # maximum external Delaunay neighbors per frontier
     frontier_window_size: int = 16
     num_threads: int | None = None
 

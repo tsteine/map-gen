@@ -1,8 +1,11 @@
 use bitvec::vec::BitVec;
+use delaunator::{EMPTY, Point, next_halfedge, triangulate};
 use hashbrown::HashMap;
 use rand::SeedableRng;
 use rand::prelude::*;
 use serde::Deserialize;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::time::Instant;
 
 use crate::common::{
@@ -12,6 +15,14 @@ use crate::common::{
 use crate::scc_dag::SccDag;
 
 const NO_COMPONENT: usize = usize::MAX;
+
+#[derive(Clone, Copy, Debug)]
+struct FrontierEdge {
+    endpoints: [usize; 2],
+    length_squared: i32,
+    active: bool,
+}
+
 // Frontier: location of an unconnected door on the map.
 #[derive(Clone, Debug)]
 pub struct Frontier {
@@ -119,8 +130,8 @@ pub struct StateFeatures {
     pub frontier: Vec<i16>,
     // Occupied tiles in a square window centered on each frontier, flattened row-major.
     pub frontier_occupancy: Vec<u8>,
-    // Indices into frontier. Each frontier keeps itself and nearby frontiers.
-    // -1 marks padding.
+    // Indices into frontier. Each frontier keeps nearby frontiers connected by
+    // symmetric degree-capped Delaunay edges. -1 marks padding.
     pub frontier_neighbor: Vec<i16>,
     // Bit flags: same SCC, source reaches destination, destination reaches source.
     pub frontier_neighbor_pair: Vec<u8>,
@@ -148,6 +159,125 @@ pub struct StateFeatureProfile {
     pub assemble_pair_obstruction_base_ns: u64,
     pub assemble_pair_obstruction_candidate_ns: u64,
     pub assemble_output_ns: u64,
+}
+
+fn frontier_midpoint(location: DoorLocation) -> (i16, i16) {
+    if location.vertical() {
+        (i16::from(location.x()) * 2 + 1, i16::from(location.y()) * 2)
+    } else {
+        (i16::from(location.x()) * 2, i16::from(location.y()) * 2 + 1)
+    }
+}
+
+fn frontier_delaunay_neighbors(locations: &[DoorLocation], max_degree: usize) -> Vec<Vec<usize>> {
+    let midpoints = locations
+        .iter()
+        .copied()
+        .map(frontier_midpoint)
+        .collect::<Vec<_>>();
+    let points = midpoints
+        .iter()
+        .map(|&(x, y)| Point {
+            x: f64::from(x),
+            y: f64::from(y),
+        })
+        .collect::<Vec<_>>();
+    let mut edges = vec![];
+    let mut incident_edges = vec![vec![]; locations.len()];
+    let mut degrees = vec![0; locations.len()];
+    let mut add_edge = |a: usize, b: usize| {
+        debug_assert_ne!(a, b);
+        let (a, b) = if a < b { (a, b) } else { (b, a) };
+        let dx = i32::from(midpoints[a].0) - i32::from(midpoints[b].0);
+        let dy = i32::from(midpoints[a].1) - i32::from(midpoints[b].1);
+        let edge_idx = edges.len();
+        edges.push(FrontierEdge {
+            endpoints: [a, b],
+            length_squared: dx * dx + dy * dy,
+            active: true,
+        });
+        incident_edges[a].push(edge_idx);
+        incident_edges[b].push(edge_idx);
+        degrees[a] += 1;
+        degrees[b] += 1;
+    };
+
+    match locations.len() {
+        0 | 1 => {}
+        2 => add_edge(0, 1),
+        _ => {
+            let triangulation = triangulate(&points);
+            if triangulation.is_empty() {
+                for pair in triangulation.hull.windows(2) {
+                    add_edge(pair[0], pair[1]);
+                }
+            } else {
+                for (halfedge_idx, &twin) in triangulation.halfedges.iter().enumerate() {
+                    if twin == EMPTY || halfedge_idx < twin {
+                        add_edge(
+                            triangulation.triangles[halfedge_idx],
+                            triangulation.triangles[next_halfedge(halfedge_idx)],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    prune_frontier_edges(&mut edges, &incident_edges, &mut degrees, max_degree);
+
+    let mut neighbors = vec![vec![]; locations.len()];
+    for edge in edges.into_iter().filter(|edge| edge.active) {
+        let [a, b] = edge.endpoints;
+        neighbors[a].push(b);
+        neighbors[b].push(a);
+    }
+    for row in &mut neighbors {
+        row.sort_unstable();
+        debug_assert!(row.len() <= max_degree);
+    }
+    neighbors
+}
+
+fn prune_frontier_edges(
+    edges: &mut [FrontierEdge],
+    incident_edges: &[Vec<usize>],
+    degrees: &mut [usize],
+    max_degree: usize,
+) {
+    let mut excess_vertices = BinaryHeap::new();
+    for (vertex, &degree) in degrees.iter().enumerate() {
+        if degree > max_degree {
+            excess_vertices.push((degree, Reverse(vertex)));
+        }
+    }
+    while let Some((queued_degree, Reverse(vertex))) = excess_vertices.pop() {
+        if degrees[vertex] != queued_degree || degrees[vertex] <= max_degree {
+            continue;
+        }
+        let edge_idx = incident_edges[vertex]
+            .iter()
+            .copied()
+            .filter(|&edge_idx| edges[edge_idx].active)
+            .max_by_key(|&edge_idx| {
+                let edge = edges[edge_idx];
+                let neighbor = if edge.endpoints[0] == vertex {
+                    edge.endpoints[1]
+                } else {
+                    edge.endpoints[0]
+                };
+                (degrees[neighbor], edge.length_squared, Reverse(neighbor))
+            })
+            .unwrap();
+        let edge = &mut edges[edge_idx];
+        edge.active = false;
+        for &endpoint in &edge.endpoints {
+            degrees[endpoint] -= 1;
+            if degrees[endpoint] > max_degree {
+                excess_vertices.push((degrees[endpoint], Reverse(endpoint)));
+            }
+        }
+    }
 }
 
 impl StateFeatureProfile {
@@ -861,39 +991,17 @@ impl Environment {
             }
         }
         let neighbor_start = Instant::now();
-        let mut neighbors = vec![usize::MAX; frontier_neighbor_count];
-        let mut neighbor_keys = vec![(Coord::MAX, usize::MAX, usize::MAX); frontier_neighbor_count];
         if config.frontier_neighbor {
-            for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
-                let distance = |dst_idx: usize| {
-                    let dst_location = sorted_frontiers[dst_idx].0;
-                    (
-                        (src_location.x() - dst_location.x()).abs()
-                            + (src_location.y() - dst_location.y()).abs(),
-                        usize::from(dst_idx != src_idx),
-                        dst_idx,
-                    )
-                };
-                neighbors.fill(usize::MAX);
-                neighbor_keys.fill((Coord::MAX, usize::MAX, usize::MAX));
-                let mut neighbor_count = 0;
-                for dst_idx in 0..sorted_frontiers.len() {
-                    let dst_key = distance(dst_idx);
-                    let insert_idx = (0..neighbor_count)
-                        .position(|idx| neighbor_keys[idx] > dst_key)
-                        .unwrap_or(neighbor_count);
-                    if insert_idx >= frontier_neighbor_count {
-                        continue;
-                    }
-                    neighbor_count = (neighbor_count + 1).min(frontier_neighbor_count);
-                    for idx in (insert_idx + 1..neighbor_count).rev() {
-                        neighbors[idx] = neighbors[idx - 1];
-                        neighbor_keys[idx] = neighbor_keys[idx - 1];
-                    }
-                    neighbors[insert_idx] = dst_idx;
-                    neighbor_keys[insert_idx] = dst_key;
-                }
-                for (neighbor_idx, &dst_idx) in neighbors[..neighbor_count].iter().enumerate() {
+            let locations = sorted_frontiers
+                .iter()
+                .map(|(location, _)| **location)
+                .collect::<Vec<_>>();
+            for (src_idx, neighbors) in
+                frontier_delaunay_neighbors(&locations, frontier_neighbor_count)
+                    .iter()
+                    .enumerate()
+            {
+                for (neighbor_idx, &dst_idx) in neighbors.iter().enumerate() {
                     frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx] =
                         dst_idx as i16;
                 }
@@ -1177,7 +1285,120 @@ impl Environment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::Room;
+    use crate::common::{Direction, Room};
+
+    fn door_location(x: Coord, y: Coord, vertical: bool) -> DoorLocation {
+        DoorLocation::from_parts(
+            if vertical {
+                Direction::Up
+            } else {
+                Direction::Left
+            },
+            x,
+            y,
+            0,
+            0,
+        )
+    }
+
+    fn assert_symmetric_neighbors(neighbors: &[Vec<usize>], max_degree: usize) {
+        for (src, row) in neighbors.iter().enumerate() {
+            assert!(row.len() <= max_degree);
+            assert!(!row.contains(&src));
+            assert!(row.windows(2).all(|pair| pair[0] < pair[1]));
+            for &dst in row {
+                assert!(neighbors[dst].contains(&src));
+            }
+        }
+    }
+
+    fn sparse_graph(
+        edge_data: &[(usize, usize, i32)],
+        vertex_count: usize,
+    ) -> (Vec<FrontierEdge>, Vec<Vec<usize>>, Vec<usize>) {
+        let mut edges = vec![];
+        let mut incident_edges = vec![vec![]; vertex_count];
+        let mut degrees = vec![0; vertex_count];
+        for &(a, b, length_squared) in edge_data {
+            let edge_idx = edges.len();
+            edges.push(FrontierEdge {
+                endpoints: [a, b],
+                length_squared,
+                active: true,
+            });
+            incident_edges[a].push(edge_idx);
+            incident_edges[b].push(edge_idx);
+            degrees[a] += 1;
+            degrees[b] += 1;
+        }
+        (edges, incident_edges, degrees)
+    }
+
+    #[test]
+    fn frontier_midpoints_distinguish_door_orientations() {
+        assert_eq!(frontier_midpoint(door_location(2, 3, false)), (4, 7));
+        assert_eq!(frontier_midpoint(door_location(2, 3, true)), (5, 6));
+    }
+
+    #[test]
+    fn delaunay_neighbors_handle_tiny_collinear_and_cocircular_inputs() {
+        assert_eq!(
+            frontier_delaunay_neighbors(&[], 4),
+            Vec::<Vec<usize>>::new()
+        );
+        assert_eq!(
+            frontier_delaunay_neighbors(&[door_location(0, 0, false)], 4),
+            vec![Vec::<usize>::new()]
+        );
+        assert_eq!(
+            frontier_delaunay_neighbors(
+                &[door_location(0, 0, false), door_location(1, 0, false)],
+                4
+            ),
+            vec![vec![1], vec![0]]
+        );
+
+        let collinear = frontier_delaunay_neighbors(
+            &[
+                door_location(0, 0, false),
+                door_location(1, 0, false),
+                door_location(2, 0, false),
+            ],
+            4,
+        );
+        assert_eq!(collinear, vec![vec![1], vec![0, 2], vec![1]]);
+
+        let cocircular = frontier_delaunay_neighbors(
+            &[
+                door_location(0, 0, false),
+                door_location(1, 0, true),
+                door_location(1, 1, false),
+                door_location(0, 1, true),
+            ],
+            2,
+        );
+        assert_symmetric_neighbors(&cocircular, 2);
+    }
+
+    #[test]
+    fn pruning_prefers_high_degree_neighbors_then_long_edges() {
+        let (mut edges, incident_edges, mut degrees) = sparse_graph(
+            &[(0, 1, 100), (0, 2, 10), (0, 3, 1), (3, 4, 1), (3, 5, 1)],
+            6,
+        );
+        prune_frontier_edges(&mut edges, &incident_edges, &mut degrees, 2);
+        assert!(!edges[2].active);
+
+        let (mut edges, incident_edges, mut degrees) =
+            sparse_graph(&[(0, 1, 1), (0, 2, 100), (0, 3, 4)], 4);
+        prune_frontier_edges(&mut edges, &incident_edges, &mut degrees, 2);
+        assert!(!edges[1].active);
+
+        let (mut edges, incident_edges, mut degrees) =
+            sparse_graph(&[(0, 1, 1), (0, 2, 1), (0, 3, 1)], 4);
+        prune_frontier_edges(&mut edges, &incident_edges, &mut degrees, 2);
+        assert!(!edges[0].active);
+    }
 
     #[test]
     fn environment_tracks_room_connections_physical_edges_and_clear() {
@@ -1542,7 +1763,7 @@ mod tests {
         let occupied = env.occupancy[y * env.map_size.0 as usize + x] as u16;
         assert_eq!(simulated.frontier_obstruction[0], occupied);
         assert_eq!(simulated.frontier_obstruction[1], occupied * 2);
-        assert_eq!(simulated.frontier_obstruction[2], occupied * 2);
+        assert_eq!(simulated.frontier_obstruction[2], occupied);
         assert_eq!(
             simulated.frontier_occupancy,
             vec![

@@ -106,7 +106,7 @@ class Engine:
         map_size: tuple[int, int],
         num_envs: int,
         seed: Optional[int] = None,
-        frontier_neighbor_count: int = 4,
+        frontier_neighbor_count: int = 4,  # maximum external Delaunay neighbors per frontier
         frontier_window_size: int = 16,
         num_threads: Optional[int] = None,
     ) -> "EnvironmentGroup":
