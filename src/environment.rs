@@ -1,6 +1,6 @@
 use bitvec::vec::BitVec;
 use delaunator::{EMPTY, Point, next_halfedge, triangulate};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use rand::SeedableRng;
 use rand::prelude::*;
 use serde::Deserialize;
@@ -133,7 +133,7 @@ pub struct StateFeatures {
     pub room_placed: Vec<u8>,
     // mask, x, y, vertical, kind
     pub frontier: Vec<i16>,
-    // Occupied tiles in a square window centered on each frontier, flattened row-major.
+    // Occupied tiles in a square window centered on each frontier, packed row-major.
     pub frontier_occupancy: Vec<u8>,
     // Indices into frontier. Semantics depend on FrontierNeighborAlgorithm.
     // -1 marks padding.
@@ -909,6 +909,32 @@ impl Environment {
         self.scc_dag = snapshot.scc_dag;
     }
 
+    pub fn state_feature_frontier_count_after_candidate(
+        &self,
+        candidate: Action,
+        common: &CommonData,
+    ) -> usize {
+        if self.finished || candidate.room_idx >= common.room.len() as RoomIdx {
+            return self.frontier.len();
+        }
+        let mut frontier_count = self.frontier.len();
+        let mut toggled_locations = HashSet::new();
+        for door in &common.room[candidate.room_idx as usize].doors {
+            let location = DoorLocation::new(door, candidate.x, candidate.y);
+            let contains =
+                self.frontier.contains_key(&location) ^ toggled_locations.contains(&location);
+            if contains {
+                frontier_count -= 1;
+            } else {
+                frontier_count += 1;
+            }
+            if !toggled_locations.insert(location) {
+                toggled_locations.remove(&location);
+            }
+        }
+        frontier_count
+    }
+
     pub fn max_frontiers(common: &CommonData) -> usize {
         common
             .room
@@ -996,8 +1022,10 @@ impl Environment {
             vec![]
         };
         let mut frontier = vec![0; frontier_count * STATE_FEATURE_FRONTIER_WIDTH];
+        let frontier_window_area = frontier_window_size * frontier_window_size;
+        let packed_frontier_window_size = frontier_window_area.div_ceil(8);
         let mut frontier_occupancy = if config.frontier_occupancy {
-            vec![0; frontier_count * frontier_window_size * frontier_window_size]
+            vec![0; frontier_count * packed_frontier_window_size]
         } else {
             vec![]
         };
@@ -1066,7 +1094,7 @@ impl Environment {
             }
             let window_start_x = location.x() as isize - frontier_window_size as isize / 2;
             let window_start_y = location.y() as isize - frontier_window_size as isize / 2;
-            let window_start = idx * frontier_window_size * frontier_window_size;
+            let window_start = idx * packed_frontier_window_size;
             let map_height = self.map_size.1 as usize;
             let src_x_start = window_start_x.max(0) as usize;
             let src_x_end = (window_start_x + frontier_window_size as isize)
@@ -1082,9 +1110,31 @@ impl Environment {
                 for src_y in src_y_start..src_y_end {
                     let dst_y = (src_y as isize - window_start_y) as usize;
                     let src_start = src_y * map_width + src_x_start;
-                    let dst_start = window_start + dst_y * frontier_window_size + dst_x_start;
-                    frontier_occupancy[dst_start..dst_start + copy_width]
-                        .copy_from_slice(&occupancy[src_start..src_start + copy_width]);
+                    if dst_x_start == 0
+                        && copy_width == frontier_window_size
+                        && frontier_window_size.is_multiple_of(8)
+                    {
+                        let dst_start = window_start + dst_y * frontier_window_size / 8;
+                        let dst_end = dst_start + frontier_window_size / 8;
+                        for (dst, src) in frontier_occupancy[dst_start..dst_end]
+                            .iter_mut()
+                            .zip(occupancy[src_start..src_start + copy_width].chunks_exact(8))
+                        {
+                            *dst = src
+                                .iter()
+                                .enumerate()
+                                .fold(0, |byte, (bit_idx, &occupied)| byte | (occupied << bit_idx));
+                        }
+                        continue;
+                    }
+                    for src_x in src_x_start..src_x_end {
+                        if occupancy[src_y * map_width + src_x] == 0 {
+                            continue;
+                        }
+                        let dst_x = dst_x_start + src_x - src_x_start;
+                        let bit_idx = dst_y * frontier_window_size + dst_x;
+                        frontier_occupancy[window_start + bit_idx / 8] |= 1 << (bit_idx % 8);
+                    }
                 }
             }
             if let Some((geometry, offset_x, offset_y)) = extra_occupied {
@@ -1096,9 +1146,8 @@ impl Environment {
                         && window_y >= 0
                         && window_y < frontier_window_size as isize
                     {
-                        frontier_occupancy[window_start
-                            + window_y as usize * frontier_window_size
-                            + window_x as usize] = 1;
+                        let bit_idx = window_y as usize * frontier_window_size + window_x as usize;
+                        frontier_occupancy[window_start + bit_idx / 8] |= 1 << (bit_idx % 8);
                     }
                 }
             }
@@ -1937,6 +1986,8 @@ mod tests {
         let expected_connection_variant_unused_count = env.connection_variant_unused_count.clone();
         let expected_room_part_component = env.room_part_component.clone();
         let expected_scc_dag = env.scc_dag.clone();
+        let expected_frontier_count =
+            env.state_feature_frontier_count_after_candidate(candidate, &common);
         let simulated = env.state_features_after_candidate(
             &common,
             candidate,
@@ -1944,6 +1995,10 @@ mod tests {
             FrontierNeighborAlgorithm::Delaunay,
             4,
             4,
+        );
+        assert_eq!(
+            simulated.frontier.len() / STATE_FEATURE_FRONTIER_WIDTH,
+            expected_frontier_count
         );
         assert_eq!(env.actions, expected_actions);
         assert_eq!(env.frontier, expected_frontier);
@@ -1972,13 +2027,7 @@ mod tests {
         assert_eq!(simulated.frontier_obstruction[0], occupied);
         assert_eq!(simulated.frontier_obstruction[1], occupied * 2);
         assert_eq!(simulated.frontier_obstruction[2], occupied);
-        assert_eq!(
-            simulated.frontier_occupancy,
-            vec![
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
-                0, 0, 0, 0,
-            ]
-        );
+        assert_eq!(simulated.frontier_occupancy, vec![0, 12, 192, 0]);
 
         let dummy_candidate = Action {
             room_idx: common.room.len() as RoomIdx,
