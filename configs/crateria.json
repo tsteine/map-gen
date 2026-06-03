@@ -6,7 +6,9 @@
   "map_size": [72, 72],
   "model": {
     "type": "frontier_state",
-    "compile": "true",
+    "compile": true,
+    "autocast": true,
+    "generation_autocast": false,
     "embedding_width": 256,
     "key_width": 64,
     "value_width": 64,
@@ -23,6 +25,8 @@
   "generation": {
     "num_environments": 2048,
     "num_iterations": 1,
+    "num_devices": 1,
+    "state_pipeline_cohorts": 1,
     "action_candidates": 8,
     "lookahead_outcomes": false,
     "temperature0": 10.0,
@@ -58,6 +62,9 @@
     "door_weight": 1.0,
     "connection_weight": 1.0,
     "state_prefix_samples": 8,
-    "state_batch_chunk": 512
+    "state_batch_chunk": 512,
+    "state_gpu_chunk": 4096,
+    "state_pipeline_cohorts": 1,
+    "gradient_accumulation_steps": 1
   }
 }

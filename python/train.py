@@ -14,10 +14,10 @@ from typing import Literal
 import os
 
 from aim import Run
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pathlib import Path
 
-from env import Actions, Engine, GenerateConfig, Outcomes
+from env import Actions, Engine, GenerateConfig, Outcomes, StateFeatures
 from model import CausalTransformerModel, FrontierStateModel
 from loss import LossConfig, compute_loss
 from generate import Prefetcher, generate_cohorts
@@ -25,10 +25,10 @@ from experience import ExperienceStorage
 from profile_stats import ProfileStats
 
 class ModelConfig(BaseModel):
-    type: str = "causal_transformer"
-    compile: bool = True
-    autocast: bool = True
-    generation_autocast: bool = False
+    type: str
+    compile: bool
+    autocast: bool
+    generation_autocast: bool
     embedding_width: int 
     key_width: int
     value_width: int
@@ -46,34 +46,34 @@ class OptimizerConfig(BaseModel):
 
 class GenerationConfig(BaseModel):
     num_environments: int  # number of maps to generate in parallel
-    num_iterations: int = 1  # number of sequential parallel batches to generate per training round
-    num_devices: int = 1  # number of GPUs to use for generation; training remains on the first device
-    state_pipeline_cohorts: int = 1  # independently stepped CPU cohorts scheduled on each GPU
+    num_iterations: int  # number of sequential parallel batches to generate per training round
+    num_devices: int  # number of GPUs to use for generation; training remains on the first device
+    state_pipeline_cohorts: int  # independently stepped CPU cohorts scheduled on each GPU
     action_candidates: int  # number of candidates to score for each room placement step
     lookahead_outcomes: bool  # use post-candidate known outcomes when scoring candidates (greater CPU usage, better accuracy)
     temperature0: float  # initial temperature (higher = candidates selected more randomly)
     temperature1: float  # final temperature
-    state_candidate_chunk: int = 1
-    state_environment_chunk: int = 8
-    frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"] = "delaunay"
-    frontier_neighbor_count: int = 4
-    frontier_window_size: int = 16
-    num_threads: int | None = None
+    state_candidate_chunk: int
+    state_environment_chunk: int
+    frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
+    frontier_neighbor_count: int
+    frontier_window_size: int
+    num_threads: int | None
 
 
 class StateFeatureConfig(BaseModel):
-    inventory: bool = False
-    room_position: bool = False
-    frontier_mask: bool = False
-    frontier_position: bool = False
-    frontier_orientation: bool = False
-    frontier_kind: bool = False
-    frontier_occupancy: bool = False
-    frontier_neighbor: bool = False
-    frontier_neighbor_position: bool = False
-    frontier_neighbor_flags: bool = False
-    connection_reachability: bool = False
-    frontier_connection_reachability: bool = False
+    inventory: bool
+    room_position: bool
+    frontier_mask: bool
+    frontier_position: bool
+    frontier_orientation: bool
+    frontier_kind: bool
+    frontier_occupancy: bool
+    frontier_neighbor: bool
+    frontier_neighbor_position: bool
+    frontier_neighbor_flags: bool
+    connection_reachability: bool
+    frontier_connection_reachability: bool
 
 
 class TrainConfig(BaseModel):
@@ -85,9 +85,11 @@ class TrainConfig(BaseModel):
     door_weight: float  # amount of weight assigned to door outcomes in the loss function
     connection_weight: float  # amount of weight assigned to connection outcomes in the loss function
     ema_decay: float  # decay factor for exponential moving average model used during generation
-    state_prefix_samples: int = 1
-    state_batch_chunk: int = 8
-    state_pipeline_cohorts: int = 0  # 0 = match generation.state_pipeline_cohorts for frontier-state training
+    state_prefix_samples: int
+    state_batch_chunk: int
+    state_gpu_chunk: int  # maximum prepared state rows per GPU training batch
+    state_pipeline_cohorts: int
+    gradient_accumulation_steps: int
 
 
 class Config(BaseModel):
@@ -99,7 +101,7 @@ class Config(BaseModel):
     model: ModelConfig
     optimizer: OptimizerConfig
     generation: GenerationConfig
-    state_features: StateFeatureConfig = Field(default_factory=StateFeatureConfig)
+    state_features: StateFeatureConfig
     train: TrainConfig
 
 
@@ -163,15 +165,13 @@ if config.train.state_prefix_samples <= 0:
     raise ValueError("train.state_prefix_samples must be greater than zero")
 if config.train.state_batch_chunk <= 0:
     raise ValueError("train.state_batch_chunk must be greater than zero")
-if config.train.state_pipeline_cohorts < 0:
-    raise ValueError("train.state_pipeline_cohorts must be non-negative")
-train_state_pipeline_cohorts = (
-    config.train.state_pipeline_cohorts
-    if config.train.state_pipeline_cohorts > 0
-    else config.generation.state_pipeline_cohorts
-    if config.model.type == "frontier_state"
-    else 1
-)
+if config.train.state_gpu_chunk <= 0:
+    raise ValueError("train.state_gpu_chunk must be greater than zero")
+if config.train.state_pipeline_cohorts <= 0:
+    raise ValueError("train.state_pipeline_cohorts must be greater than zero")
+if config.train.gradient_accumulation_steps <= 0:
+    raise ValueError("train.gradient_accumulation_steps must be greater than zero")
+train_state_pipeline_cohorts = config.train.state_pipeline_cohorts
 if (
     config.generation.num_threads is not None
     and config.generation.num_threads % train_state_pipeline_cohorts != 0
@@ -506,8 +506,15 @@ num_episodes = 0
 @dataclass
 class TrainBatchTask:
     kind: Literal["fresh", "replay"]
-    start: int | None = None
-    env_index: int = 0
+    start: int | None
+    env_index: int
+
+
+@dataclass
+class PreparedStateFeatureBatch:
+    row_count: int
+    ranges: list[tuple[int, int]]
+    features: StateFeatures
 
 
 @dataclass
@@ -515,8 +522,8 @@ class PreparedTrainBatch:
     kind: Literal["fresh", "replay"]
     actions: Actions
     outcomes: Outcomes
-    prefix_count: int = 0
-    state_feature_chunks: list[tuple[int, int, object]] | None = None
+    prefix_count: int | None
+    state_feature_batches: list[PreparedStateFeatureBatch] | None = None
 
 
 def select_batch(actions, outcomes, start, batch_size):
@@ -551,7 +558,7 @@ def iter_train_batch_tasks(num_items, fresh_pass_factor, replay_pass_factor, bat
         task_idx += 1
     if has_replay:
         for _ in range(num_replay_batches(num_items, replay_pass_factor, batch_size)):
-            yield TrainBatchTask("replay", env_index=task_idx % train_state_pipeline_cohorts)
+            yield TrainBatchTask("replay", None, task_idx % train_state_pipeline_cohorts)
             task_idx += 1
 
 
@@ -590,12 +597,26 @@ def prepare_state_feature_batch(kind, train_actions, train_outcomes, env):
     prefix_count, feature_chunks = prepare_state_feature_training_chunks(
         train_actions, env
     )
+    state_feature_batches = [
+        PreparedStateFeatureBatch(
+            row_count=sum(end - start for start, end, _ in gpu_chunks),
+            ranges=[
+                (start, end)
+                for start, end, _ in gpu_chunks
+            ],
+            features=cat_state_features([
+                chunk_features
+                for _, _, chunk_features in gpu_chunks
+            ]),
+        )
+        for gpu_chunks in iter_state_feature_gpu_batches(feature_chunks)
+    ]
     return PreparedTrainBatch(
         kind,
         train_actions,
         train_outcomes,
         prefix_count=prefix_count,
-        state_feature_chunks=feature_chunks,
+        state_feature_batches=state_feature_batches,
     )
 
 
@@ -608,7 +629,7 @@ def prepare_train_batch_task(task, fresh_actions, fresh_outcomes):
         )
         if getattr(main_model, "uses_state_features", False):
             return prepare_state_feature_batch(task.kind, train_actions, train_outcomes, env)
-        return PreparedTrainBatch(task.kind, train_actions, train_outcomes)
+        return PreparedTrainBatch(task.kind, train_actions, train_outcomes, None, None)
 
     with profiler.timer("round.replay_prepare"):
         replay_actions = experience.sample(
@@ -621,15 +642,59 @@ def prepare_train_batch_task(task, fresh_actions, fresh_outcomes):
         replay_outcomes = env.get_outcomes(device)
     if getattr(main_model, "uses_state_features", False):
         return prepare_state_feature_batch(task.kind, replay_actions, replay_outcomes, env)
-    return PreparedTrainBatch(task.kind, replay_actions, replay_outcomes)
+    return PreparedTrainBatch(task.kind, replay_actions, replay_outcomes, None, None)
 
 
-def train_batch(prepared_batch, gen_config):
-    main_model.zero_grad()
+def cat_state_features(features: list[StateFeatures]) -> StateFeatures:
+    def cat_feature(name):
+        values = [getattr(feature, name) for feature in features]
+        if all(value.shape[1:] == values[0].shape[1:] for value in values):
+            return torch.cat(values, dim=0)
+
+        max_shape = [
+            max(value.shape[dim] for value in values)
+            for dim in range(len(values[0].shape))
+        ]
+        fill_value = -1 if name == "frontier_neighbor" else 0
+        padded_values = []
+        for value in values:
+            padded = value.new_full(
+                (value.shape[0], *max_shape[1:]),
+                fill_value,
+            )
+            slices = tuple(slice(0, size) for size in value.shape)
+            padded[slices] = value
+            padded_values.append(padded)
+        return torch.cat(padded_values, dim=0)
+
+    return StateFeatures(*(
+        cat_feature(name)
+        for name in vars(features[0])
+    ))
+
+
+def iter_state_feature_gpu_batches(feature_chunks):
+    max_rows = config.train.state_gpu_chunk
+    current_chunks = []
+    current_rows = 0
+    for chunk in feature_chunks:
+        start, end, _ = chunk
+        rows = end - start
+        if current_chunks and current_rows + rows > max_rows:
+            yield current_chunks
+            current_chunks = []
+            current_rows = 0
+        current_chunks.append(chunk)
+        current_rows += rows
+    if current_chunks:
+        yield current_chunks
+
+
+def train_batch_backward(prepared_batch, gen_config, loss_scale):
     train_actions = prepared_batch.actions
     train_outcomes = prepared_batch.outcomes
     if getattr(main_model, "uses_state_features", False):
-        if prepared_batch.state_feature_chunks is None or prepared_batch.prefix_count == 0:
+        if prepared_batch.state_feature_batches is None or prepared_batch.prefix_count is None:
             raise RuntimeError("state-feature training batch was not prepared")
         repeated_outcomes = Outcomes(
             door_invalid=train_outcomes.door_invalid.unsqueeze(1),
@@ -638,14 +703,28 @@ def train_batch(prepared_batch, gen_config):
         mask = torch.ones([train_actions.room_idx.shape[0], 1, 1], dtype=torch.bool, device=device)
         total_loss = 0.0
 
-        for start, end, chunk_features in prepared_batch.state_feature_chunks:
+        for gpu_batch in prepared_batch.state_feature_batches:
             chunk_weight = (
-                (end - start)
+                gpu_batch.row_count
                 / train_actions.room_idx.shape[0]
                 / prepared_batch.prefix_count
             )
+            chunk_outcomes = Outcomes(
+                door_invalid=torch.cat([
+                    repeated_outcomes.door_invalid[start:end]
+                    for start, end in gpu_batch.ranges
+                ]),
+                connection_invalid=torch.cat([
+                    repeated_outcomes.connection_invalid[start:end]
+                    for start, end in gpu_batch.ranges
+                ]),
+            )
+            chunk_mask = torch.cat([
+                mask[start:end]
+                for start, end in gpu_batch.ranges
+            ])
             with profiler.timer("train.cpu_transfer_submit"):
-                chunk_features = chunk_features.to(device)
+                chunk_features = gpu_batch.features.to(device)
             with profiler.cuda_timer("train.gpu_forward_backward", device):
                 with torch.amp.autocast(
                     "cuda",
@@ -655,14 +734,11 @@ def train_batch(prepared_batch, gen_config):
                     chunk_preds = main_model(chunk_features)
                 chunk_loss = compute_loss(
                     chunk_preds,
-                    Outcomes(
-                        repeated_outcomes.door_invalid[start:end],
-                        repeated_outcomes.connection_invalid[start:end],
-                    ),
-                    mask[start:end],
+                    chunk_outcomes,
+                    chunk_mask,
                     loss_config,
                 )
-                (chunk_loss * chunk_weight).backward()
+                (chunk_loss * chunk_weight * loss_scale).backward()
             total_loss += chunk_loss.item() * chunk_weight
         loss = torch.tensor(total_loss, device=device)
     else:
@@ -679,15 +755,17 @@ def train_batch(prepared_batch, gen_config):
 
     if not getattr(main_model, "uses_state_features", False):
         with profiler.cuda_timer("train.gpu_backward", device):
-            loss.backward()
+            (loss * loss_scale).backward()
+    return loss.item()
+
+
+def train_optimizer_step():
     with profiler.cuda_timer("train.gpu_optimizer", device):
         grad_norm = torch.nn.utils.clip_grad_norm_(main_model.parameters(), max_norm=1.0)
         if not torch.isfinite(grad_norm):
             raise RuntimeError(f"non-finite gradient norm: {grad_norm.item()}")
         main_optimizer.step()
         update_ema_model()
-
-    return loss.item()
 
 try:
     for round in range(config.total_episodes // episodes_per_round):
@@ -777,20 +855,39 @@ try:
         def prepare_train_task(task):
             return prepare_train_batch_task(task, actions, gen_outcomes)
 
+        def train_prepared_batch_group(prepared_batches):
+            main_model.zero_grad()
+            loss_scale = 1.0 / len(prepared_batches)
+            group_loss = 0.0
+            for prepared_batch in prepared_batches:
+                timer_name = (
+                    "round.train_fresh"
+                    if prepared_batch.kind == "fresh"
+                    else "round.train_replay"
+                )
+                with profiler.timer(timer_name):
+                    group_loss += train_batch_backward(
+                        prepared_batch,
+                        train_gen_config,
+                        loss_scale,
+                    )
+            train_optimizer_step()
+            return group_loss, len(prepared_batches)
+
+        prepared_batch_group = []
         for prepared_batch in train_batch_prefetcher.map(
             train_tasks, prepare_train_task, profiler, "round.train_batch_wait"
         ):
-            timer_name = (
-                "round.train_fresh"
-                if prepared_batch.kind == "fresh"
-                else "round.train_replay"
-            )
-            with profiler.timer(timer_name):
-                total_loss += train_batch(
-                    prepared_batch,
-                    train_gen_config,
-                )
-            train_batch_count += 1
+            prepared_batch_group.append(prepared_batch)
+            if len(prepared_batch_group) == config.train.gradient_accumulation_steps:
+                group_loss, group_count = train_prepared_batch_group(prepared_batch_group)
+                total_loss += group_loss
+                train_batch_count += group_count
+                prepared_batch_group = []
+        if prepared_batch_group:
+            group_loss, group_count = train_prepared_batch_group(prepared_batch_group)
+            total_loss += group_loss
+            train_batch_count += group_count
 
         # Store this round for future replay after direct fresh training is complete.
         with profiler.timer("round.store"):
