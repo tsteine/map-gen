@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Literal
 
 import os
@@ -86,6 +87,7 @@ class TrainConfig(BaseModel):
     ema_decay: float  # decay factor for exponential moving average model used during generation
     state_prefix_samples: int = 1
     state_batch_chunk: int = 8
+    state_pipeline_cohorts: int = 0  # 0 = match generation.state_pipeline_cohorts for frontier-state training
 
 
 class Config(BaseModel):
@@ -161,6 +163,20 @@ if config.train.state_prefix_samples <= 0:
     raise ValueError("train.state_prefix_samples must be greater than zero")
 if config.train.state_batch_chunk <= 0:
     raise ValueError("train.state_batch_chunk must be greater than zero")
+if config.train.state_pipeline_cohorts < 0:
+    raise ValueError("train.state_pipeline_cohorts must be non-negative")
+train_state_pipeline_cohorts = (
+    config.train.state_pipeline_cohorts
+    if config.train.state_pipeline_cohorts > 0
+    else config.generation.state_pipeline_cohorts
+    if config.model.type == "frontier_state"
+    else 1
+)
+if (
+    config.generation.num_threads is not None
+    and config.generation.num_threads % train_state_pipeline_cohorts != 0
+):
+    raise ValueError("generation.num_threads must be divisible by train.state_pipeline_cohorts")
 if (
     config.state_features.frontier_position
     or config.state_features.frontier_orientation
@@ -292,11 +308,21 @@ generation_cohort_threads = (
     if config.generation.num_threads is None
     else config.generation.num_threads // config.generation.state_pipeline_cohorts
 )
+train_state_cohort_threads = (
+    None
+    if config.generation.num_threads is None
+    else config.generation.num_threads // train_state_pipeline_cohorts
+)
 logging.info(
     "Using %s state pipeline cohort(s) per generation device with %s environment(s) and %s Rust worker(s) per cohort.",
     config.generation.state_pipeline_cohorts,
     generation_cohort_environments,
     generation_cohort_threads if generation_cohort_threads is not None else "automatic",
+)
+logging.info(
+    "Using %s training state pipeline cohort(s) with %s Rust worker(s) per cohort.",
+    train_state_pipeline_cohorts,
+    train_state_cohort_threads if train_state_cohort_threads is not None else "automatic",
 )
 gen_envs = [
     [
@@ -313,14 +339,17 @@ gen_envs = [
     ]
     for device_index in range(len(generation_devices))
 ]
-train_env = engine.create_environment_group(
-    config.map_size,
-    config.train.batch_size,
-    frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
-    frontier_neighbor_count=config.generation.frontier_neighbor_count,
-    frontier_window_size=config.generation.frontier_window_size,
-    num_threads=config.generation.num_threads,
-)
+train_batch_envs = [
+    engine.create_environment_group(
+        config.map_size,
+        config.train.batch_size,
+        frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
+        frontier_neighbor_count=config.generation.frontier_neighbor_count,
+        frontier_window_size=config.generation.frontier_window_size,
+        num_threads=train_state_cohort_threads,
+    )
+    for _ in range(train_state_pipeline_cohorts)
+]
 output_metadata = engine.get_output_metadata()
 
 model_class = {
@@ -463,7 +492,7 @@ main_optimizer = torch.optim.Adam(
     lr=config.optimizer.lr,
     betas=(config.optimizer.beta1, config.optimizer.beta2))
 
-train_prefetcher = Prefetcher()
+train_batch_prefetcher = Prefetcher(max_workers=train_state_pipeline_cohorts)
 generation_executor = ThreadPoolExecutor(max_workers=len(generation_devices))
 generation_models_warmed_up = not (
     config.model.type == "frontier_state"
@@ -472,6 +501,22 @@ generation_models_warmed_up = not (
 )
 
 num_episodes = 0
+
+
+@dataclass
+class TrainBatchTask:
+    kind: Literal["fresh", "replay"]
+    start: int | None = None
+    env_index: int = 0
+
+
+@dataclass
+class PreparedTrainBatch:
+    kind: Literal["fresh", "replay"]
+    actions: Actions
+    outcomes: Outcomes
+    prefix_count: int = 0
+    state_feature_chunks: list[tuple[int, int, object]] | None = None
 
 
 def select_batch(actions, outcomes, start, batch_size):
@@ -497,72 +542,128 @@ def iter_fresh_batch_starts(num_items, pass_factor, batch_size):
 
 def num_replay_batches(num_items, pass_factor, batch_size):
     return int(math.ceil(num_items * pass_factor / batch_size))
-    
 
-def train_batch(train_actions, train_outcomes, gen_config):
-    main_model.zero_grad()
+
+def iter_train_batch_tasks(num_items, fresh_pass_factor, replay_pass_factor, batch_size, has_replay):
+    task_idx = 0
+    for start in iter_fresh_batch_starts(num_items, fresh_pass_factor, batch_size):
+        yield TrainBatchTask("fresh", start, task_idx % train_state_pipeline_cohorts)
+        task_idx += 1
+    if has_replay:
+        for _ in range(num_replay_batches(num_items, replay_pass_factor, batch_size)):
+            yield TrainBatchTask("replay", env_index=task_idx % train_state_pipeline_cohorts)
+            task_idx += 1
+
+
+def prepare_state_feature_training_chunks(train_actions, env):
+    prefix_lengths = torch.randint(
+        1, episode_length + 1, [config.train.state_prefix_samples]).sort().values.tolist()
+    with profiler.timer("train.cpu_setup"):
+        train_actions_cpu = train_actions.to(torch.device("cpu"))
+        env.clear()
+    current_prefix_length = 0
+    feature_chunks = []
+    for prefix_length in prefix_lengths:
+        with profiler.timer("train.cpu_prefix_prepare"):
+            for action_idx in range(current_prefix_length, prefix_length):
+                env.step(Actions(
+                    train_actions_cpu.room_idx[:, action_idx],
+                    train_actions_cpu.room_x[:, action_idx],
+                    train_actions_cpu.room_y[:, action_idx],
+                ))
+            current_prefix_length = prefix_length
+            for start in range(0, train_actions.room_idx.shape[0], config.train.state_batch_chunk):
+                end = min(start + config.train.state_batch_chunk, train_actions.room_idx.shape[0])
+                feature_chunks.append((
+                    start,
+                    end,
+                    env.get_state_features(
+                        torch.device("cpu"),
+                        start,
+                        end - start,
+                    ),
+                ))
+    return len(prefix_lengths), feature_chunks
+
+
+def prepare_state_feature_batch(kind, train_actions, train_outcomes, env):
+    prefix_count, feature_chunks = prepare_state_feature_training_chunks(
+        train_actions, env
+    )
+    return PreparedTrainBatch(
+        kind,
+        train_actions,
+        train_outcomes,
+        prefix_count=prefix_count,
+        state_feature_chunks=feature_chunks,
+    )
+
+
+def prepare_train_batch_task(task, fresh_actions, fresh_outcomes):
+    env = train_batch_envs[task.env_index]
+    if task.kind == "fresh":
+        assert task.start is not None
+        train_actions, train_outcomes = select_batch(
+            fresh_actions, fresh_outcomes, task.start, config.train.batch_size
+        )
+        if getattr(main_model, "uses_state_features", False):
+            return prepare_state_feature_batch(task.kind, train_actions, train_outcomes, env)
+        return PreparedTrainBatch(task.kind, train_actions, train_outcomes)
+
+    with profiler.timer("round.replay_prepare"):
+        replay_actions = experience.sample(
+            config.train.batch_size,
+            config.train.episodes_per_file,
+            config.train.hist_c,
+        )
+        env.replay(replay_actions)
+        replay_actions = replay_actions.to(device)
+        replay_outcomes = env.get_outcomes(device)
     if getattr(main_model, "uses_state_features", False):
+        return prepare_state_feature_batch(task.kind, replay_actions, replay_outcomes, env)
+    return PreparedTrainBatch(task.kind, replay_actions, replay_outcomes)
+
+
+def train_batch(prepared_batch, gen_config):
+    main_model.zero_grad()
+    train_actions = prepared_batch.actions
+    train_outcomes = prepared_batch.outcomes
+    if getattr(main_model, "uses_state_features", False):
+        if prepared_batch.state_feature_chunks is None or prepared_batch.prefix_count == 0:
+            raise RuntimeError("state-feature training batch was not prepared")
         repeated_outcomes = Outcomes(
             door_invalid=train_outcomes.door_invalid.unsqueeze(1),
             connection_invalid=train_outcomes.connection_invalid.unsqueeze(1),
         )
         mask = torch.ones([train_actions.room_idx.shape[0], 1, 1], dtype=torch.bool, device=device)
-        prefix_lengths = torch.randint(
-            1, episode_length + 1, [config.train.state_prefix_samples]).sort().values.tolist()
-        with profiler.timer("train.cpu_setup"):
-            train_actions_cpu = train_actions.to(torch.device("cpu"))
-            train_env.clear()
-        current_prefix_length = 0
         total_loss = 0.0
 
-        def prepare_prefix(prefix_length):
-            nonlocal current_prefix_length
-            with profiler.timer("train.cpu_prefix_prepare"):
-                for action_idx in range(current_prefix_length, prefix_length):
-                    train_env.step(Actions(
-                        train_actions_cpu.room_idx[:, action_idx],
-                        train_actions_cpu.room_x[:, action_idx],
-                        train_actions_cpu.room_y[:, action_idx],
-                    ))
-                current_prefix_length = prefix_length
-                return [
-                    (
-                        start,
-                        min(start + config.train.state_batch_chunk, train_actions.room_idx.shape[0]),
-                        train_env.get_state_features(
-                            torch.device("cpu"),
-                            start,
-                            min(config.train.state_batch_chunk, train_actions.room_idx.shape[0] - start),
-                        ),
-                    )
-                    for start in range(0, train_actions.room_idx.shape[0], config.train.state_batch_chunk)
-                ]
-
-        for feature_chunks in train_prefetcher.map(
-            prefix_lengths, prepare_prefix, profiler, "train.cpu_prefix_wait"
-        ):
-            for start, end, chunk_features in feature_chunks:
-                chunk_weight = (end - start) / train_actions.room_idx.shape[0] / len(prefix_lengths)
-                with profiler.timer("train.cpu_transfer_submit"):
-                    chunk_features = chunk_features.to(device)
-                with profiler.cuda_timer("train.gpu_forward_backward", device):
-                    with torch.amp.autocast(
-                        "cuda",
-                        dtype=torch.bfloat16,
-                        enabled=device.type == "cuda" and config.model.autocast,
-                    ):
-                        chunk_preds = main_model(chunk_features)
-                    chunk_loss = compute_loss(
-                        chunk_preds,
-                        Outcomes(
-                            repeated_outcomes.door_invalid[start:end],
-                            repeated_outcomes.connection_invalid[start:end],
-                        ),
-                        mask[start:end],
-                        loss_config,
-                    )
-                    (chunk_loss * chunk_weight).backward()
-                total_loss += chunk_loss.item() * chunk_weight
+        for start, end, chunk_features in prepared_batch.state_feature_chunks:
+            chunk_weight = (
+                (end - start)
+                / train_actions.room_idx.shape[0]
+                / prepared_batch.prefix_count
+            )
+            with profiler.timer("train.cpu_transfer_submit"):
+                chunk_features = chunk_features.to(device)
+            with profiler.cuda_timer("train.gpu_forward_backward", device):
+                with torch.amp.autocast(
+                    "cuda",
+                    dtype=torch.bfloat16,
+                    enabled=device.type == "cuda" and config.model.autocast,
+                ):
+                    chunk_preds = main_model(chunk_features)
+                chunk_loss = compute_loss(
+                    chunk_preds,
+                    Outcomes(
+                        repeated_outcomes.door_invalid[start:end],
+                        repeated_outcomes.connection_invalid[start:end],
+                    ),
+                    mask[start:end],
+                    loss_config,
+                )
+                (chunk_loss * chunk_weight).backward()
+            total_loss += chunk_loss.item() * chunk_weight
         loss = torch.tensor(total_loss, device=device)
     else:
         with profiler.cuda_timer("train.gpu_forward", device):
@@ -665,27 +766,31 @@ try:
         # Train the model on the episodes generated in this round.
         total_loss = 0.0
         train_batch_count = 0
-        for start in iter_fresh_batch_starts(episodes_per_round, config.train.fresh_pass_factor, config.train.batch_size):
-            train_actions, train_outcomes = select_batch(actions, gen_outcomes, start, config.train.batch_size)
-            with profiler.timer("round.train_fresh"):
-                total_loss += train_batch(train_actions, train_outcomes, train_gen_config)
-            train_batch_count += 1
+        train_tasks = iter_train_batch_tasks(
+            episodes_per_round,
+            config.train.fresh_pass_factor,
+            config.train.replay_pass_factor,
+            config.train.batch_size,
+            experience.num_files > 0,
+        )
 
-        # Train on replay batches sampled from previous rounds' stored experience.
-        if experience.num_files > 0:
-            for _ in range(num_replay_batches(episodes_per_round, config.train.replay_pass_factor, config.train.batch_size)):
-                with profiler.timer("round.replay_prepare"):
-                    replay_actions = experience.sample(
-                        config.train.batch_size,
-                        config.train.episodes_per_file,
-                        config.train.hist_c,
-                    )
-                    train_env.replay(replay_actions)
-                    replay_actions = replay_actions.to(device)
-                    replay_outcomes = train_env.get_outcomes(device)
-                with profiler.timer("round.train_replay"):
-                    total_loss += train_batch(replay_actions, replay_outcomes, train_gen_config)
-                train_batch_count += 1
+        def prepare_train_task(task):
+            return prepare_train_batch_task(task, actions, gen_outcomes)
+
+        for prepared_batch in train_batch_prefetcher.map(
+            train_tasks, prepare_train_task, profiler, "round.train_batch_wait"
+        ):
+            timer_name = (
+                "round.train_fresh"
+                if prepared_batch.kind == "fresh"
+                else "round.train_replay"
+            )
+            with profiler.timer(timer_name):
+                total_loss += train_batch(
+                    prepared_batch,
+                    train_gen_config,
+                )
+            train_batch_count += 1
 
         # Store this round for future replay after direct fresh training is complete.
         with profiler.timer("round.store"):
@@ -703,6 +808,6 @@ try:
             logging.info("Stopping training after completing round %s.", round)
             break
 finally:
-    train_prefetcher.close()
+    train_batch_prefetcher.close()
     generation_executor.shutdown()
     aim_run.close()

@@ -13,31 +13,39 @@ KNOWN_INVALID_REWARD = -100.0
 
 
 class Prefetcher:
-    def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=1)
+    def __init__(self, max_workers=1):
+        if max_workers <= 0:
+            raise ValueError("max_workers must be greater than zero")
+        self.max_workers = max_workers
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
     def close(self):
         self.executor.shutdown()
 
     def map(self, items, prepare, profiler=None, wait_name=None):
         items = iter(items)
-        try:
-            future = self.executor.submit(prepare, next(items))
-        except StopIteration:
-            return
-        for item in items:
+        pending = deque()
+
+        def submit_next():
+            try:
+                pending.append(self.executor.submit(prepare, next(items)))
+                return True
+            except StopIteration:
+                return False
+
+        for _ in range(self.max_workers):
+            if not submit_next():
+                break
+
+        while pending:
+            future = pending.popleft()
             if profiler is None or wait_name is None:
                 result = future.result()
             else:
                 with profiler.timer(wait_name):
                     result = future.result()
-            future = self.executor.submit(prepare, item)
+            submit_next()
             yield result
-        if profiler is None or wait_name is None:
-            yield future.result()
-        else:
-            with profiler.timer(wait_name):
-                yield future.result()
 
 
 def rand_choice(p):
