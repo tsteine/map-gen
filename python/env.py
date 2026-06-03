@@ -66,7 +66,6 @@ class StateFeatures:
     frontier_occupancy: torch.Tensor
     frontier_neighbor: torch.Tensor
     frontier_neighbor_pair: torch.Tensor
-    frontier_obstruction: torch.Tensor
     connection_reachability: torch.Tensor
     frontier_connection_reachability: torch.Tensor
 
@@ -90,7 +89,6 @@ class SparseStateFeatures:
     frontier_occupancy: torch.Tensor
     frontier_neighbor: torch.Tensor
     frontier_neighbor_pair: torch.Tensor
-    frontier_obstruction: torch.Tensor
     connection_reachability: torch.Tensor
     frontier_connection_reachability: torch.Tensor
     dense_row_idx: torch.Tensor
@@ -106,7 +104,6 @@ class SparseStateFeatures:
             self.frontier_occupancy,
             self.frontier_neighbor,
             self.frontier_neighbor_pair,
-            self.frontier_obstruction,
             self.connection_reachability.flatten(0, 1),
             self.frontier_connection_reachability,
             self.dense_row_idx,

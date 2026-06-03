@@ -8,8 +8,8 @@ use crate::environment::{
 };
 use crossbeam_channel as channel;
 use numpy::{
-    Element, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray4, PyArray5, PyArrayMethods,
-    PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray1, PyReadwriteArray2, PyReadwriteArray3,
+    Element, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray4, PyArrayMethods, PyReadonlyArray1,
+    PyReadonlyArray2, PyReadwriteArray1, PyReadwriteArray2,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -49,19 +49,6 @@ fn pyarray4_from_flat_vec<'py, T: Element>(
     dim3: usize,
 ) -> PyResult<Bound<'py, PyArray4<T>>> {
     data.into_pyarray(py).reshape([dim0, dim1, dim2, dim3])
-}
-
-fn pyarray5_from_flat_vec<'py, T: Element>(
-    py: Python<'py>,
-    data: Vec<T>,
-    dim0: usize,
-    dim1: usize,
-    dim2: usize,
-    dim3: usize,
-    dim4: usize,
-) -> PyResult<Bound<'py, PyArray5<T>>> {
-    data.into_pyarray(py)
-        .reshape([dim0, dim1, dim2, dim3, dim4])
 }
 
 // We use shards to share slices of memory between the main thread and worker threads. This allows us
@@ -571,14 +558,6 @@ fn worker_loop(
                     .take(environment_count)
                     .enumerate()
                 {
-                    let occupancy_prefix = if state_features.frontier_obstruction {
-                        let start = Instant::now();
-                        let occupancy_prefix = env.occupancy_prefix();
-                        profile.occupancy_prefix_ns += start.elapsed().as_nanos() as u64;
-                        occupancy_prefix
-                    } else {
-                        vec![]
-                    };
                     for candidate_idx in 0..candidate_count {
                         let idx = env_idx * candidate_count + candidate_idx;
                         let (features, candidate_profile) = env
@@ -590,7 +569,6 @@ fn worker_loop(
                                     y: room_y[idx],
                                 },
                                 &state_features,
-                                &occupancy_prefix,
                                 frontier_neighbor_algorithm,
                                 frontier_neighbor_count,
                                 frontier_window_size,
@@ -624,14 +602,6 @@ fn worker_loop(
                     .take(environment_count)
                     .enumerate()
                 {
-                    let occupancy_prefix = if state_features.frontier_obstruction {
-                        let start = Instant::now();
-                        let occupancy_prefix = env.occupancy_prefix();
-                        profile.occupancy_prefix_ns += start.elapsed().as_nanos() as u64;
-                        occupancy_prefix
-                    } else {
-                        vec![]
-                    };
                     for candidate_idx in 0..candidate_count {
                         let idx = env_idx * candidate_count + candidate_idx;
                         let (features, candidate_profile) = env
@@ -643,7 +613,6 @@ fn worker_loop(
                                     y: room_y[idx],
                                 },
                                 &state_features,
-                                &occupancy_prefix,
                                 frontier_neighbor_algorithm,
                                 frontier_neighbor_count,
                                 frontier_window_size,
@@ -854,7 +823,6 @@ pub struct EnvironmentGroup {
     state_feature_worker_ns: AtomicU64,
     state_feature_pack_ns: AtomicU64,
     state_feature_profile_calls: AtomicUsize,
-    state_feature_occupancy_prefix_ns: AtomicU64,
     state_feature_clone_ns: AtomicU64,
     state_feature_step_ns: AtomicU64,
     state_feature_assemble_ns: AtomicU64,
@@ -863,9 +831,6 @@ pub struct EnvironmentGroup {
     state_feature_assemble_neighbor_ns: AtomicU64,
     state_feature_assemble_pair_ns: AtomicU64,
     state_feature_assemble_pair_flags_ns: AtomicU64,
-    state_feature_assemble_pair_obstruction_ns: AtomicU64,
-    state_feature_assemble_pair_obstruction_base_ns: AtomicU64,
-    state_feature_assemble_pair_obstruction_candidate_ns: AtomicU64,
     state_feature_assemble_output_ns: AtomicU64,
 }
 
@@ -888,7 +853,6 @@ struct StateFeatureBuffers {
     frontier_occupancy: Vec<u8>,
     frontier_neighbor: Vec<i16>,
     frontier_neighbor_pair: Vec<u8>,
-    frontier_obstruction: Vec<u16>,
     connection_reachability: Vec<u8>,
     frontier_connection_reachability: Vec<u8>,
 }
@@ -902,7 +866,6 @@ struct StateFeatureOutputShards {
     frontier_occupancy: OutputShard<u8>,
     frontier_neighbor: OutputShard<i16>,
     frontier_neighbor_pair: OutputShard<u8>,
-    frontier_obstruction: OutputShard<u16>,
     connection_reachability: OutputShard<u8>,
     frontier_connection_reachability: OutputShard<u8>,
     inventory_count: usize,
@@ -922,7 +885,6 @@ struct StateFeatureOutputSlices<'a> {
     frontier_occupancy: &'a mut [u8],
     frontier_neighbor: &'a mut [i16],
     frontier_neighbor_pair: &'a mut [u8],
-    frontier_obstruction: &'a mut [u16],
     connection_reachability: &'a mut [u8],
     frontier_connection_reachability: &'a mut [u8],
     inventory_count: usize,
@@ -944,7 +906,6 @@ impl StateFeatureOutputShards {
             frontier_occupancy: unsafe { self.frontier_occupancy.into_mut_slice() },
             frontier_neighbor: unsafe { self.frontier_neighbor.into_mut_slice() },
             frontier_neighbor_pair: unsafe { self.frontier_neighbor_pair.into_mut_slice() },
-            frontier_obstruction: unsafe { self.frontier_obstruction.into_mut_slice() },
             connection_reachability: unsafe { self.connection_reachability.into_mut_slice() },
             frontier_connection_reachability: unsafe {
                 self.frontier_connection_reachability.into_mut_slice()
@@ -1025,12 +986,6 @@ impl StateFeatureOutputSlices<'_> {
             self.frontier_count * self.frontier_neighbor_count,
         );
         copy_row(
-            &mut self.frontier_obstruction,
-            &features.frontier_obstruction,
-            idx,
-            self.frontier_count * self.frontier_neighbor_count * 3,
-        );
-        copy_row(
             &mut self.frontier_connection_reachability,
             &features.frontier_connection_reachability,
             idx,
@@ -1080,13 +1035,6 @@ impl StateFeatureOutputSlices<'_> {
             dst_idx,
             src_idx,
             self.frontier_neighbor_count,
-        );
-        copy_row(
-            &mut self.frontier_obstruction,
-            &features.frontier_obstruction,
-            dst_idx,
-            src_idx,
-            self.frontier_neighbor_count * 3,
         );
         copy_row(
             &mut self.frontier_connection_reachability,
@@ -1206,14 +1154,6 @@ impl StateFeatureBuffers {
                     * frontier_neighbor_count
                     * usize::from(state_features.frontier_neighbor_flags)
             ],
-            frontier_obstruction: vec![
-                0;
-                snapshot_count
-                    * frontier_count
-                    * frontier_neighbor_count
-                    * 3
-                    * usize::from(state_features.frontier_obstruction)
-            ],
             connection_reachability: vec![
                 0;
                 snapshot_count
@@ -1259,8 +1199,6 @@ impl StateFeatureBuffers {
             frontier_neighbor_count * usize::from(state_features.frontier_neighbor);
         let pair_neighbor_count =
             frontier_neighbor_count * usize::from(state_features.frontier_neighbor_flags);
-        let obstruction_neighbor_count =
-            frontier_neighbor_count * usize::from(state_features.frontier_obstruction);
         let direct_connection_count =
             connection_count * usize::from(state_features.connection_reachability);
         let frontier_connection_count =
@@ -1298,11 +1236,6 @@ impl StateFeatureBuffers {
                 &mut self.frontier_neighbor_pair,
                 frontier_start * pair_neighbor_count,
                 snapshot_count * frontier_count * pair_neighbor_count,
-            ),
-            frontier_obstruction: output_shard(
-                &mut self.frontier_obstruction,
-                frontier_start * obstruction_neighbor_count * 3,
-                snapshot_count * frontier_count * obstruction_neighbor_count * 3,
             ),
             connection_reachability: output_shard(
                 &mut self.connection_reachability,
@@ -1421,8 +1354,6 @@ impl EnvironmentGroup {
     ) {
         self.state_feature_worker_ns
             .fetch_add(worker_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        self.state_feature_occupancy_prefix_ns
-            .fetch_add(worker_profile.occupancy_prefix_ns, Ordering::Relaxed);
         self.state_feature_clone_ns
             .fetch_add(worker_profile.clone_ns, Ordering::Relaxed);
         self.state_feature_step_ns
@@ -1439,20 +1370,6 @@ impl EnvironmentGroup {
             .fetch_add(worker_profile.assemble_pair_ns, Ordering::Relaxed);
         self.state_feature_assemble_pair_flags_ns
             .fetch_add(worker_profile.assemble_pair_flags_ns, Ordering::Relaxed);
-        self.state_feature_assemble_pair_obstruction_ns.fetch_add(
-            worker_profile.assemble_pair_obstruction_ns,
-            Ordering::Relaxed,
-        );
-        self.state_feature_assemble_pair_obstruction_base_ns
-            .fetch_add(
-                worker_profile.assemble_pair_obstruction_base_ns,
-                Ordering::Relaxed,
-            );
-        self.state_feature_assemble_pair_obstruction_candidate_ns
-            .fetch_add(
-                worker_profile.assemble_pair_obstruction_candidate_ns,
-                Ordering::Relaxed,
-            );
         self.state_feature_assemble_output_ns
             .fetch_add(worker_profile.assemble_output_ns, Ordering::Relaxed);
         self.state_feature_profile_calls
@@ -1480,7 +1397,7 @@ impl Engine {
                 PyValueError::new_err(format!("failed to parse state features JSON: {err}"))
             })?;
         state_features.validate().map_err(PyValueError::new_err)?;
-        let common_data = Arc::new(CommonData::new(rooms, state_features.frontier_obstruction)?);
+        let common_data = Arc::new(CommonData::new(rooms)?);
 
         Ok(Self {
             common_data,
@@ -1637,7 +1554,6 @@ impl EnvironmentGroup {
             state_feature_worker_ns: AtomicU64::new(0),
             state_feature_pack_ns: AtomicU64::new(0),
             state_feature_profile_calls: AtomicUsize::new(0),
-            state_feature_occupancy_prefix_ns: AtomicU64::new(0),
             state_feature_clone_ns: AtomicU64::new(0),
             state_feature_step_ns: AtomicU64::new(0),
             state_feature_assemble_ns: AtomicU64::new(0),
@@ -1646,9 +1562,6 @@ impl EnvironmentGroup {
             state_feature_assemble_neighbor_ns: AtomicU64::new(0),
             state_feature_assemble_pair_ns: AtomicU64::new(0),
             state_feature_assemble_pair_flags_ns: AtomicU64::new(0),
-            state_feature_assemble_pair_obstruction_ns: AtomicU64::new(0),
-            state_feature_assemble_pair_obstruction_base_ns: AtomicU64::new(0),
-            state_feature_assemble_pair_obstruction_candidate_ns: AtomicU64::new(0),
             state_feature_assemble_output_ns: AtomicU64::new(0),
         })
     }
@@ -2058,7 +1971,6 @@ impl EnvironmentGroup {
         Bound<'py, PyArray3<u8>>,
         Bound<'py, PyArray3<i16>>,
         Bound<'py, PyArray3<u8>>,
-        Bound<'py, PyArray4<u16>>,
         Bound<'py, PyArray2<u8>>,
         Bound<'py, PyArray3<u8>>,
     )> {
@@ -2192,15 +2104,6 @@ impl EnvironmentGroup {
                 self.frontier_neighbor_count
                     * usize::from(self.state_features.frontier_neighbor_flags),
             )?,
-            pyarray4_from_flat_vec(
-                py,
-                buffers.frontier_obstruction,
-                environment_count,
-                frontier_count,
-                self.frontier_neighbor_count
-                    * usize::from(self.state_features.frontier_obstruction),
-                3 * usize::from(self.state_features.frontier_obstruction),
-            )?,
             pyarray2_from_flat_vec(
                 py,
                 buffers.connection_reachability,
@@ -2235,7 +2138,6 @@ impl EnvironmentGroup {
         Bound<'py, PyArray4<u8>>,
         Bound<'py, PyArray4<i16>>,
         Bound<'py, PyArray4<u8>>,
-        Bound<'py, PyArray5<u16>>,
         Bound<'py, PyArray3<u8>>,
         Bound<'py, PyArray4<u8>>,
     )> {
@@ -2347,8 +2249,6 @@ impl EnvironmentGroup {
         })?;
         self.state_feature_worker_ns
             .fetch_add(worker_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        self.state_feature_occupancy_prefix_ns
-            .fetch_add(worker_profile.occupancy_prefix_ns, Ordering::Relaxed);
         self.state_feature_clone_ns
             .fetch_add(worker_profile.clone_ns, Ordering::Relaxed);
         self.state_feature_step_ns
@@ -2365,20 +2265,6 @@ impl EnvironmentGroup {
             .fetch_add(worker_profile.assemble_pair_ns, Ordering::Relaxed);
         self.state_feature_assemble_pair_flags_ns
             .fetch_add(worker_profile.assemble_pair_flags_ns, Ordering::Relaxed);
-        self.state_feature_assemble_pair_obstruction_ns.fetch_add(
-            worker_profile.assemble_pair_obstruction_ns,
-            Ordering::Relaxed,
-        );
-        self.state_feature_assemble_pair_obstruction_base_ns
-            .fetch_add(
-                worker_profile.assemble_pair_obstruction_base_ns,
-                Ordering::Relaxed,
-            );
-        self.state_feature_assemble_pair_obstruction_candidate_ns
-            .fetch_add(
-                worker_profile.assemble_pair_obstruction_candidate_ns,
-                Ordering::Relaxed,
-            );
         self.state_feature_assemble_output_ns
             .fetch_add(worker_profile.assemble_output_ns, Ordering::Relaxed);
         self.state_feature_profile_calls
@@ -2446,16 +2332,6 @@ impl EnvironmentGroup {
                 self.frontier_neighbor_count
                     * usize::from(self.state_features.frontier_neighbor_flags),
             )?,
-            pyarray5_from_flat_vec(
-                py,
-                buffers.frontier_obstruction,
-                environment_count,
-                candidate_count,
-                frontier_count,
-                self.frontier_neighbor_count
-                    * usize::from(self.state_features.frontier_obstruction),
-                3 * usize::from(self.state_features.frontier_obstruction),
-            )?,
             pyarray3_from_flat_vec(
                 py,
                 buffers.connection_reachability,
@@ -2493,7 +2369,6 @@ impl EnvironmentGroup {
             Bound<'py, PyArray2<u8>>,
             Bound<'py, PyArray2<i16>>,
             Bound<'py, PyArray2<u8>>,
-            Bound<'py, PyArray3<u16>>,
             Bound<'py, PyArray3<u8>>,
             Bound<'py, PyArray2<u8>>,
             Bound<'py, PyArray1<i64>>,
@@ -2686,14 +2561,6 @@ impl EnvironmentGroup {
                 )?,
                 pyarray3_from_flat_vec(
                     py,
-                    buffers.sparse.frontier_obstruction,
-                    sparse_row_count,
-                    self.frontier_neighbor_count
-                        * usize::from(self.state_features.frontier_obstruction),
-                    3 * usize::from(self.state_features.frontier_obstruction),
-                )?,
-                pyarray3_from_flat_vec(
-                    py,
                     buffers.fixed.connection_reachability,
                     environment_count,
                     candidate_count,
@@ -2798,7 +2665,6 @@ impl EnvironmentGroup {
         mut frontier_occupancy: PyReadwriteArray2<'py, u8>,
         mut frontier_neighbor: PyReadwriteArray2<'py, i16>,
         mut frontier_neighbor_pair: PyReadwriteArray2<'py, u8>,
-        mut frontier_obstruction: PyReadwriteArray3<'py, u16>,
         mut connection_reachability: PyReadwriteArray2<'py, u8>,
         mut frontier_connection_reachability: PyReadwriteArray2<'py, u8>,
         mut dense_row_idx: PyReadwriteArray1<'py, i64>,
@@ -2837,11 +2703,6 @@ impl EnvironmentGroup {
             self.frontier_neighbor_count * usize::from(self.state_features.frontier_neighbor);
         let frontier_neighbor_pair_width =
             self.frontier_neighbor_count * usize::from(self.state_features.frontier_neighbor_flags);
-        let frontier_obstruction_neighbor_width =
-            self.frontier_neighbor_count * usize::from(self.state_features.frontier_obstruction);
-        let frontier_obstruction_depth = 3 * usize::from(self.state_features.frontier_obstruction);
-        let frontier_obstruction_width =
-            frontier_obstruction_neighbor_width * frontier_obstruction_depth;
         let connection_reachability_width =
             connection_count * usize::from(self.state_features.connection_reachability);
         let frontier_connection_width =
@@ -2855,7 +2716,6 @@ impl EnvironmentGroup {
         let frontier_occupancy_shape = frontier_occupancy.as_array().shape().to_vec();
         let frontier_neighbor_shape = frontier_neighbor.as_array().shape().to_vec();
         let frontier_neighbor_pair_shape = frontier_neighbor_pair.as_array().shape().to_vec();
-        let frontier_obstruction_shape = frontier_obstruction.as_array().shape().to_vec();
         let connection_reachability_shape = connection_reachability.as_array().shape().to_vec();
         let frontier_connection_reachability_shape =
             frontier_connection_reachability.as_array().shape().to_vec();
@@ -2869,7 +2729,6 @@ impl EnvironmentGroup {
             || frontier_occupancy_shape[0] < sparse_row_count
             || frontier_neighbor_shape[0] < sparse_row_count
             || frontier_neighbor_pair_shape[0] < sparse_row_count
-            || frontier_obstruction_shape[0] < sparse_row_count
             || frontier_connection_reachability_shape[0] < sparse_row_count
             || dense_row_idx_shape[0] < sparse_row_count
         {
@@ -2896,16 +2755,6 @@ impl EnvironmentGroup {
             "frontier_neighbor_pair",
             frontier_neighbor_pair_shape[1],
             frontier_neighbor_pair_width,
-        )?;
-        check_dim(
-            "frontier_obstruction",
-            frontier_obstruction_shape[1],
-            frontier_obstruction_neighbor_width,
-        )?;
-        check_dim(
-            "frontier_obstruction",
-            frontier_obstruction_shape[2],
-            frontier_obstruction_depth,
         )?;
         check_dim(
             "connection_reachability",
@@ -2942,9 +2791,6 @@ impl EnvironmentGroup {
         let frontier_neighbor_pair = frontier_neighbor_pair
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("frontier_neighbor_pair must be contiguous"))?;
-        let frontier_obstruction = frontier_obstruction
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("frontier_obstruction must be contiguous"))?;
         let connection_reachability = connection_reachability
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("connection_reachability must be contiguous"))?;
@@ -3017,7 +2863,6 @@ impl EnvironmentGroup {
                                 frontier_occupancy: OutputShard::empty(),
                                 frontier_neighbor: OutputShard::empty(),
                                 frontier_neighbor_pair: OutputShard::empty(),
-                                frontier_obstruction: OutputShard::empty(),
                                 connection_reachability: OutputShard::from_slice(
                                     &mut connection_reachability[snapshot_start
                                         * connection_reachability_width
@@ -3059,12 +2904,6 @@ impl EnvironmentGroup {
                                         * frontier_neighbor_pair_width
                                         ..(sparse_row_start + worker_sparse_row_count)
                                             * frontier_neighbor_pair_width],
-                                ),
-                                frontier_obstruction: OutputShard::from_slice(
-                                    &mut frontier_obstruction[sparse_row_start
-                                        * frontier_obstruction_width
-                                        ..(sparse_row_start + worker_sparse_row_count)
-                                            * frontier_obstruction_width],
                                 ),
                                 connection_reachability: OutputShard::empty(),
                                 frontier_connection_reachability: OutputShard::from_slice(
@@ -3111,9 +2950,6 @@ impl EnvironmentGroup {
             self.state_feature_worker_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
             self.state_feature_pack_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
             self.state_feature_profile_calls.swap(0, Ordering::Relaxed) as f64,
-            self.state_feature_occupancy_prefix_ns
-                .swap(0, Ordering::Relaxed) as f64
-                / 1_000_000_000.0,
             self.state_feature_clone_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
             self.state_feature_step_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
             self.state_feature_assemble_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
@@ -3130,15 +2966,6 @@ impl EnvironmentGroup {
                 .swap(0, Ordering::Relaxed) as f64
                 / 1_000_000_000.0,
             self.state_feature_assemble_pair_flags_ns
-                .swap(0, Ordering::Relaxed) as f64
-                / 1_000_000_000.0,
-            self.state_feature_assemble_pair_obstruction_ns
-                .swap(0, Ordering::Relaxed) as f64
-                / 1_000_000_000.0,
-            self.state_feature_assemble_pair_obstruction_base_ns
-                .swap(0, Ordering::Relaxed) as f64
-                / 1_000_000_000.0,
-            self.state_feature_assemble_pair_obstruction_candidate_ns
                 .swap(0, Ordering::Relaxed) as f64
                 / 1_000_000_000.0,
             self.state_feature_assemble_output_ns

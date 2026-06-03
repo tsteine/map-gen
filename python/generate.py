@@ -158,7 +158,6 @@ def extract_candidate_features(
                 feature_slot.frontier_occupancy.numpy(),
                 feature_slot.frontier_neighbor.numpy(),
                 feature_slot.frontier_neighbor_pair.numpy(),
-                feature_slot.frontier_obstruction.numpy(),
                 feature_slot.connection_reachability.numpy(),
                 feature_slot.frontier_connection_reachability.numpy(),
                 feature_slot.dense_row_idx.numpy(),
@@ -182,7 +181,6 @@ def extract_candidate_features(
             worker_seconds,
             pack_seconds,
             profile_calls,
-            occupancy_prefix_cpu_seconds,
             snapshot_apply_cpu_seconds,
             restore_cpu_seconds,
             assemble_cpu_seconds,
@@ -191,9 +189,6 @@ def extract_candidate_features(
             assemble_neighbor_cpu_seconds,
             assemble_pair_cpu_seconds,
             assemble_pair_flags_cpu_seconds,
-            assemble_pair_obstruction_cpu_seconds,
-            assemble_pair_obstruction_base_cpu_seconds,
-            assemble_pair_obstruction_candidate_cpu_seconds,
             assemble_output_cpu_seconds,
         ) = env.take_state_feature_profile()
         if profile_calls != 1:
@@ -202,7 +197,6 @@ def extract_candidate_features(
             )
         profiler.add("gen.cpu_extract_worker", worker_seconds)
         profiler.add("gen.cpu_extract_pack", pack_seconds)
-        profiler.add("gen.cpu_extract_occupancy_prefix_sum", occupancy_prefix_cpu_seconds)
         profiler.add("gen.cpu_extract_snapshot_apply_sum", snapshot_apply_cpu_seconds)
         profiler.add("gen.cpu_extract_restore_sum", restore_cpu_seconds)
         profiler.add("gen.cpu_extract_assemble_sum", assemble_cpu_seconds)
@@ -211,9 +205,6 @@ def extract_candidate_features(
         profiler.add("gen.cpu_extract_assemble_neighbor_sum", assemble_neighbor_cpu_seconds)
         profiler.add("gen.cpu_extract_assemble_pair_sum", assemble_pair_cpu_seconds)
         profiler.add("gen.cpu_extract_assemble_pair_flags_sum", assemble_pair_flags_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_pair_obstruction_sum", assemble_pair_obstruction_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_pair_obstruction_base_sum", assemble_pair_obstruction_base_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_pair_obstruction_candidate_sum", assemble_pair_obstruction_candidate_cpu_seconds)
         profiler.add("gen.cpu_extract_assemble_output_sum", assemble_output_cpu_seconds)
     return env_start, env_end, features
 
@@ -280,7 +271,6 @@ def transfer_state_features_sync(
         densify(features.frontier_occupancy),
         densify(features.frontier_neighbor, -1),
         densify(features.frontier_neighbor_pair),
-        densify(features.frontier_obstruction),
         connection_reachability,
         densify(features.frontier_connection_reachability),
     )
@@ -304,11 +294,6 @@ class PinnedSparseStateFeatureSlot:
             env.frontier_neighbor_count
             * int(state_features.get("frontier_neighbor_flags", False))
         )
-        self.frontier_obstruction_neighbor_width = (
-            env.frontier_neighbor_count
-            * int(state_features.get("frontier_obstruction", False))
-        )
-        self.frontier_obstruction_depth = 3 * int(state_features.get("frontier_obstruction", False))
         self.connection_reachability_width = (
             connection_count * int(state_features.get("connection_reachability", False))
         )
@@ -327,7 +312,6 @@ class PinnedSparseStateFeatureSlot:
         self.frontier_occupancy = None
         self.frontier_neighbor = None
         self.frontier_neighbor_pair = None
-        self.frontier_obstruction = None
         self.connection_reachability = None
         self.frontier_connection_reachability = None
         self.dense_row_idx = None
@@ -364,14 +348,6 @@ class PinnedSparseStateFeatureSlot:
             self.frontier_neighbor_pair = self._empty(
                 (self.sparse_row_capacity, self.frontier_neighbor_pair_width), torch.uint8
             )
-            self.frontier_obstruction = self._empty(
-                (
-                    self.sparse_row_capacity,
-                    self.frontier_obstruction_neighbor_width,
-                    self.frontier_obstruction_depth,
-                ),
-                torch.uint16,
-            )
             self.connection_reachability = self._empty(
                 (self.snapshot_capacity, self.connection_reachability_width), torch.uint8
             )
@@ -405,7 +381,6 @@ class PinnedSparseStateFeatureSlot:
             self.frontier_occupancy[:sparse_row_count],
             self.frontier_neighbor[:sparse_row_count],
             self.frontier_neighbor_pair[:sparse_row_count],
-            self.frontier_obstruction[:sparse_row_count],
             self.connection_reachability[:snapshot_count].view(
                 environment_count, candidate_count, self.connection_reachability_width
             ),

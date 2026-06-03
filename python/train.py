@@ -71,7 +71,6 @@ class StateFeatureConfig(BaseModel):
     frontier_neighbor: bool = False
     frontier_neighbor_position: bool = False
     frontier_neighbor_flags: bool = False
-    frontier_obstruction: bool = False
     connection_reachability: bool = False
     frontier_connection_reachability: bool = False
 
@@ -174,7 +173,6 @@ if (
 if (
     config.state_features.frontier_neighbor_position
     or config.state_features.frontier_neighbor_flags
-    or config.state_features.frontier_obstruction
 ) and not config.state_features.frontier_neighbor:
     raise ValueError("frontier neighbor pair features require state_features.frontier_neighbor")
 

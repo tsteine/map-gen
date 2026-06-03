@@ -391,7 +391,6 @@ class FrontierStateModel(torch.nn.Module):
         pair_width = (
             5 * self.state_features.get("frontier_neighbor_position", False)
             + 3 * self.state_features.get("frontier_neighbor_flags", False)
-            + 3 * self.state_features.get("frontier_obstruction", False)
         )
         use_neighbors = self.state_features.get("frontier_neighbor", False)
         self.source_message_layers = torch.nn.ModuleList([
@@ -455,14 +454,9 @@ class FrontierStateModel(torch.nn.Module):
             )
         values = []
         use_position = self.state_features.get("frontier_neighbor_position", False)
-        use_obstruction = self.state_features.get("frontier_obstruction", False)
-        if use_position or use_obstruction:
+        if use_position:
             raw_x = node[:, :, 1].to(torch.int64)
             raw_y = node[:, :, 2].to(torch.int64)
-            x = raw_x.clamp(0, self.map_x - 1)
-            y = raw_y.clamp(0, self.map_y - 1)
-            x0, x1 = x.unsqueeze(2), gather_neighbor(x)
-            y0, y1 = y.unsqueeze(2), gather_neighbor(y)
             raw_x0, raw_x1 = raw_x.unsqueeze(2), gather_neighbor(raw_x)
             raw_y0, raw_y1 = raw_y.unsqueeze(2), gather_neighbor(raw_y)
         if use_position:
@@ -479,17 +473,6 @@ class FrontierStateModel(torch.nn.Module):
                 (flags & 1 != 0).to(torch.float32),
                 (flags & 2 != 0).to(torch.float32),
                 (flags & 4 != 0).to(torch.float32),
-            ])
-        if use_obstruction:
-            min_x, max_x = torch.minimum(x0, x1), torch.maximum(x0, x1)
-            min_y, max_y = torch.minimum(y0, y1), torch.maximum(y0, y1)
-            area = (max_x - min_x + 1) * (max_y - min_y + 1)
-            path_length = (max_x - min_x + 1) + (max_y - min_y + 1)
-            obstruction = features.frontier_obstruction.to(torch.float32)
-            values.extend([
-                obstruction[:, :, :, 0] / area.clamp_min(1),
-                obstruction[:, :, :, 1] / path_length.clamp_min(1),
-                obstruction[:, :, :, 2] / path_length.clamp_min(1),
             ])
         return torch.stack(values, dim=-1) if values else None
 

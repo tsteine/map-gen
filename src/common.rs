@@ -188,9 +188,6 @@ struct ConnectionsKey {
 pub struct GeometryData {
     pub map: Vec<Vec<u8>>,
     pub occupied_tiles: Vec<(Coord, Coord)>,
-    occupied_prefix: Vec<u16>,
-    occupied_prefix_width: usize,
-    occupied_prefix_height: usize,
     doors: Vec<GeometryDoorData>,
     pub min_x: Coord,
     pub max_x: Coord,
@@ -339,7 +336,7 @@ fn validate_missing_connections(room_idx: usize, room: &Room) -> Result<()> {
 }
 
 impl GeometryData {
-    fn new(key: &GeometryKey, build_occupied_prefix: bool) -> Result<Self> {
+    fn new(key: &GeometryKey) -> Result<Self> {
         let mut min_x = Coord::MAX;
         let mut max_x = Coord::MIN;
         let mut min_y = Coord::MAX;
@@ -347,14 +344,7 @@ impl GeometryData {
         let mut occupied_tiles = vec![];
         let room_width = key.map[0].len() as Coord;
         let room_height = key.map.len() as Coord;
-        let prefix_width = room_width as usize + 1;
-        let mut occupied_prefix = if build_occupied_prefix {
-            vec![0; prefix_width * (room_height as usize + 1)]
-        } else {
-            vec![]
-        };
         for y in 0..room_height {
-            let mut row_sum = 0;
             for x in 0..room_width {
                 if key.map[y as usize][x as usize] != 0 {
                     occupied_tiles.push((x, y));
@@ -362,11 +352,6 @@ impl GeometryData {
                     max_x = max_x.max(x);
                     min_y = min_y.min(y);
                     max_y = max_y.max(y);
-                    row_sum += 1;
-                }
-                if build_occupied_prefix {
-                    occupied_prefix[(y as usize + 1) * prefix_width + x as usize + 1] =
-                        occupied_prefix[y as usize * prefix_width + x as usize + 1] + row_sum;
                 }
             }
         }
@@ -380,9 +365,6 @@ impl GeometryData {
         Ok(Self {
             map: key.map.clone(),
             occupied_tiles,
-            occupied_prefix,
-            occupied_prefix_width: prefix_width,
-            occupied_prefix_height: room_height as usize + 1,
             doors: key.doors.clone(),
             min_x,
             max_x,
@@ -390,31 +372,10 @@ impl GeometryData {
             max_y,
         })
     }
-
-    #[inline]
-    pub fn occupied_rect_sum(&self, x0: isize, y0: isize, x1: isize, y1: isize) -> u16 {
-        let width = self.occupied_prefix_width as isize - 1;
-        let height = self.occupied_prefix_height as isize - 1;
-        let x0 = x0.max(0).min(width);
-        let y0 = y0.max(0).min(height);
-        let x1 = (x1 + 1).max(0).min(width);
-        let y1 = (y1 + 1).max(0).min(height);
-        if x0 >= x1 || y0 >= y1 {
-            return 0;
-        }
-        let x0 = x0 as usize;
-        let y0 = y0 as usize;
-        let x1 = x1 as usize;
-        let y1 = y1 as usize;
-        self.occupied_prefix[y1 * self.occupied_prefix_width + x1]
-            + self.occupied_prefix[y0 * self.occupied_prefix_width + x0]
-            - self.occupied_prefix[y1 * self.occupied_prefix_width + x0]
-            - self.occupied_prefix[y0 * self.occupied_prefix_width + x1]
-    }
 }
 
 impl CommonData {
-    pub fn new(rooms: Vec<Room>, build_occupied_prefix: bool) -> Result<Self> {
+    pub fn new(rooms: Vec<Room>) -> Result<Self> {
         if rooms.len() > RoomIdx::MAX as usize {
             bail!(
                 "room set has {} rooms, exceeding the maximum {} supported by RoomIdx plus one dummy action",
@@ -514,7 +475,7 @@ impl CommonData {
                     );
                 }
                 let geometry_idx = geometry_data.len() as GeometryIdx;
-                let geometry = GeometryData::new(&geometry_key, build_occupied_prefix)?;
+                let geometry = GeometryData::new(&geometry_key)?;
                 for door in geometry.doors.iter() {
                     geometry_dir_door[door.direction as usize].push(GeometryDirDoorData {
                         geometry_idx,
@@ -828,7 +789,7 @@ mod tests {
         )
         .unwrap();
 
-        let common = CommonData::new(rooms, true).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         let door_output: Vec<_> = common
             .door_output
             .iter()
@@ -858,18 +819,6 @@ mod tests {
     }
 
     #[test]
-    fn geometry_occupancy_prefix_is_optional() {
-        let rooms: Vec<Room> = serde_json::from_str(
-            r#"[{"map": [[1]], "doors": [], "connections": [], "missing_connections": []}]"#,
-        )
-        .unwrap();
-        let without_prefix = CommonData::new(rooms.clone(), false).unwrap();
-        let with_prefix = CommonData::new(rooms, true).unwrap();
-        assert!(without_prefix.geometry[0].occupied_prefix.is_empty());
-        assert!(!with_prefix.geometry[0].occupied_prefix.is_empty());
-    }
-
-    #[test]
     fn missing_connections_must_be_a_minimum_strong_completion() {
         let parse = |missing_connections| {
             serde_json::from_str::<Vec<Room>>(&format!(
@@ -877,9 +826,9 @@ mod tests {
             ))
             .unwrap()
         };
-        assert!(CommonData::new(parse("[[0, 1], [1, 0]]"), false).is_ok());
-        assert!(CommonData::new(parse("[]"), false).is_err());
-        assert!(CommonData::new(parse("[[0, 1], [1, 0], [0, 1]]"), false).is_err());
-        assert!(CommonData::new(parse("[[0, 1], [0, 1]]"), false).is_err());
+        assert!(CommonData::new(parse("[[0, 1], [1, 0]]")).is_ok());
+        assert!(CommonData::new(parse("[]")).is_err());
+        assert!(CommonData::new(parse("[[0, 1], [1, 0], [0, 1]]")).is_err());
+        assert!(CommonData::new(parse("[[0, 1], [0, 1]]")).is_err());
     }
 }

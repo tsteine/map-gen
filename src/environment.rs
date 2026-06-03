@@ -67,7 +67,6 @@ pub struct StateFeatureConfig {
     pub frontier_neighbor: bool,
     pub frontier_neighbor_position: bool,
     pub frontier_neighbor_flags: bool,
-    pub frontier_obstruction: bool,
     pub connection_reachability: bool,
     pub frontier_connection_reachability: bool,
 }
@@ -95,9 +94,7 @@ impl StateFeatureConfig {
         {
             return Err("frontier features require frontier_mask");
         }
-        if (self.frontier_neighbor_position
-            || self.frontier_neighbor_flags
-            || self.frontier_obstruction)
+        if (self.frontier_neighbor_position || self.frontier_neighbor_flags)
             && !self.frontier_neighbor
         {
             return Err("frontier neighbor pair features require frontier_neighbor");
@@ -118,7 +115,6 @@ impl StateFeatureConfig {
             frontier_neighbor: true,
             frontier_neighbor_position: true,
             frontier_neighbor_flags: true,
-            frontier_obstruction: true,
             connection_reachability: true,
             frontier_connection_reachability: true,
         }
@@ -140,8 +136,6 @@ pub struct StateFeatures {
     pub frontier_neighbor: Vec<i16>,
     // Bit flags: same SCC, source reaches destination, destination reaches source.
     pub frontier_neighbor_pair: Vec<u8>,
-    // Occupied tile counts: bounding rectangle and the two Manhattan L paths.
-    pub frontier_obstruction: Vec<u16>,
     // Whether each required closure edge already has an interior path.
     pub connection_reachability: Vec<u8>,
     // Bit flags per frontier and required closure edge: source reaches frontier,
@@ -151,7 +145,6 @@ pub struct StateFeatures {
 
 #[derive(Default)]
 pub struct StateFeatureProfile {
-    pub occupancy_prefix_ns: u64,
     pub clone_ns: u64,
     pub step_ns: u64,
     pub assemble_ns: u64,
@@ -160,9 +153,6 @@ pub struct StateFeatureProfile {
     pub assemble_neighbor_ns: u64,
     pub assemble_pair_ns: u64,
     pub assemble_pair_flags_ns: u64,
-    pub assemble_pair_obstruction_ns: u64,
-    pub assemble_pair_obstruction_base_ns: u64,
-    pub assemble_pair_obstruction_candidate_ns: u64,
     pub assemble_output_ns: u64,
 }
 
@@ -330,7 +320,6 @@ fn prune_frontier_edges(
 
 impl StateFeatureProfile {
     pub fn add(&mut self, other: &Self) {
-        self.occupancy_prefix_ns += other.occupancy_prefix_ns;
         self.clone_ns += other.clone_ns;
         self.step_ns += other.step_ns;
         self.assemble_ns += other.assemble_ns;
@@ -339,9 +328,6 @@ impl StateFeatureProfile {
         self.assemble_neighbor_ns += other.assemble_neighbor_ns;
         self.assemble_pair_ns += other.assemble_pair_ns;
         self.assemble_pair_flags_ns += other.assemble_pair_flags_ns;
-        self.assemble_pair_obstruction_ns += other.assemble_pair_obstruction_ns;
-        self.assemble_pair_obstruction_base_ns += other.assemble_pair_obstruction_base_ns;
-        self.assemble_pair_obstruction_candidate_ns += other.assemble_pair_obstruction_candidate_ns;
         self.assemble_output_ns += other.assemble_output_ns;
     }
 }
@@ -952,15 +938,9 @@ impl Environment {
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> StateFeatures {
-        let occupancy_prefix = if config.frontier_obstruction {
-            self.occupancy_prefix()
-        } else {
-            vec![]
-        };
         self.state_features_with_occupancy(
             common,
             config,
-            &occupancy_prefix,
             &self.occupancy,
             None,
             frontier_neighbor_algorithm,
@@ -970,27 +950,10 @@ impl Environment {
         )
     }
 
-    pub(crate) fn occupancy_prefix(&self) -> Vec<u16> {
-        let map_width = self.map_size.0 as usize;
-        let map_height = self.map_size.1 as usize;
-        let prefix_width = map_width + 1;
-        let mut occupancy_prefix = vec![0u16; prefix_width * (map_height + 1)];
-        for y in 0..map_height {
-            let mut row_sum = 0u16;
-            for x in 0..map_width {
-                row_sum += self.occupancy[y * map_width + x] as u16;
-                occupancy_prefix[(y + 1) * prefix_width + x + 1] =
-                    occupancy_prefix[y * prefix_width + x + 1] + row_sum;
-            }
-        }
-        occupancy_prefix
-    }
-
     fn state_features_with_occupancy(
         &self,
         common: &CommonData,
         config: &StateFeatureConfig,
-        occupancy_prefix: &[u16],
         occupancy: &[u8],
         extra_occupied: Option<(&GeometryData, Coord, Coord)>,
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
@@ -1039,11 +1002,6 @@ impl Environment {
         } else {
             vec![]
         };
-        let mut frontier_obstruction = if config.frontier_obstruction {
-            vec![0; frontier_count * frontier_neighbor_count * 3]
-        } else {
-            vec![]
-        };
         let mut connection_reachability = if config.connection_reachability {
             vec![0; common.room_connection.len()]
         } else {
@@ -1063,23 +1021,10 @@ impl Environment {
         };
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
         let map_width = self.map_size.0 as usize;
-        let prefix_width = map_width + 1;
-        let rect_sum = |x0: Coord, y0: Coord, x1: Coord, y1: Coord| {
-            let x0 = x0.clamp(0, self.map_size.0 - 1) as usize;
-            let y0 = y0.clamp(0, self.map_size.1 - 1) as usize;
-            let x1 = x1.clamp(0, self.map_size.0 - 1) as usize + 1;
-            let y1 = y1.clamp(0, self.map_size.1 - 1) as usize + 1;
-            occupancy_prefix[y1 * prefix_width + x1] + occupancy_prefix[y0 * prefix_width + x0]
-                - occupancy_prefix[y1 * prefix_width + x0]
-                - occupancy_prefix[y0 * prefix_width + x1]
-        };
         for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
             let row = idx * STATE_FEATURE_FRONTIER_WIDTH;
             frontier[row] = i16::from(config.frontier_mask);
-            if config.frontier_position
-                || config.frontier_neighbor_position
-                || config.frontier_obstruction
-            {
+            if config.frontier_position || config.frontier_neighbor_position {
                 frontier[row + 1] = location.x() as i16;
                 frontier[row + 2] = location.y() as i16;
             }
@@ -1232,75 +1177,7 @@ impl Environment {
             }
         }
         let pair_flags_ns = pair_flags_start.elapsed().as_nanos() as u64;
-        let pair_obstruction_base_start = Instant::now();
-        if config.frontier_obstruction {
-            for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
-                for neighbor_idx in 0..frontier_neighbor_count {
-                    let dst_idx =
-                        frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx];
-                    if dst_idx < 0 {
-                        break;
-                    }
-                    let dst_idx = dst_idx as usize;
-                    let (dst_location, _) = sorted_frontiers[dst_idx];
-                    let pair_idx = src_idx * frontier_neighbor_count + neighbor_idx;
-                    let min_x = src_location.x().min(dst_location.x());
-                    let max_x = src_location.x().max(dst_location.x());
-                    let min_y = src_location.y().min(dst_location.y());
-                    let max_y = src_location.y().max(dst_location.y());
-                    let obstruction_idx = pair_idx * 3;
-                    frontier_obstruction[obstruction_idx] = rect_sum(min_x, min_y, max_x, max_y);
-                    frontier_obstruction[obstruction_idx + 1] =
-                        rect_sum(min_x, src_location.y(), max_x, src_location.y())
-                            + rect_sum(dst_location.x(), min_y, dst_location.x(), max_y);
-                    frontier_obstruction[obstruction_idx + 2] =
-                        rect_sum(min_x, dst_location.y(), max_x, dst_location.y())
-                            + rect_sum(src_location.x(), min_y, src_location.x(), max_y);
-                }
-            }
-        }
-        let pair_obstruction_base_ns = pair_obstruction_base_start.elapsed().as_nanos() as u64;
-        let pair_obstruction_candidate_start = Instant::now();
-        if config.frontier_obstruction
-            && let Some((geometry, offset_x, offset_y)) = extra_occupied
-        {
-            let candidate_rect_sum = |x0: Coord, y0: Coord, x1: Coord, y1: Coord| {
-                geometry.occupied_rect_sum(
-                    x0 as isize - offset_x as isize,
-                    y0 as isize - offset_y as isize,
-                    x1 as isize - offset_x as isize,
-                    y1 as isize - offset_y as isize,
-                )
-            };
-            for (src_idx, (src_location, _)) in sorted_frontiers.iter().enumerate() {
-                for neighbor_idx in 0..frontier_neighbor_count {
-                    let dst_idx =
-                        frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx];
-                    if dst_idx < 0 {
-                        break;
-                    }
-                    let (dst_location, _) = sorted_frontiers[dst_idx as usize];
-                    let pair_idx = src_idx * frontier_neighbor_count + neighbor_idx;
-                    let min_x = src_location.x().min(dst_location.x());
-                    let max_x = src_location.x().max(dst_location.x());
-                    let min_y = src_location.y().min(dst_location.y());
-                    let max_y = src_location.y().max(dst_location.y());
-                    let obstruction_idx = pair_idx * 3;
-                    frontier_obstruction[obstruction_idx] +=
-                        candidate_rect_sum(min_x, min_y, max_x, max_y);
-                    frontier_obstruction[obstruction_idx + 1] +=
-                        candidate_rect_sum(min_x, src_location.y(), max_x, src_location.y())
-                            + candidate_rect_sum(dst_location.x(), min_y, dst_location.x(), max_y);
-                    frontier_obstruction[obstruction_idx + 2] +=
-                        candidate_rect_sum(min_x, dst_location.y(), max_x, dst_location.y())
-                            + candidate_rect_sum(src_location.x(), min_y, src_location.x(), max_y);
-                }
-            }
-        }
-        let pair_obstruction_candidate_ns =
-            pair_obstruction_candidate_start.elapsed().as_nanos() as u64;
-        let pair_obstruction_ns = pair_obstruction_base_ns + pair_obstruction_candidate_ns;
-        let pair_ns = pair_flags_ns + pair_obstruction_ns;
+        let pair_ns = pair_flags_ns;
         let output_start = Instant::now();
         let features = StateFeatures {
             inventory,
@@ -1319,7 +1196,6 @@ impl Environment {
             frontier_occupancy,
             frontier_neighbor,
             frontier_neighbor_pair,
-            frontier_obstruction,
             connection_reachability,
             frontier_connection_reachability,
         };
@@ -1330,9 +1206,6 @@ impl Environment {
             profile.assemble_neighbor_ns += neighbor_ns;
             profile.assemble_pair_ns += pair_ns;
             profile.assemble_pair_flags_ns += pair_flags_ns;
-            profile.assemble_pair_obstruction_ns += pair_obstruction_ns;
-            profile.assemble_pair_obstruction_base_ns += pair_obstruction_base_ns;
-            profile.assemble_pair_obstruction_candidate_ns += pair_obstruction_candidate_ns;
             profile.assemble_output_ns += output_ns;
         }
         features
@@ -1348,12 +1221,10 @@ impl Environment {
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> StateFeatures {
-        let occupancy_prefix = self.occupancy_prefix();
         self.state_features_after_candidate_with_occupancy(
             common,
             candidate,
             config,
-            &occupancy_prefix,
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
@@ -1366,7 +1237,6 @@ impl Environment {
         common: &CommonData,
         candidate: Action,
         config: &StateFeatureConfig,
-        occupancy_prefix: &[u16],
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
@@ -1375,18 +1245,17 @@ impl Environment {
         if config.is_empty() {
             return (StateFeatures::default(), profile);
         }
-        let extra_occupied = if (config.frontier_occupancy || config.frontier_obstruction)
-            && candidate.room_idx < common.room.len() as RoomIdx
-        {
-            let geometry_idx = common.room[candidate.room_idx as usize].geometry_idx;
-            Some((
-                &common.geometry[geometry_idx as usize],
-                candidate.x,
-                candidate.y,
-            ))
-        } else {
-            None
-        };
+        let extra_occupied =
+            if config.frontier_occupancy && candidate.room_idx < common.room.len() as RoomIdx {
+                let geometry_idx = common.room[candidate.room_idx as usize].geometry_idx;
+                Some((
+                    &common.geometry[geometry_idx as usize],
+                    candidate.x,
+                    candidate.y,
+                ))
+            } else {
+                None
+            };
         let start = Instant::now();
         let snapshot = self.apply_state_feature_candidate(candidate, common);
         profile.clone_ns = start.elapsed().as_nanos() as u64;
@@ -1394,7 +1263,6 @@ impl Environment {
         let features = self.state_features_with_occupancy(
             common,
             config,
-            occupancy_prefix,
             &self.occupancy,
             extra_occupied,
             frontier_neighbor_algorithm,
@@ -1654,7 +1522,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms, true).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1709,7 +1577,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms, true).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1741,7 +1609,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms, true).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1792,7 +1660,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms, true).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1856,7 +1724,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms, true).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (4, 1), 0);
 
         env.step(
@@ -1899,7 +1767,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms, true).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
 
         env.step(
@@ -1963,7 +1831,7 @@ mod tests {
         ]
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
-        let common = CommonData::new(rooms, true).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         assert_eq!(Environment::max_frontiers(&common), 3);
         let mut env = Environment::new(&common, (4, 4), 0);
         env.step(
@@ -2018,15 +1886,6 @@ mod tests {
         );
         assert_eq!(env.occupancy[0], 1);
         assert_eq!(env.occupancy[1], 1);
-        let mut sorted_frontiers = env.frontier.iter().collect::<Vec<_>>();
-        sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
-        let (location, _) = sorted_frontiers[0];
-        let x = location.x().clamp(0, env.map_size.0 - 1) as usize;
-        let y = location.y().clamp(0, env.map_size.1 - 1) as usize;
-        let occupied = env.occupancy[y * env.map_size.0 as usize + x] as u16;
-        assert_eq!(simulated.frontier_obstruction[0], occupied);
-        assert_eq!(simulated.frontier_obstruction[1], occupied * 2);
-        assert_eq!(simulated.frontier_obstruction[2], occupied);
         assert_eq!(simulated.frontier_occupancy, vec![0, 12, 192, 0]);
 
         let dummy_candidate = Action {
@@ -2087,7 +1946,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        let common = CommonData::new(rooms, false).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
         env.step(
             Action {
@@ -2115,7 +1974,7 @@ mod tests {
             r#"[{"map": [[1]], "doors": [], "connections": [], "missing_connections": []}]"#,
         )
         .unwrap();
-        let common = CommonData::new(rooms, false).unwrap();
+        let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
         let (features, profile) = env.state_features_after_candidate_with_occupancy(
             &common,
@@ -2125,7 +1984,6 @@ mod tests {
                 y: 0,
             },
             &StateFeatureConfig::default(),
-            &[],
             FrontierNeighborAlgorithm::Delaunay,
             4,
             4,
