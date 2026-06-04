@@ -345,7 +345,7 @@ class PinnedSparseStateFeatureSlot:
                 (self.snapshot_capacity, self.room_width), torch.uint8
             )
             self.frontier = self._empty(
-                (self.sparse_row_capacity, 5), torch.int16
+                (self.sparse_row_capacity, 5), torch.int8
             )
             self.frontier_occupancy = self._empty(
                 (self.sparse_row_capacity, self.frontier_occupancy_width), torch.uint8

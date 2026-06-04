@@ -9,8 +9,9 @@ use std::collections::BinaryHeap;
 use std::time::Instant;
 
 use crate::common::{
-    Action, CommonData, ConnectionVariantIdx, Coord, DirDoorIdx, DoorLocation, DoorValidOutcome,
-    GeometryData, GeometryIdx, NUM_DIRS, PartIdx, RoomIdx, RoomPartIdx, get_behind_door_position,
+    Action, CommonData, ConnectionVariantIdx, Coord, DirDoorIdx, DoorKind, DoorLocation,
+    DoorValidOutcome, GeometryData, GeometryIdx, NUM_DIRS, PartIdx, RoomIdx, RoomPartIdx,
+    get_behind_door_position,
 };
 use crate::scc_dag::SccDag;
 
@@ -36,7 +37,7 @@ pub enum FrontierNeighborAlgorithm {
 pub struct Frontier {
     dir_door_idx: DirDoorIdx,
     component: usize,
-    kind: u8,
+    kind: DoorKind,
     candidates: Vec<GeometryAction>, // possible geometry placements to connect to this frontier
 }
 
@@ -94,8 +95,7 @@ impl StateFeatureConfig {
         {
             return Err("frontier features require frontier_mask");
         }
-        if (self.frontier_neighbor_position_embedding
-            || self.frontier_neighbor_flags)
+        if (self.frontier_neighbor_position_embedding || self.frontier_neighbor_flags)
             && !self.frontier_neighbor
         {
             return Err("frontier neighbor pair features require frontier_neighbor");
@@ -129,7 +129,7 @@ pub struct StateFeatures {
     pub room_y: Vec<Coord>,
     pub room_placed: Vec<u8>,
     // mask, x, y, vertical, kind
-    pub frontier: Vec<i16>,
+    pub frontier: Vec<i8>,
     // Occupied tiles in a square window centered on each frontier, packed row-major.
     pub frontier_occupancy: Vec<u8>,
     // Indices into frontier. Semantics depend on FrontierNeighborAlgorithm.
@@ -1024,18 +1024,16 @@ impl Environment {
         let map_width = self.map_size.0 as usize;
         for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
             let row = idx * STATE_FEATURE_FRONTIER_WIDTH;
-            frontier[row] = i16::from(config.frontier_mask);
-            if config.frontier_position
-                || config.frontier_neighbor_position_embedding
-            {
-                frontier[row + 1] = location.x() as i16;
-                frontier[row + 2] = location.y() as i16;
+            frontier[row] = i8::from(config.frontier_mask);
+            if config.frontier_position || config.frontier_neighbor_position_embedding {
+                frontier[row + 1] = location.x();
+                frontier[row + 2] = location.y();
             }
             if config.frontier_orientation {
-                frontier[row + 3] = location.vertical() as i16;
+                frontier[row + 3] = i8::from(location.vertical());
             }
             if config.frontier_kind {
-                frontier[row + 4] = data.kind as i16;
+                frontier[row + 4] = data.kind;
             }
             if !config.frontier_occupancy {
                 continue;

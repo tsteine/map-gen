@@ -9,7 +9,7 @@ pub type ConnectionVariantIdx = u8; // flat index of unique room types (map + do
 pub type Coord = i8; // x or y position on the map
 pub type PartIdx = u8; // index of part within a room
 pub type RoomPartIdx = u16; // flat index of part across all rooms
-pub type DoorKind = u8; // distinguishes different types of "doors", e.g. regular, elevator, and sand.
+pub type DoorKind = i8; // distinguishes different types of "doors", e.g. regular, elevator, and sand.
 pub type DirDoorIdx = u8; // index of a door among all doors with the given direction, across all rooms
 
 #[derive(Clone, Copy, Eq, PartialEq)]

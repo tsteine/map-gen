@@ -32,7 +32,7 @@
     "state_candidate_chunk": 16,
     "state_environment_chunk": 256,
     "frontier_neighbor_algorithm": "nearest-exclusive",
-    "frontier_neighbor_count": 4,
+    "frontier_neighbor_count": 1,
     "frontier_window_size": 16,
     "num_threads": 32
   },
