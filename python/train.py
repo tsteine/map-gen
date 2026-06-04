@@ -10,7 +10,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Literal
-
+import numpy as np 
 import os
 
 from aim import Run
@@ -23,6 +23,14 @@ from loss import LossConfig, compute_loss
 from generate import Prefetcher, generate_cohorts
 from experience import ExperienceStorage
 from profile_stats import ProfileStats
+
+
+class Schedule(BaseModel):
+    linear: list[float] | None = None
+    log: list[float] | None = None
+    
+
+type ScheduleableFloat = float | Schedule
 
 class ModelConfig(BaseModel):
     type: str
@@ -39,7 +47,7 @@ class ModelConfig(BaseModel):
 
 
 class OptimizerConfig(BaseModel):
-    lr: float
+    lr: ScheduleableFloat
     beta1: float
     beta2: float
     
@@ -51,8 +59,7 @@ class GenerationConfig(BaseModel):
     state_pipeline_cohorts: int  # independently stepped CPU cohorts scheduled on each GPU
     action_candidates: int  # number of candidates to score for each room placement step
     lookahead_outcomes: bool  # use post-candidate known outcomes when scoring candidates (greater CPU usage, better accuracy)
-    temperature0: float  # initial temperature (higher = candidates selected more randomly)
-    temperature1: float  # final temperature
+    temperature: ScheduleableFloat  # temperature (higher = candidates selected more randomly)
     state_candidate_chunk: int
     state_environment_chunk: int
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
@@ -95,14 +102,46 @@ class TrainConfig(BaseModel):
 class Config(BaseModel):
     experiment_name: str  # string/identifier for the experiment (doesn't have to be unique)
     room_set: Path  # path to JSON file defining the set of rooms to use for map generation
-    annealing_episodes: int  # number of episodes over which to ramp the temperature from temperature0 to temperature1
-    total_episodes: int  # total number of episodes to generate
     map_size: tuple[int, int]  # dimensions of the map grid within which rooms are placed
+    knot_episodes: list[int]  # episodes defining knots for linear splines, controlling learning rate, etc.
     model: ModelConfig
     optimizer: OptimizerConfig
     generation: GenerationConfig
     state_features: StateFeatureConfig
     train: TrainConfig
+
+
+def instantiate_scheduleable_config(config: Config, num_episodes: int) -> Config:
+    knot_episodes = config.knot_episodes
+
+    def instantiate_model(model: BaseModel, path: str) -> BaseModel:
+        updates = {}
+        for field_name, field_info in model.__class__.model_fields.items():
+            value = getattr(model, field_name)
+            field_path = f"{path}.{field_name}"
+            if field_info.annotation is ScheduleableFloat:
+                updates[field_name] = instantiate_float(value, field_path)
+            elif isinstance(value, BaseModel):
+                updates[field_name] = instantiate_model(value, field_path)
+        return model.model_copy(update=updates)
+
+    def instantiate_float(value: ScheduleableFloat, path: str) -> float:
+        if isinstance(value, Schedule):
+            if value.linear is None and value.log is None:
+                raise ValueError(f"{path} must have exactly one schedule value: 'linear' or 'log'")
+            x = value.linear if value.linear is not None else value.log
+            if len(x) != len(knot_episodes):
+                raise ValueError(
+                    f"{path} has {len(x)} schedule value(s), but knot_episodes has "
+                    f"{len(knot_episodes)} knot(s)"
+                )
+            if value.linear is not None:
+                return float(np.interp(num_episodes, knot_episodes, x))
+            elif value.log is not None:
+                return float(np.exp(np.interp(num_episodes, knot_episodes, np.log(x))))
+        return float(value)
+
+    return instantiate_model(config, "config")
 
 
 parser = argparse.ArgumentParser()
@@ -130,6 +169,11 @@ config = Config.parse_file(args.config)
 
 verify_outcome_consistency = args.verify_outcome_consistency
 profiler = ProfileStats(args.profile)
+if not config.knot_episodes:
+    raise ValueError("knot_episodes must contain at least one episode count")
+total_episodes = config.knot_episodes[-1]
+if total_episodes <= 0:
+    raise ValueError("last knot_episodes value must be greater than zero")
 if config.generation.num_iterations <= 0:
     raise ValueError("generation.num_iterations must be greater than zero")
 if config.generation.num_devices <= 0:
@@ -215,6 +259,7 @@ if config.train.fresh_pass_factor != 0.0 and episodes_per_round % config.train.b
     )
 
 stop_requested = False
+
 
 def handle_stop(signum, frame):
     global stop_requested
@@ -427,69 +472,15 @@ loss_config = LossConfig(
 )
 
 
-def log_outcomes(outcomes, loss, round, frac, num_episodes):
-    door_invalid = torch.sum(outcomes.door_invalid != 0, dim=1)
-    avg_door = torch.mean(door_invalid.to(torch.float32))
-    min_door = torch.min(door_invalid)
-    
-    conn_invalid = torch.sum(outcomes.connection_invalid != 0, dim=1)
-    avg_conn = torch.mean(conn_invalid.to(torch.float32))
-    min_conn = torch.min(conn_invalid)
-
-    total_invalid = door_invalid + conn_invalid
-    avg_invalid = torch.mean(total_invalid.to(torch.float32))
-    min_invalid = torch.min(total_invalid)
-
-    success = total_invalid == 0
-    success_rate = torch.mean(success.to(torch.float32))
-    success_door = torch.mean((door_invalid == 0).to(torch.float32))
-    success_conn = torch.mean((conn_invalid == 0).to(torch.float32))
-
-    metrics = {
-        "loss": loss,
-        "success_rate": success_rate,
-        "success_door": success_door,
-        "success_conn": success_conn,
-        "avg_invalid": avg_invalid,
-        "avg_door": avg_door,
-        "avg_conn": avg_conn,
-        "min_invalid": min_invalid,
-        "min_door": min_door,
-        "min_conn": min_conn,
-        "frac": frac,
-        "num_episodes": num_episodes,
-    }
-
-    for name, value in metrics.items():
-        aim_run.track(value, name=name, step=round)
-    
-    logging.info(f"round {round}, loss {loss:.4f}, succ {success_rate:.4f}, total {avg_invalid:.2f} (min {min_invalid}), door {avg_door:.2f} (min {min_door}), conn {avg_conn:.2f} (min {min_conn}), frac {frac:.4f}")
-
-
-def get_gen_config(frac, num_environments, generation_device):
-    temperature0 = config.generation.temperature0
-    temperature1 = config.generation.temperature1
-    temperature = temperature0 * (temperature1 / temperature0) ** frac
-    return GenerateConfig(
-        episode_length=len(rooms),
-        max_candidates=config.generation.action_candidates,
-        temperature=torch.full(
-            [num_environments], temperature, dtype=torch.float32, device=generation_device
-        ),
-        lookahead_outcomes=config.generation.lookahead_outcomes,
-        state_candidate_chunk=config.generation.state_candidate_chunk,
-        state_environment_chunk=config.generation.state_environment_chunk,
-        state_autocast=config.model.generation_autocast,
-        training_autocast=config.model.autocast,
-    )
-
-
 experience_path = f"{run_path}/experience"
 experience = ExperienceStorage(num_rooms, experience_path, episodes_per_round)
 
+num_episodes = 0
+initial_config = instantiate_scheduleable_config(config, num_episodes)
+
 main_optimizer = torch.optim.Adam(
     main_model.parameters(),
-    lr=config.optimizer.lr,
+    lr=initial_config.optimizer.lr,
     betas=(config.optimizer.beta1, config.optimizer.beta2))
 
 train_batch_prefetcher = Prefetcher(max_workers=train_state_pipeline_cohorts)
@@ -499,8 +490,6 @@ generation_models_warmed_up = not (
     and config.model.compile
     and len(generation_devices) > 1
 )
-
-num_episodes = 0
 
 
 @dataclass
@@ -765,10 +754,67 @@ def train_optimizer_step():
         update_ema_model()
 
 try:
-    for round in range(config.total_episodes // episodes_per_round):
+    def log_outcomes(outcomes, loss, round, step_config, num_episodes):
+        door_invalid = torch.sum(outcomes.door_invalid != 0, dim=1)
+        avg_door = torch.mean(door_invalid.to(torch.float32))
+        min_door = torch.min(door_invalid)
+        
+        conn_invalid = torch.sum(outcomes.connection_invalid != 0, dim=1)
+        avg_conn = torch.mean(conn_invalid.to(torch.float32))
+        min_conn = torch.min(conn_invalid)
+    
+        total_invalid = door_invalid + conn_invalid
+        avg_invalid = torch.mean(total_invalid.to(torch.float32))
+        min_invalid = torch.min(total_invalid)
+    
+        success = total_invalid == 0
+        success_rate = torch.mean(success.to(torch.float32))
+        success_door = torch.mean((door_invalid == 0).to(torch.float32))
+        success_conn = torch.mean((conn_invalid == 0).to(torch.float32))
+    
+        metrics = {
+            "loss": loss,
+            "success_rate": success_rate,
+            "success_door": success_door,
+            "success_conn": success_conn,
+            "avg_invalid": avg_invalid,
+            "avg_door": avg_door,
+            "avg_conn": avg_conn,
+            "min_invalid": min_invalid,
+            "min_door": min_door,
+            "min_conn": min_conn,
+            "num_episodes": num_episodes,
+            "lr": step_config.optimizer.lr,
+            "temperature": step_config.generation.temperature,
+        }
+    
+        for name, value in metrics.items():
+            aim_run.track(value, name=name, step=round)
+
+        schedule_progress = min(num_episodes / config.knot_episodes[-1], 1.0)
+        logging.info(f"round {round}, loss {loss:.4f}, succ {success_rate:.4f}, total {avg_invalid:.2f} (min {min_invalid}), door {avg_door:.2f} (min {min_door}), conn {avg_conn:.2f} (min {min_conn}), schedule_progress {schedule_progress:.4f}")
+
+    def get_gen_config(step_config, num_environments, generation_device):
+        return GenerateConfig(
+            episode_length=len(rooms),
+            max_candidates=step_config.generation.action_candidates,
+            temperature=torch.full(
+                [num_environments],
+                step_config.generation.temperature,
+                dtype=torch.float32,
+                device=generation_device,
+            ),
+            lookahead_outcomes=step_config.generation.lookahead_outcomes,
+            state_candidate_chunk=step_config.generation.state_candidate_chunk,
+            state_environment_chunk=step_config.generation.state_environment_chunk,
+            state_autocast=step_config.model.generation_autocast,
+            training_autocast=step_config.model.autocast,
+        )
+
+        
+    for round in range(total_episodes // episodes_per_round):
         profiler.reset()
         round_start = time.perf_counter()
-        frac = min(num_episodes / config.annealing_episodes, 1.0)
 
         # Generate new maps:
         action_iterations = []
@@ -776,17 +822,16 @@ try:
         with profiler.timer("round.generate"):
             sync_generation_models()
             for iteration in range(config.generation.num_iterations):
-                iteration_frac = min(
-                    (num_episodes + iteration * config.generation.num_environments)
-                    / config.annealing_episodes,
-                    1.0,
+                generation_config = instantiate_scheduleable_config(
+                    config,
+                    num_episodes + iteration * config.generation.num_environments,
                 )
                 shard_args = []
                 for device_envs, generation_model, generation_device in zip(
                     gen_envs, generation_models, generation_devices
                 ):
                     gen_configs = [
-                        get_gen_config(iteration_frac, gen_env.num_envs, generation_device)
+                        get_gen_config(generation_config, gen_env.num_envs, generation_device)
                         for gen_env in device_envs
                     ]
                     shard_args.append((
@@ -836,9 +881,12 @@ try:
             )
         )
         num_episodes += episodes_per_round
-        train_gen_config = get_gen_config(frac, config.train.batch_size, device)
+        step_config = instantiate_scheduleable_config(config, num_episodes)
+        train_gen_config = get_gen_config(step_config, config.train.batch_size, device)
 
         # Train the model on the episodes generated in this round.
+        main_optimizer.param_groups[0]['lr'] = step_config.optimizer.lr
+
         total_loss = 0.0
         train_batch_count = 0
         train_tasks = iter_train_batch_tasks(
@@ -891,7 +939,7 @@ try:
             experience.store(actions)
 
         avg_loss = total_loss / train_batch_count if train_batch_count > 0 else 0.0
-        log_outcomes(gen_outcomes, avg_loss, round, frac, num_episodes)
+        log_outcomes(gen_outcomes, avg_loss, round, step_config, num_episodes)
         profiler.add("round.total", time.perf_counter() - round_start)
         if profiler.enabled:
             for name, value in profiler.metrics().items():

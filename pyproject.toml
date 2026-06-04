@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "map-gen"
 version = "0.1.0"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 
 [tool.maturin]
 module-name = "map_gen"

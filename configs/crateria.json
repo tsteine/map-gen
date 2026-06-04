@@ -1,8 +1,7 @@
 {
   "experiment_name": "crateria-initial-testing",
   "room_set": "room_definitions/crateria.json",
-  "annealing_episodes": 1000000,
-  "total_episodes": 4000000,
+  "knot_episodes": [0, 1000000, 4000000],
   "map_size": [72, 72],
   "model": {
     "type": "frontier_state",
@@ -29,8 +28,7 @@
     "state_pipeline_cohorts": 1,
     "action_candidates": 8,
     "lookahead_outcomes": false,
-    "temperature0": 10.0,
-    "temperature1": 0.03,
+    "temperature": [10.0, 0.03, 0.03],
     "state_candidate_chunk": 16,
     "state_environment_chunk": 256,
     "frontier_neighbor_algorithm": "delaunay",
@@ -56,6 +54,7 @@
     "batch_size": 512,
     "fresh_pass_factor": 1.0,
     "replay_pass_factor": 1.0,
+    "sample_period": 16,
     "episodes_per_file": 64,
     "ema_decay": 0.995,
     "hist_c": 3.0,
