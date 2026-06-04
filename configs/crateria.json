@@ -28,7 +28,7 @@
     "state_pipeline_cohorts": 1,
     "action_candidates": 8,
     "lookahead_outcomes": false,
-    "temperature": [10.0, 0.03, 0.03],
+    "temperature": {"linear": [10.0, 0.03, 0.03]},
     "state_candidate_chunk": 16,
     "state_environment_chunk": 256,
     "frontier_neighbor_algorithm": "delaunay",
@@ -60,9 +60,6 @@
     "hist_c": 3.0,
     "door_weight": 1.0,
     "connection_weight": 1.0,
-    "state_prefix_samples": 8,
-    "state_batch_chunk": 512,
-    "state_gpu_chunk": 4096,
     "state_pipeline_cohorts": 1,
     "gradient_accumulation_steps": 1
   }

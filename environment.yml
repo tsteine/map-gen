@@ -1,0 +1,10 @@
+name: map-gen
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - ipython
+  - maturin>=1.7,<2.0
+  - numpy
+  - pytorch
+  - safetensors

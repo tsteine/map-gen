@@ -2,7 +2,7 @@
   "experiment_name": "norfair-initial-testing",
   "room_set": "room_definitions/norfair.json",
   "map_size": [72, 72],
-  "knot_episodes": [0, 50000, 300000, 2000000],
+  "knot_episodes": [0, 50000, 300000, 1000000],
   "model": {
     "type": "frontier_state",
     "compile": true,
@@ -60,9 +60,6 @@
     "hist_c": 3.0,
     "door_weight": 1.0,
     "connection_weight": 1.0,
-    "state_prefix_samples": 4,
-    "state_batch_chunk": 512,
-    "state_gpu_chunk": 512,
     "state_pipeline_cohorts": 4,
     "gradient_accumulation_steps": 1
   }
