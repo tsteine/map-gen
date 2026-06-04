@@ -700,22 +700,29 @@ def create_models(config: Config, rooms: list[dict], engine: Engine, device: tor
     if model_class is None:
         raise ValueError(f"unknown model.type: {config.model.type}")
 
-    main_model = model_class(
-        num_rooms=len(rooms),
-        output_metadata=output_metadata,
-        map_x=config.map_size[0],
-        map_y=config.map_size[1],
-        embedding_width=config.model.embedding_width,
-        key_width=config.model.key_width,
-        value_width=config.model.value_width,
-        attn_heads=config.model.attn_heads,
-        head_groups=config.model.head_groups,
-        hidden_width=config.model.hidden_width,
-        num_layers=config.model.num_layers,
-        frontier_neighbor_count=config.generation.frontier_neighbor_count,
-        frontier_window_size=config.generation.frontier_window_size,
-        state_features=config.state_features.model_dump(),
-    ).to(device)
+    common_model_kwargs = {
+        "num_rooms": len(rooms),
+        "output_metadata": output_metadata,
+        "map_x": config.map_size[0],
+        "map_y": config.map_size[1],
+        "embedding_width": config.model.embedding_width,
+        "hidden_width": config.model.hidden_width,
+        "num_layers": config.model.num_layers,
+    }
+    if config.model.type == "frontier_state":
+        model_kwargs = common_model_kwargs | {
+            "frontier_window_size": config.generation.frontier_window_size,
+            "state_features": config.state_features.model_dump(),
+        }
+    else:
+        model_kwargs = common_model_kwargs | {
+            "key_width": config.model.key_width,
+            "value_width": config.model.value_width,
+            "attn_heads": config.model.attn_heads,
+            "head_groups": config.model.head_groups,
+        }
+
+    main_model = model_class(**model_kwargs).to(device)
 
     ema_model = copy.deepcopy(main_model).to(device)
     ema_model.requires_grad_(False)

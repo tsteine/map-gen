@@ -45,7 +45,7 @@
     "frontier_kind": true,
     "frontier_occupancy": true,
     "frontier_neighbor": true,
-    "frontier_neighbor_position": true,
+    "frontier_neighbor_position_embedding": false,
     "frontier_neighbor_flags": true,
     "connection_reachability": true,
     "frontier_connection_reachability": true

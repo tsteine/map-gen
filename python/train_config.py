@@ -62,7 +62,7 @@ class StateFeatureConfig(StrictBaseModel):
     frontier_kind: bool
     frontier_occupancy: bool
     frontier_neighbor: bool
-    frontier_neighbor_position: bool
+    frontier_neighbor_position_embedding: bool
     frontier_neighbor_flags: bool
     connection_reachability: bool
     frontier_connection_reachability: bool
@@ -185,7 +185,7 @@ def validate_config(config: Config) -> None:
     ) and not config.state_features.frontier_mask:
         raise ValueError("frontier state features require state_features.frontier_mask")
     if (
-        config.state_features.frontier_neighbor_position
+        config.state_features.frontier_neighbor_position_embedding
         or config.state_features.frontier_neighbor_flags
     ) and not config.state_features.frontier_neighbor:
         raise ValueError("frontier neighbor pair features require state_features.frontier_neighbor")

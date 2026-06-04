@@ -65,7 +65,7 @@ pub struct StateFeatureConfig {
     pub frontier_kind: bool,
     pub frontier_occupancy: bool,
     pub frontier_neighbor: bool,
-    pub frontier_neighbor_position: bool,
+    pub frontier_neighbor_position_embedding: bool,
     pub frontier_neighbor_flags: bool,
     pub connection_reachability: bool,
     pub frontier_connection_reachability: bool,
@@ -94,7 +94,8 @@ impl StateFeatureConfig {
         {
             return Err("frontier features require frontier_mask");
         }
-        if (self.frontier_neighbor_position || self.frontier_neighbor_flags)
+        if (self.frontier_neighbor_position_embedding
+            || self.frontier_neighbor_flags)
             && !self.frontier_neighbor
         {
             return Err("frontier neighbor pair features require frontier_neighbor");
@@ -113,7 +114,7 @@ impl StateFeatureConfig {
             frontier_kind: true,
             frontier_occupancy: true,
             frontier_neighbor: true,
-            frontier_neighbor_position: true,
+            frontier_neighbor_position_embedding: true,
             frontier_neighbor_flags: true,
             connection_reachability: true,
             frontier_connection_reachability: true,
@@ -1024,7 +1025,9 @@ impl Environment {
         for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
             let row = idx * STATE_FEATURE_FRONTIER_WIDTH;
             frontier[row] = i16::from(config.frontier_mask);
-            if config.frontier_position || config.frontier_neighbor_position {
+            if config.frontier_position
+                || config.frontier_neighbor_position_embedding
+            {
                 frontier[row + 1] = location.x() as i16;
                 frontier[row + 2] = location.y() as i16;
             }
@@ -1921,6 +1924,14 @@ mod tests {
         assert!(
             StateFeatureConfig {
                 frontier_neighbor_flags: true,
+                ..StateFeatureConfig::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            StateFeatureConfig {
+                frontier_neighbor_position_embedding: true,
                 ..StateFeatureConfig::default()
             }
             .validate()

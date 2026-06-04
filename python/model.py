@@ -353,9 +353,20 @@ class CausalTransformerModel(torch.nn.Module):
 class FrontierStateModel(torch.nn.Module):
     uses_state_features = True
 
-    def __init__(self, num_rooms, output_metadata: OutputMetadata, map_x, map_y, embedding_width, hidden_width, num_layers, frontier_window_size=16, state_features=None, **_):
+    def __init__(
+        self,
+        num_rooms,
+        output_metadata: OutputMetadata,
+        map_x,
+        map_y,
+        embedding_width,
+        hidden_width,
+        num_layers,
+        frontier_window_size,
+        state_features,
+    ):
         super().__init__()
-        self.state_features = state_features or {}
+        self.state_features = state_features
         self.num_rooms = num_rooms
         self.map_x = map_x
         self.map_y = map_y
@@ -387,10 +398,7 @@ class FrontierStateModel(torch.nn.Module):
             1 << torch.arange(8, dtype=torch.uint8),
             persistent=False,
         )
-        pair_width = (
-            embedding_width * self.state_features.get("frontier_neighbor_position", False)
-            + 3 * self.state_features.get("frontier_neighbor_flags", False)
-        )
+        pair_width = 3 * self.state_features.get("frontier_neighbor_flags", False)
         use_neighbors = self.state_features.get("frontier_neighbor", False)
         self.source_message_layers = torch.nn.ModuleList([
             torch.nn.Linear(embedding_width, hidden_width, bias=False)
@@ -447,13 +455,13 @@ class FrontierStateModel(torch.nn.Module):
         )
         self.frontier_relative_pos_embedding_x = (
             torch.nn.Parameter(
-                torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
-            if self.state_features.get("frontier_neighbor_position", False) else None
+                torch.randn([NUM_COORD_VALUES, hidden_width]) / math.sqrt(hidden_width))
+            if self.state_features["frontier_neighbor_position_embedding"] else None
         )
         self.frontier_relative_pos_embedding_y = (
             torch.nn.Parameter(
-                torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
-            if self.state_features.get("frontier_neighbor_position", False) else None
+                torch.randn([NUM_COORD_VALUES, hidden_width]) / math.sqrt(hidden_width))
+            if self.state_features["frontier_neighbor_position_embedding"] else None
         )
         self.pos_embedding_x = torch.nn.Parameter(
             torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
@@ -470,26 +478,7 @@ class FrontierStateModel(torch.nn.Module):
         return embedding_x[x] + embedding_y[y]
 
     def _pair_features(self, features):
-        node = features.frontier
-        neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
-        def gather_neighbor(values):
-            return torch.gather(
-                values.unsqueeze(2).expand(-1, -1, neighbor.shape[2]), 1, neighbor
-            )
         values = []
-        use_position = self.state_features.get("frontier_neighbor_position", False)
-        if use_position:
-            raw_x = node[:, :, 1].to(torch.int64)
-            raw_y = node[:, :, 2].to(torch.int64)
-            raw_x0, raw_x1 = raw_x.unsqueeze(2), gather_neighbor(raw_x)
-            raw_y0, raw_y1 = raw_y.unsqueeze(2), gather_neighbor(raw_y)
-            values.append(self._position_embedding(
-                raw_x1 - raw_x0,
-                raw_y1 - raw_y0,
-                self.frontier_relative_pos_embedding_x,
-                self.frontier_relative_pos_embedding_y,
-                COORD_OFFSET,
-            ))
         if self.state_features.get("frontier_neighbor_flags", False):
             flags = features.frontier_neighbor_pair
             values.append(torch.stack([
@@ -498,6 +487,29 @@ class FrontierStateModel(torch.nn.Module):
                 (flags & 4 != 0).to(torch.float32),
             ], dim=-1))
         return torch.cat(values, dim=-1) if values else None
+
+    def _relative_position_features(self, features):
+        if self.frontier_relative_pos_embedding_x is None:
+            return None
+        node = features.frontier
+        neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
+
+        def gather_neighbor(values):
+            return torch.gather(
+                values.unsqueeze(2).expand(-1, -1, neighbor.shape[2]), 1, neighbor
+            )
+
+        raw_x = node[:, :, 1].to(torch.int64)
+        raw_y = node[:, :, 2].to(torch.int64)
+        raw_x0, raw_x1 = raw_x.unsqueeze(2), gather_neighbor(raw_x)
+        raw_y0, raw_y1 = raw_y.unsqueeze(2), gather_neighbor(raw_y)
+        return self._position_embedding(
+            raw_x1 - raw_x0,
+            raw_y1 - raw_y0,
+            self.frontier_relative_pos_embedding_x,
+            self.frontier_relative_pos_embedding_y,
+            COORD_OFFSET,
+        )
 
     def forward(self, features: StateFeatures):
         # Shapes below use: b=batch, f=frontiers, k=neighbors, e=embedding width,
@@ -543,6 +555,7 @@ class FrontierStateModel(torch.nn.Module):
         else:
             # pair: [b, f, k, pair_width], neighbor: [b, f, k], pair_mask: [b, f, k, 1]
             pair = self._pair_features(features)
+            relative_position = self._relative_position_features(features)
             neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
             pair_mask = (features.frontier_neighbor >= 0).unsqueeze(-1)
             for source_layer, pair_layer, output_layer, update_layer in zip(
@@ -559,10 +572,14 @@ class FrontierStateModel(torch.nn.Module):
                     1,
                     neighbor.flatten(1).unsqueeze(-1).expand(-1, -1, source.shape[-1]),
                 ).view(*neighbor.shape, source.shape[-1])
-                # messages: [b, f, k, e], then [b, f, e] after neighbor pooling
                 messages = source if pair_layer is None else source + pair_layer(pair)
+                if relative_position is not None:
+                    messages = messages + relative_position
+                # messages: [b, f, k, h]
                 messages = output_layer(messages) * pair_mask
+                # messages: [b, f, k, e]
                 messages = messages.sum(2) / pair_mask.sum(2).clamp_min(1)
+                # messages [b, f, e]
                 X = X + update_layer(torch.cat([X, messages], dim=-1))
                 X = X * node_mask.unsqueeze(-1)
             count = node_mask.sum(1, keepdim=True).clamp_min(1)
