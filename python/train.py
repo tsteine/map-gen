@@ -17,7 +17,7 @@ import torch
 from aim import Run
 from safetensors import safe_open
 
-from env import Actions, Engine, GenerateConfig, Outcomes, StateFeatures
+from env import Actions, DoorMatchCounts, Engine, GenerateConfig, Outcomes, StateFeatures
 from experience import ExperienceStorage
 from generate import Prefetcher, generate_cohorts
 from loss import LossConfig, compute_loss
@@ -435,9 +435,10 @@ class TrainingSession:
             self.main_optimizer.step()
             self.update_ema_model()
 
-    def generate_round(self) -> tuple[Actions, Outcomes]:
+    def generate_round(self) -> tuple[Actions, Outcomes, DoorMatchCounts]:
         action_iterations = []
         outcome_iterations = []
+        door_match_count_iterations = []
         with self.profiler.timer("round.generate"):
             self.sync_generation_models()
             for iteration in range(self.config.generation.num_iterations):
@@ -482,9 +483,14 @@ class TrainingSession:
                     ]
                     self.generation_models_warmed_up = True
 
-                for iteration_actions, iteration_outcomes in shard_results:
+                for (
+                    iteration_actions,
+                    iteration_outcomes,
+                    iteration_door_match_counts,
+                ) in shard_results:
                     action_iterations.append(iteration_actions.to(self.device))
                     outcome_iterations.append(iteration_outcomes.to(self.device))
+                    door_match_count_iterations.append(iteration_door_match_counts.to(self.device))
 
         return (
             Actions(
@@ -496,6 +502,16 @@ class TrainingSession:
                 door_invalid=torch.cat([outcomes.door_invalid for outcomes in outcome_iterations]),
                 connection_invalid=torch.cat(
                     [outcomes.connection_invalid for outcomes in outcome_iterations]
+                ),
+            ),
+            DoorMatchCounts(
+                horizontal=torch.sum(
+                    torch.stack([counts.horizontal for counts in door_match_count_iterations]),
+                    dim=0,
+                ),
+                vertical=torch.sum(
+                    torch.stack([counts.vertical for counts in door_match_count_iterations]),
+                    dim=0,
                 ),
             ),
         )
@@ -552,6 +568,7 @@ class TrainingSession:
     def log_outcomes(
         self,
         outcomes: Outcomes,
+        door_match_counts: DoorMatchCounts,
         loss: float,
         round_idx: int,
         step_config: Config,
@@ -573,6 +590,23 @@ class TrainingSession:
         success_door = torch.mean((door_invalid == 0).to(torch.float32))
         success_conn = torch.mean((conn_invalid == 0).to(torch.float32))
 
+        door_match_denominator = torch.tensor(
+            self.episodes_per_round,
+            dtype=torch.float64,
+            device=self.device,
+        )
+        horizontal_door_match_proportions = (
+            door_match_counts.horizontal.to(torch.float64) / door_match_denominator
+        )
+        vertical_door_match_proportions = (
+            door_match_counts.vertical.to(torch.float64) / door_match_denominator
+        )
+        horizontal_topk = torch.topk(horizontal_door_match_proportions.flatten(), k=3).values
+        vertical_topk = torch.topk(vertical_door_match_proportions.flatten(), k=3).values
+        door_match_sum_squares = torch.sum(horizontal_door_match_proportions.square()) + torch.sum(
+            vertical_door_match_proportions.square()
+        )
+
         metrics = {
             "loss": loss,
             "success_rate": success_rate,
@@ -587,6 +621,13 @@ class TrainingSession:
             "num_episodes": self.num_episodes,
             "lr": step_config.optimizer.lr,
             "temperature": step_config.generation.temperature,
+            "door_match_horizontal_top1": horizontal_topk[0],
+            "door_match_horizontal_top2": horizontal_topk[1],
+            "door_match_horizontal_top3": horizontal_topk[2],
+            "door_match_vertical_top1": vertical_topk[0],
+            "door_match_vertical_top2": vertical_topk[1],
+            "door_match_vertical_top3": vertical_topk[2],
+            "door_match_sum_squares": door_match_sum_squares,
         }
         for name, value in metrics.items():
             self.aim_run.track(value, name=name, step=round_idx)
@@ -597,7 +638,7 @@ class TrainingSession:
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
             "round %s, loss %.4f, succ %.4f, total %.2f (min %s), door %.2f (min %s), "
-            "conn %.2f (min %s), schedule_progress %.4f",
+            "conn %.2f (min %s), door_match_ss %.4f, schedule_progress %.4f",
             round_idx,
             loss,
             scalar(success_rate),
@@ -607,6 +648,7 @@ class TrainingSession:
             scalar(min_door),
             scalar(avg_conn),
             scalar(min_conn),
+            scalar(door_match_sum_squares),
             schedule_progress,
         )
 
@@ -618,7 +660,7 @@ class TrainingSession:
                 self.profiler.reset()
                 round_start = time.perf_counter()
 
-                actions, gen_outcomes = self.generate_round()
+                actions, gen_outcomes, door_match_counts = self.generate_round()
                 self.num_episodes += self.episodes_per_round
                 step_config = instantiate_scheduleable_config(self.config, self.num_episodes)
                 avg_loss = self.train_round(actions, gen_outcomes, step_config)
@@ -626,7 +668,13 @@ class TrainingSession:
                 with self.profiler.timer("round.store"):
                     self.experience.store(actions)
 
-                self.log_outcomes(gen_outcomes, avg_loss, round_idx, step_config)
+                self.log_outcomes(
+                    gen_outcomes,
+                    door_match_counts,
+                    avg_loss,
+                    round_idx,
+                    step_config,
+                )
                 self.profiler.add("round.total", time.perf_counter() - round_start)
                 if self.profiler.enabled:
                     for name, value in self.profiler.metrics().items():

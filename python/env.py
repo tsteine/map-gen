@@ -57,6 +57,18 @@ class Outcomes:
 
 
 @dataclass
+class DoorMatchCounts:
+    horizontal: torch.Tensor
+    vertical: torch.Tensor
+
+    def to(self, device: torch.device) -> "DoorMatchCounts":
+        return DoorMatchCounts(
+            self.horizontal.to(device),
+            self.vertical.to(device),
+        )
+
+
+@dataclass
 class StateFeatures:
     inventory: torch.Tensor
     room_x: torch.Tensor
@@ -266,6 +278,13 @@ class EnvironmentGroup:
         return Outcomes(
             door_invalid=torch.from_numpy(door_invalid).to(device),
             connection_invalid=torch.from_numpy(connection_invalid).to(device),
+        )
+
+    def get_door_match_counts(self, device: torch.device) -> DoorMatchCounts:
+        horizontal, vertical = self.env.get_door_match_counts()
+        return DoorMatchCounts(
+            horizontal=torch.from_numpy(horizontal).to(device=device, dtype=torch.int64),
+            vertical=torch.from_numpy(vertical).to(device=device, dtype=torch.int64),
         )
 
     @staticmethod

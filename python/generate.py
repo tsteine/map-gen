@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from env import Actions, EnvironmentGroup, GenerateConfig, Outcomes, SparseStateFeatures, StateFeatures
+from env import (
+    Actions,
+    DoorMatchCounts,
+    EnvironmentGroup,
+    GenerateConfig,
+    Outcomes,
+    SparseStateFeatures,
+    StateFeatures,
+)
 from model import Predictions
 from profile_stats import ProfileStats
 from collections import deque
@@ -584,12 +592,32 @@ def generate_state_feature_cohorts(
             cohort.env.finish()
             actions = cohort.env.get_actions(device)
             outcomes = cohort.env.get_outcomes(device)
+            door_match_counts = cohort.env.get_door_match_counts(device)
         if verify_outcome_consistency:
             merge_verified_outcomes(cohort.known_outcomes, outcomes, "finish")
-        results.append((actions, outcomes))
+        results.append((actions, outcomes, door_match_counts))
     return (
-        Actions(*(torch.cat([getattr(actions, name) for actions, _ in results]) for name in vars(results[0][0]))),
-        Outcomes(*(torch.cat([getattr(outcomes, name) for _, outcomes in results]) for name in vars(results[0][1]))),
+        Actions(
+            *(
+                torch.cat([getattr(actions, name) for actions, _, _ in results])
+                for name in vars(results[0][0])
+            )
+        ),
+        Outcomes(
+            *(
+                torch.cat([getattr(outcomes, name) for _, outcomes, _ in results])
+                for name in vars(results[0][1])
+            )
+        ),
+        DoorMatchCounts(
+            *(
+                torch.sum(
+                    torch.stack([getattr(counts, name) for _, _, counts in results]),
+                    dim=0,
+                )
+                for name in vars(results[0][2])
+            )
+        ),
     )
 
 
@@ -775,6 +803,7 @@ def generate(
         env.finish()
         actions = env.get_actions(device)
         outcomes = env.get_outcomes(device)
+        door_match_counts = env.get_door_match_counts(device)
     if verify_outcome_consistency:
         merge_verified_outcomes(known_outcomes, outcomes, "finish")
-    return actions, outcomes
+    return actions, outcomes, door_match_counts

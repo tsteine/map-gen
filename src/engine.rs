@@ -1,7 +1,7 @@
 /// The `engine` module exposes the map generation environment to Python through the Engine and
 /// EnvironmentGroup classes. It handles the creation and management of worker threads that run
 /// environment simulations in parallel.
-use crate::common::{Action, CommonData, Coord, DoorValidOutcome, Room, RoomIdx};
+use crate::common::{Action, CommonData, Coord, Direction, DoorValidOutcome, Room, RoomIdx};
 use crate::environment::{
     Environment, FrontierNeighborAlgorithm, STATE_FEATURE_FRONTIER_WIDTH, StateFeatureConfig,
     StateFeatureProfile, StateFeatures,
@@ -156,6 +156,10 @@ enum WorkerCommand {
         connection_outcome_count: usize,
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
+    },
+    GetDoorMatchCounts {
+        horizontal_counts: OutputShard<u64>,
+        vertical_counts: OutputShard<u64>,
     },
     GetStateFeatures {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
@@ -501,6 +505,20 @@ fn worker_loop(
                             DoorValidOutcome::Invalid => 1,
                         };
                     }
+                }
+                WorkerResponse::Done
+            }
+            WorkerCommand::GetDoorMatchCounts {
+                horizontal_counts,
+                vertical_counts,
+            } => {
+                // SAFETY: The main thread guarantees that for the duration of this command,
+                // the output slices remain valid and that no other thread accesses them.
+                let horizontal_counts = unsafe { horizontal_counts.into_mut_slice() };
+                let vertical_counts = unsafe { vertical_counts.into_mut_slice() };
+
+                for env in &environments {
+                    env.add_door_match_counts(&common_data, horizontal_counts, vertical_counts);
                 }
                 WorkerResponse::Done
             }
@@ -1942,6 +1960,65 @@ impl EnvironmentGroup {
                 self.num_environments,
                 connection_outcome_count,
             )?,
+        ))
+    }
+
+    fn get_door_match_counts<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<(Bound<'py, PyArray2<u64>>, Bound<'py, PyArray2<u64>>)> {
+        let left_count = self.common_data.room_dir_door[Direction::Left as usize].len();
+        let right_count = self.common_data.room_dir_door[Direction::Right as usize].len();
+        let up_count = self.common_data.room_dir_door[Direction::Up as usize].len();
+        let down_count = self.common_data.room_dir_door[Direction::Down as usize].len();
+
+        let horizontal_len = (left_count + 1) * (right_count + 1);
+        let vertical_len = (up_count + 1) * (down_count + 1);
+        let worker_count = self.workers.len();
+        let mut worker_horizontal_counts = vec![0; worker_count * horizontal_len];
+        let mut worker_vertical_counts = vec![0; worker_count * vertical_len];
+
+        py.detach(|| {
+            let mut sent_workers = Vec::with_capacity(self.workers.len());
+            let mut first_error = None;
+            for (worker_idx, worker) in self.workers.iter().enumerate() {
+                let horizontal_start = worker_idx * horizontal_len;
+                let horizontal_end = horizontal_start + horizontal_len;
+                let vertical_start = worker_idx * vertical_len;
+                let vertical_end = vertical_start + vertical_len;
+                if let Err(err) = worker.send(WorkerCommand::GetDoorMatchCounts {
+                    horizontal_counts: OutputShard::from_slice(
+                        &mut worker_horizontal_counts[horizontal_start..horizontal_end],
+                    ),
+                    vertical_counts: OutputShard::from_slice(
+                        &mut worker_vertical_counts[vertical_start..vertical_end],
+                    ),
+                }) {
+                    set_first_error(&mut first_error, err);
+                    break;
+                }
+                sent_workers.push(worker_idx);
+            }
+
+            wait_for_done_responses(&self.workers, sent_workers, first_error)
+        })?;
+
+        let mut horizontal_counts = vec![0; horizontal_len];
+        for worker_counts in worker_horizontal_counts.chunks_exact(horizontal_len) {
+            for (dst, &count) in horizontal_counts.iter_mut().zip(worker_counts) {
+                *dst += count;
+            }
+        }
+        let mut vertical_counts = vec![0; vertical_len];
+        for worker_counts in worker_vertical_counts.chunks_exact(vertical_len) {
+            for (dst, &count) in vertical_counts.iter_mut().zip(worker_counts) {
+                *dst += count;
+            }
+        }
+
+        Ok((
+            pyarray2_from_flat_vec(py, horizontal_counts, left_count + 1, right_count + 1)?,
+            pyarray2_from_flat_vec(py, vertical_counts, up_count + 1, down_count + 1)?,
         ))
     }
 

@@ -9,7 +9,7 @@ use std::collections::BinaryHeap;
 use std::time::Instant;
 
 use crate::common::{
-    Action, CommonData, ConnectionVariantIdx, Coord, DirDoorIdx, DoorKind, DoorLocation,
+    Action, CommonData, ConnectionVariantIdx, Coord, DirDoorIdx, Direction, DoorKind, DoorLocation,
     DoorValidOutcome, GeometryData, GeometryIdx, NUM_DIRS, PartIdx, RoomIdx, RoomPartIdx,
     get_behind_door_position,
 };
@@ -1300,6 +1300,28 @@ impl Environment {
         &self.actions
     }
 
+    pub fn add_door_match_counts(
+        &self,
+        common: &CommonData,
+        horizontal_counts: &mut [u64],
+        vertical_counts: &mut [u64],
+    ) {
+        add_orientation_match_counts(
+            &self.door_matches,
+            common,
+            Direction::Left,
+            Direction::Right,
+            horizontal_counts,
+        );
+        add_orientation_match_counts(
+            &self.door_matches,
+            common,
+            Direction::Up,
+            Direction::Down,
+            vertical_counts,
+        );
+    }
+
     pub fn outcomes(&self, common: &CommonData) -> Outcomes {
         let mut door_valid = vec![];
         for dir in 0..NUM_DIRS {
@@ -1366,6 +1388,35 @@ impl Environment {
         Outcomes {
             door_valid,
             connections_valid,
+        }
+    }
+}
+
+fn add_orientation_match_counts(
+    door_matches: &[Vec<DirDoorIdx>; NUM_DIRS],
+    common: &CommonData,
+    row_direction: Direction,
+    column_direction: Direction,
+    counts: &mut [u64],
+) {
+    let row_count = common.room_dir_door[row_direction as usize].len();
+    let column_count = common.room_dir_door[column_direction as usize].len();
+    debug_assert_eq!(counts.len(), (row_count + 1) * (column_count + 1));
+
+    let unmatched_column = column_count;
+    for (row_idx, &column_idx) in door_matches[row_direction as usize].iter().enumerate() {
+        let column_idx = if column_idx == DirDoorIdx::MAX {
+            unmatched_column
+        } else {
+            column_idx as usize
+        };
+        counts[row_idx * (column_count + 1) + column_idx] += 1;
+    }
+
+    let unmatched_row = row_count;
+    for (column_idx, &row_idx) in door_matches[column_direction as usize].iter().enumerate() {
+        if row_idx == DirDoorIdx::MAX {
+            counts[unmatched_row * (column_count + 1) + column_idx] += 1;
         }
     }
 }
@@ -1578,6 +1629,89 @@ mod tests {
                 .iter()
                 .all(|&component| component == NO_COMPONENT)
         );
+    }
+
+    #[test]
+    fn door_match_counts_include_unmatched_row_and_column() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            },
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            },
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            },
+            {
+                "map": [[1]],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 4), 0);
+
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        env.step(
+            Action {
+                room_idx: 1,
+                x: 1,
+                y: 0,
+            },
+            &common,
+        );
+        env.step(
+            Action {
+                room_idx: 2,
+                x: 0,
+                y: 2,
+            },
+            &common,
+        );
+        env.step(
+            Action {
+                room_idx: 3,
+                x: 3,
+                y: 2,
+            },
+            &common,
+        );
+
+        let mut horizontal_counts = vec![0; 9];
+        let mut vertical_counts = vec![0; 1];
+        env.add_door_match_counts(&common, &mut horizontal_counts, &mut vertical_counts);
+
+        assert_eq!(horizontal_counts, vec![1, 0, 0, 0, 0, 1, 0, 1, 0]);
+        assert_eq!(vertical_counts, vec![0]);
     }
 
     #[test]
