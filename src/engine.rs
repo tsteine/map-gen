@@ -1388,7 +1388,7 @@ impl Drop for EnvironmentGroup {
 #[pymethods]
 impl Engine {
     #[new]
-    #[pyo3(signature = (rooms_json, state_features_json="{}"))]
+    #[pyo3(signature = (rooms_json, state_features_json))]
     fn new(rooms_json: &str, state_features_json: &str) -> PyResult<Self> {
         let rooms: Vec<Room> = serde_json::from_str(rooms_json)
             .map_err(|err| PyValueError::new_err(format!("failed to parse rooms JSON: {err}")))?;

@@ -128,8 +128,8 @@ class Engine:
     engine: map_gen.Engine
     rooms: list[dict]
 
-    def __init__(self, rooms: list[dict], state_features: dict[str, bool] | None = None):
-        self.state_features = state_features or {}
+    def __init__(self, rooms: list[dict], state_features: dict[str, bool]):
+        self.state_features = state_features
         self.engine = map_gen.Engine(json.dumps(rooms), json.dumps(self.state_features))
         self.rooms = rooms
 

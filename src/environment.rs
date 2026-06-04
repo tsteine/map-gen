@@ -55,8 +55,8 @@ pub struct Outcomes {
     pub connections_valid: Vec<DoorValidOutcome>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StateFeatureConfig {
     pub inventory: bool,
     pub room_position: bool,
@@ -118,6 +118,24 @@ impl StateFeatureConfig {
             frontier_neighbor_flags: true,
             connection_reachability: true,
             frontier_connection_reachability: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn all_disabled() -> Self {
+        Self {
+            inventory: false,
+            room_position: false,
+            frontier_mask: false,
+            frontier_position: false,
+            frontier_orientation: false,
+            frontier_kind: false,
+            frontier_occupancy: false,
+            frontier_neighbor: false,
+            frontier_neighbor_position_embedding: false,
+            frontier_neighbor_flags: false,
+            connection_reachability: false,
+            frontier_connection_reachability: false,
         }
     }
 }
@@ -1914,7 +1932,7 @@ mod tests {
         assert!(
             StateFeatureConfig {
                 frontier_position: true,
-                ..StateFeatureConfig::default()
+                ..StateFeatureConfig::all_disabled()
             }
             .validate()
             .is_err()
@@ -1922,7 +1940,7 @@ mod tests {
         assert!(
             StateFeatureConfig {
                 frontier_neighbor_flags: true,
-                ..StateFeatureConfig::default()
+                ..StateFeatureConfig::all_disabled()
             }
             .validate()
             .is_err()
@@ -1930,13 +1948,30 @@ mod tests {
         assert!(
             StateFeatureConfig {
                 frontier_neighbor_position_embedding: true,
-                ..StateFeatureConfig::default()
+                ..StateFeatureConfig::all_disabled()
             }
             .validate()
             .is_err()
         );
-        assert!(StateFeatureConfig::default().validate().is_ok());
+        assert!(StateFeatureConfig::all_disabled().validate().is_ok());
         assert!(StateFeatureConfig::all().validate().is_ok());
+        let err = serde_json::from_str::<StateFeatureConfig>(
+            r#"{
+                "inventory": false,
+                "room_position": false,
+                "frontier_mask": false,
+                "frontier_position": false,
+                "frontier_orientation": false,
+                "frontier_kind": false,
+                "frontier_occupancy": false,
+                "frontier_neighbor": false,
+                "frontier_neighbor_position_embedding": false,
+                "frontier_neighbor_flags": false,
+                "connection_reachability": false
+            }"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("missing field"));
     }
 
     #[test]
@@ -1969,7 +2004,7 @@ mod tests {
             frontier_mask: true,
             connection_reachability: true,
             frontier_connection_reachability: true,
-            ..StateFeatureConfig::default()
+            ..StateFeatureConfig::all_disabled()
         };
         let features =
             env.state_features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 1, 1);
@@ -1992,7 +2027,7 @@ mod tests {
                 x: 0,
                 y: 0,
             },
-            &StateFeatureConfig::default(),
+            &StateFeatureConfig::all_disabled(),
             FrontierNeighborAlgorithm::Delaunay,
             4,
             4,
