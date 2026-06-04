@@ -387,20 +387,22 @@ class FrontierStateModel(torch.nn.Module):
             1 << torch.arange(8, dtype=torch.uint8),
             persistent=False,
         )
-        pair_feature_width = (
+        pair_width = (
             embedding_width * self.state_features.get("frontier_neighbor_position", False)
             + 3 * self.state_features.get("frontier_neighbor_flags", False)
         )
-        pair_width = 2 * embedding_width + pair_feature_width
         use_neighbors = self.state_features.get("frontier_neighbor", False)
         self.source_message_layers = torch.nn.ModuleList([
             torch.nn.Linear(embedding_width, hidden_width, bias=False)
             for _ in range(num_layers if use_neighbors else 0)
         ])
-        self.pair_message_layers = torch.nn.ModuleList([
-            torch.nn.Linear(pair_width, hidden_width, bias=False)
-            for _ in range(num_layers if use_neighbors else 0)
-        ])
+        self.pair_message_layers = (
+            torch.nn.ModuleList([
+                torch.nn.Linear(pair_width, hidden_width, bias=False)
+                for _ in range(num_layers if use_neighbors else 0)
+            ])
+            if pair_width > 0 else [None] * (num_layers if use_neighbors else 0)
+        )
         self.message_output_layers = torch.nn.ModuleList([
             torch.nn.Sequential(
                 torch.nn.GELU(),
@@ -539,7 +541,7 @@ class FrontierStateModel(torch.nn.Module):
         if node.shape[1] == 0:
             mean_pool = max_pool = X.new_zeros([X.shape[0], X.shape[2]])
         else:
-            # pair: [b, f, k, pair_feature_width], neighbor: [b, f, k], pair_mask: [b, f, k, 1]
+            # pair: [b, f, k, pair_width], neighbor: [b, f, k], pair_mask: [b, f, k, 1]
             pair = self._pair_features(features)
             neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
             pair_mask = (features.frontier_neighbor >= 0).unsqueeze(-1)
@@ -549,19 +551,16 @@ class FrontierStateModel(torch.nn.Module):
                 self.message_output_layers,
                 self.update_layers,
             ):
-                # Gather each frontier's neighbors: neighbor_state: [b, f, k, e]
-                target_state = X.unsqueeze(2).expand(-1, -1, neighbor.shape[2], -1)
-                neighbor_state = torch.gather(
-                    X,
+                # source: [b, f, h]
+                source = source_layer(X)
+                # Gather each frontier's neighbors: source: [b, f, k, h]
+                source = torch.gather(
+                    source,
                     1,
-                    neighbor.flatten(1).unsqueeze(-1).expand(-1, -1, X.shape[-1]),
-                ).view(*neighbor.shape, X.shape[-1])
-                source = source_layer(neighbor_state)
-                pair_inputs = [target_state, neighbor_state]
-                if pair is not None:
-                    pair_inputs.append(pair)
+                    neighbor.flatten(1).unsqueeze(-1).expand(-1, -1, source.shape[-1]),
+                ).view(*neighbor.shape, source.shape[-1])
                 # messages: [b, f, k, e], then [b, f, e] after neighbor pooling
-                messages = source + pair_layer(torch.cat(pair_inputs, dim=-1))
+                messages = source if pair_layer is None else source + pair_layer(pair)
                 messages = output_layer(messages) * pair_mask
                 messages = messages.sum(2) / pair_mask.sum(2).clamp_min(1)
                 X = X + update_layer(torch.cat([X, messages], dim=-1))
