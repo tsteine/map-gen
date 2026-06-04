@@ -2,7 +2,7 @@
   "experiment_name": "norfair-initial-testing",
   "room_set": "room_definitions/norfair.json",
   "map_size": [72, 72],
-  "knot_episodes": [0, 50000, 300000, 1000000],
+  "knot_episodes": [0, 50000, 300000, 2000000],
   "model": {
     "type": "frontier_state",
     "compile": true,

@@ -712,6 +712,7 @@ def create_models(config: Config, rooms: list[dict], engine: Engine, device: tor
         head_groups=config.model.head_groups,
         hidden_width=config.model.hidden_width,
         num_layers=config.model.num_layers,
+        frontier_neighbor_count=config.generation.frontier_neighbor_count,
         frontier_window_size=config.generation.frontier_window_size,
         state_features=config.state_features.model_dump(),
     ).to(device)

@@ -374,8 +374,7 @@ class FrontierStateModel(torch.nn.Module):
             if self.state_features.get("frontier_kind", False) else None
         )
         node_numeric_width = (
-            6 * self.state_features.get("frontier_position", False)
-            + frontier_window_size**2 * self.state_features.get("frontier_occupancy", False)
+            frontier_window_size**2 * self.state_features.get("frontier_occupancy", False)
             + 2 * self.num_connection_outputs * self.state_features.get("frontier_connection_reachability", False)
         )
         self.node_numeric = (
@@ -389,7 +388,7 @@ class FrontierStateModel(torch.nn.Module):
             persistent=False,
         )
         pair_width = (
-            5 * self.state_features.get("frontier_neighbor_position", False)
+            embedding_width * self.state_features.get("frontier_neighbor_position", False)
             + 3 * self.state_features.get("frontier_neighbor_flags", False)
         )
         use_neighbors = self.state_features.get("frontier_neighbor", False)
@@ -436,6 +435,26 @@ class FrontierStateModel(torch.nn.Module):
             if self.state_features.get("connection_reachability", False)
             and self.num_connection_outputs > 0 else None
         )
+        self.frontier_pos_embedding_x = (
+            torch.nn.Parameter(
+                torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
+            if self.state_features.get("frontier_position", False) else None
+        )
+        self.frontier_pos_embedding_y = (
+            torch.nn.Parameter(
+                torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
+            if self.state_features.get("frontier_position", False) else None
+        )
+        self.frontier_relative_pos_embedding_x = (
+            torch.nn.Parameter(
+                torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
+            if self.state_features.get("frontier_neighbor_position", False) else None
+        )
+        self.frontier_relative_pos_embedding_y = (
+            torch.nn.Parameter(
+                torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
+            if self.state_features.get("frontier_neighbor_position", False) else None
+        )
         self.pos_embedding_x = torch.nn.Parameter(
             torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width))
         self.pos_embedding_y = torch.nn.Parameter(
@@ -444,6 +463,11 @@ class FrontierStateModel(torch.nn.Module):
             output_metadata.door, output_metadata.num_door_variants, embedding_width)
         self.connection_output = FactorizedOutcomeHead(
             output_metadata.connection, output_metadata.num_connection_variants, embedding_width)
+
+    def _position_embedding(self, x, y, embedding_x, embedding_y, offset=0):
+        x = x.to(torch.int64) + offset
+        y = y.to(torch.int64) + offset
+        return embedding_x[x] + embedding_y[y]
 
     def _pair_features(self, features):
         node = features.frontier
@@ -459,22 +483,21 @@ class FrontierStateModel(torch.nn.Module):
             raw_y = node[:, :, 2].to(torch.int64)
             raw_x0, raw_x1 = raw_x.unsqueeze(2), gather_neighbor(raw_x)
             raw_y0, raw_y1 = raw_y.unsqueeze(2), gather_neighbor(raw_y)
-        if use_position:
-            values.extend([
-                (raw_x1 - raw_x0).to(torch.float32) / self.map_x,
-                (raw_y1 - raw_y0).to(torch.float32) / self.map_y,
-                ((raw_x1 - raw_x0).abs() + (raw_y1 - raw_y0).abs()).to(torch.float32) / (self.map_x + self.map_y),
-                (raw_x0 == raw_x1).to(torch.float32),
-                (raw_y0 == raw_y1).to(torch.float32),
-            ])
+            values.append(self._position_embedding(
+                raw_x1 - raw_x0,
+                raw_y1 - raw_y0,
+                self.frontier_relative_pos_embedding_x,
+                self.frontier_relative_pos_embedding_y,
+                COORD_OFFSET,
+            ))
         if self.state_features.get("frontier_neighbor_flags", False):
             flags = features.frontier_neighbor_pair
-            values.extend([
+            values.append(torch.stack([
                 (flags & 1 != 0).to(torch.float32),
                 (flags & 2 != 0).to(torch.float32),
                 (flags & 4 != 0).to(torch.float32),
-            ])
-        return torch.stack(values, dim=-1) if values else None
+            ], dim=-1))
+        return torch.cat(values, dim=-1) if values else None
 
     def forward(self, features: StateFeatures):
         # Shapes below use: b=batch, f=frontiers, k=neighbors, e=embedding width,
@@ -484,18 +507,6 @@ class FrontierStateModel(torch.nn.Module):
         node_mask = node[:, :, 0] != 0
         # numeric: [b, f, numeric_width]
         numeric = []
-        if self.state_features.get("frontier_position", False):
-            numeric.extend([
-                node[:, :, 1].to(torch.float32) / self.map_x,
-                node[:, :, 2].to(torch.float32) / self.map_y,
-            ])
-        if self.state_features.get("frontier_position", False):
-            numeric.extend([
-                node[:, :, 1].to(torch.float32) / self.map_x,
-                (self.map_x - node[:, :, 1].to(torch.float32)) / self.map_x,
-                node[:, :, 2].to(torch.float32) / self.map_y,
-                (self.map_y - node[:, :, 2].to(torch.float32)) / self.map_y,
-            ])
         if self.state_features.get("frontier_occupancy", False):
             numeric.append(
                 features.frontier_occupancy.unsqueeze(-1)
@@ -515,6 +526,13 @@ class FrontierStateModel(torch.nn.Module):
         if self.node_numeric is not None:
             numeric = [value.unsqueeze(-1) if value.ndim == 2 else value for value in numeric]
             X = X + self.node_numeric(torch.cat(numeric, dim=-1))
+        if self.frontier_pos_embedding_x is not None:
+            X = X + self._position_embedding(
+                node[:, :, 1],
+                node[:, :, 2],
+                self.frontier_pos_embedding_x,
+                self.frontier_pos_embedding_y,
+            )
         if self.orientation_embedding is not None:
             X = X + self.orientation_embedding(node[:, :, 3].to(torch.int64))
         if self.kind_embedding is not None:
@@ -523,7 +541,7 @@ class FrontierStateModel(torch.nn.Module):
         if node.shape[1] == 0:
             mean_pool = max_pool = X.new_zeros([X.shape[0], X.shape[2]])
         else:
-            # pair: [b, f, k, 11], neighbor: [b, f, k], pair_mask: [b, f, k, 1]
+            # pair: [b, f, k, pair_width], neighbor: [b, f, k], pair_mask: [b, f, k, 1]
             pair = self._pair_features(features)
             neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
             pair_mask = (features.frontier_neighbor >= 0).unsqueeze(-1)

@@ -1504,16 +1504,6 @@ impl EnvironmentGroup {
         frontier_window_size: usize,
         num_threads: Option<usize>,
     ) -> PyResult<Self> {
-        if frontier_neighbor_count == 0 {
-            return Err(PyValueError::new_err(
-                "frontier_neighbor_count must be greater than zero",
-            ));
-        }
-        if frontier_window_size == 0 {
-            return Err(PyValueError::new_err(
-                "frontier_window_size must be greater than zero",
-            ));
-        }
         let requested_threads = requested_num_threads(num_threads)?;
         let worker_count = min(requested_threads, max(num_environments, 1));
 

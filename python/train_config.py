@@ -151,8 +151,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("generation.state_candidate_chunk must be greater than zero")
     if config.generation.state_environment_chunk <= 0:
         raise ValueError("generation.state_environment_chunk must be greater than zero")
-    if config.generation.frontier_neighbor_count <= 0:
-        raise ValueError("generation.frontier_neighbor_count must be greater than zero")
+    if config.generation.frontier_neighbor_count < 0:
+        raise ValueError("generation.frontier_neighbor_count must be greater than or equal to zero")
     if config.generation.frontier_window_size <= 0:
         raise ValueError("generation.frontier_window_size must be greater than zero")
     if config.generation.num_threads is not None and config.generation.num_threads <= 0:
