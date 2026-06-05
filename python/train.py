@@ -1,4 +1,5 @@
 import argparse
+from collections import deque
 import copy
 import json
 import logging
@@ -19,7 +20,7 @@ from safetensors import safe_open
 
 from env import Actions, DoorMatchCounts, Engine, GenerateConfig, Outcomes, StateFeatures
 from experience import ExperienceStorage
-from generate import Prefetcher, generate_cohorts
+from generate import generate_cohorts
 from loss import LossConfig, compute_loss
 from model import FrontierStateModel
 from profile_stats import ProfileStats
@@ -49,6 +50,43 @@ class PreparedTrainBatch:
     outcomes: Outcomes
     prefix_count: int
     state_feature_batches: list[StateFeatures]
+
+
+class Prefetcher:
+    def __init__(self, max_workers=1):
+        if max_workers <= 0:
+            raise ValueError("max_workers must be greater than zero")
+        self.max_workers = max_workers
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+
+    def close(self):
+        self.executor.shutdown()
+
+    def map(self, items, prepare, profiler=None, wait_name=None):
+        items = iter(items)
+        pending = deque()
+
+        for _ in range(self.max_workers):
+            if not submit_prefetch_item(self.executor, pending, items, prepare):
+                break
+
+        while pending:
+            future = pending.popleft()
+            if profiler is None or wait_name is None:
+                result = future.result()
+            else:
+                with profiler.timer(wait_name):
+                    result = future.result()
+            submit_prefetch_item(self.executor, pending, items, prepare)
+            yield result
+
+
+def submit_prefetch_item(executor: ThreadPoolExecutor, pending: deque, items, prepare) -> bool:
+    try:
+        pending.append(executor.submit(prepare, next(items)))
+        return True
+    except StopIteration:
+        return False
 
 
 def as_checkpoint_tensor(value: torch.Tensor) -> torch.Tensor:
