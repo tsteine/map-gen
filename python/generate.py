@@ -14,6 +14,7 @@ from profile_stats import ProfileStats
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 import torch
 
 
@@ -225,6 +226,41 @@ def extract_candidate_features(
     return env_start, env_end, features
 
 
+def state_feature_batch_starts(num_envs: int, batch_size: int) -> range:
+    return range(0, num_envs, batch_size)
+
+
+def state_feature_slot(
+    feature_slots: list[PinnedSparseStateFeatureSlot] | None,
+    env_start: int,
+    batch_size: int,
+) -> PinnedSparseStateFeatureSlot | None:
+    if feature_slots is None:
+        return None
+    return feature_slots[(env_start // batch_size) % len(feature_slots)]
+
+
+def extract_state_feature_batch(
+    env: EnvironmentGroup,
+    candidates: Actions,
+    batch_size: int,
+    profiler: ProfileStats,
+    sparse_frontiers: bool,
+    feature_slots: list[PinnedSparseStateFeatureSlot] | None,
+    env_start: int,
+):
+    env_end = min(env_start + batch_size, env.num_envs)
+    return extract_candidate_features(
+        env,
+        candidates,
+        env_start,
+        env_end,
+        profiler,
+        sparse_frontiers,
+        state_feature_slot(feature_slots, env_start, batch_size),
+    )
+
+
 def transfer_state_features(
     features: StateFeatures | SparseStateFeatures,
     device: torch.device,
@@ -413,10 +449,8 @@ class StateFeatureGenerationCohort:
     step: int = 0
     candidates: Actions | None = None
     outcomes: Outcomes | None = None
-    candidate_start: int = 0
     env_start: int = 0
     env_rewards: list[torch.Tensor] | None = None
-    candidate_rewards: list[torch.Tensor] | None = None
     feature_slot: PinnedSparseStateFeatureSlot | None = None
 
 
@@ -441,7 +475,7 @@ def generate_state_feature_cohorts(
     ready = deque()
 
     def finish_step(cohort):
-        expected_reward = torch.cat(cohort.candidate_rewards, dim=1)
+        expected_reward = torch.cat(cohort.env_rewards, dim=0)
         dummy_candidate = cohort.candidates.room_idx == num_rooms
         expected_reward = torch.where(
             dummy_candidate,
@@ -473,23 +507,16 @@ def generate_state_feature_cohorts(
     def submit_extract(cohort):
         if device.type == "cuda" and cohort.feature_slot is None:
             cohort.feature_slot = PinnedSparseStateFeatureSlot(cohort.env, pin_memory=True)
-        candidate_end = cohort.candidate_start + cohort.config.state_candidate_chunk
         env_end = min(
-            cohort.env_start + cohort.config.state_environment_chunk,
+            cohort.env_start + cohort.config.state_feature_batch_size,
             cohort.env.num_envs,
-        )
-        chunk = Actions(
-            cohort.candidates.room_idx[:, cohort.candidate_start:candidate_end],
-            cohort.candidates.room_x[:, cohort.candidate_start:candidate_end],
-            cohort.candidates.room_y[:, cohort.candidate_start:candidate_end],
         )
         ready.append((
             cohort,
-            chunk,
             executor.submit(
                 extract_candidate_features,
                 cohort.env,
-                chunk,
+                cohort.candidates,
                 cohort.env_start,
                 env_end,
                 profiler,
@@ -510,10 +537,8 @@ def generate_state_feature_cohorts(
                     cohort.candidates = cohort.env.get_candidates(cohort.config.max_candidates, device)
                     cohort.outcomes = cohort.env.get_outcomes(device)
             if cohort.candidates.room_idx.shape[1] != 1:
-                cohort.candidate_start = 0
                 cohort.env_start = 0
                 cohort.env_rewards = []
-                cohort.candidate_rewards = []
                 submit_extract(cohort)
                 return
             action_index = torch.zeros(
@@ -541,18 +566,18 @@ def generate_state_feature_cohorts(
                 cohort.env.clear()
                 start_step(cohort)
             while ready:
-                cohort, chunk, future = ready.popleft()
+                cohort, future = ready.popleft()
                 with profiler.timer("gen.cpu_extract_wait"):
                     env_start, env_end, features = future.result()
                 with profiler.timer("gen.cpu_transfer_submit"):
                     env_features = transfer_state_features(
                         features, device, profiler, transfer_stream
                     )
-                candidate_count = chunk.room_idx.shape[1]
+                candidate_count = cohort.candidates.room_idx.shape[1]
                 chunk_outcomes = Outcomes(
-                    cohort.outcomes.door_invalid[env_start:env_end, cohort.candidate_start:cohort.candidate_start + candidate_count]
+                    cohort.outcomes.door_invalid[env_start:env_end]
                     if cohort.outcomes.door_invalid.ndim == 3 else cohort.outcomes.door_invalid[env_start:env_end],
-                    cohort.outcomes.connection_invalid[env_start:env_end, cohort.candidate_start:cohort.candidate_start + candidate_count]
+                    cohort.outcomes.connection_invalid[env_start:env_end]
                     if cohort.outcomes.connection_invalid.ndim == 3 else cohort.outcomes.connection_invalid[env_start:env_end],
                 )
                 with profiler.cuda_timer("gen.gpu_model_reward", device):
@@ -572,13 +597,6 @@ def generate_state_feature_cohorts(
                     ))
                 cohort.env_start = env_end
                 if cohort.env_start < cohort.env.num_envs:
-                    submit_extract(cohort)
-                    continue
-                cohort.candidate_rewards.append(torch.cat(cohort.env_rewards, dim=0))
-                cohort.candidate_start += candidate_count
-                if cohort.candidate_start < cohort.candidates.room_idx.shape[1]:
-                    cohort.env_start = 0
-                    cohort.env_rewards = []
                     submit_extract(cohort)
                     continue
                 finish_step(cohort)
@@ -640,8 +658,6 @@ def generate_cohorts(
             verify_outcome_consistency=verify_outcome_consistency,
             profiler=profiler,
         )
-    if not getattr(model, "uses_state_features", False):
-        raise ValueError("multiple generation cohorts require a state-feature model")
     return generate_state_feature_cohorts(
         envs,
         model,
@@ -664,8 +680,6 @@ def generate(
     engine = env.engine
     num_rooms = len(engine.rooms)
 
-    uses_state_features = getattr(model, "uses_state_features", False)
-    kv_cache = None if uses_state_features else model.get_initial_kv_cache(num_envs, device)
     env.clear()
     known_outcomes = None
     profiler = profiler or ProfileStats(False)
@@ -674,7 +688,7 @@ def generate(
     prefetcher = Prefetcher()
     feature_slots = (
         [PinnedSparseStateFeatureSlot(env, pin_memory=True) for _ in range(2)]
-        if uses_state_features and device.type == "cuda"
+        if device.type == "cuda"
         else None
     )
     try:
@@ -692,77 +706,54 @@ def generate(
 
                 if candidates.room_idx.shape[1] == 1:
                     # Only one candidate, so select it directly (e.g. on the first step)
-                    if not uses_state_features:
-                        _, kv_cache_candidates = model.generate(candidates, kv_cache, config)
                     action_index = torch.zeros(candidates.room_idx.shape[0], dtype=torch.int64, device=device)
                     selected_actions = candidates.select(action_index)
                 else:
-                    if uses_state_features:
-                        candidate_rewards = []
-                        for start in range(0, candidates.room_idx.shape[1], config.state_candidate_chunk):
-                            end = start + config.state_candidate_chunk
-                            chunk = Actions(
-                                candidates.room_idx[:, start:end],
-                                candidates.room_x[:, start:end],
-                                candidates.room_y[:, start:end],
+                    env_rewards = []
+                    env_starts = state_feature_batch_starts(
+                        num_envs,
+                        config.state_feature_batch_size,
+                    )
+                    prepare_features = partial(
+                        extract_state_feature_batch,
+                        env,
+                        candidates,
+                        config.state_feature_batch_size,
+                        profiler,
+                        device.type == "cuda",
+                        feature_slots,
+                    )
+
+                    for env_start, env_end, features in prefetcher.map(
+                        env_starts, prepare_features, profiler, "gen.cpu_extract_wait"
+                    ):
+                        with profiler.timer("gen.cpu_transfer_submit"):
+                            env_features = transfer_state_features(
+                                features, device, profiler, transfer_stream
                             )
-                            env_rewards = []
-                            env_starts = range(0, num_envs, config.state_environment_chunk)
-
-                            def prepare_features(env_start):
-                                env_end = min(env_start + config.state_environment_chunk, num_envs)
-                                feature_slot = None
-                                if feature_slots is not None:
-                                    slot_idx = (
-                                        env_start // config.state_environment_chunk
-                                    ) % len(feature_slots)
-                                    feature_slot = feature_slots[slot_idx]
-                                return extract_candidate_features(
-                                    env,
-                                    chunk,
-                                    env_start,
-                                    env_end,
-                                    profiler,
-                                    device.type == "cuda",
-                                    feature_slot,
-                                )
-
-                            for env_start, env_end, features in prefetcher.map(
-                                env_starts, prepare_features, profiler, "gen.cpu_extract_wait"
+                        candidate_count = candidates.room_idx.shape[1]
+                        chunk_outcomes = Outcomes(
+                            outcomes.door_invalid[env_start:env_end]
+                            if outcomes.door_invalid.ndim == 3 else outcomes.door_invalid[env_start:env_end],
+                            outcomes.connection_invalid[env_start:env_end]
+                            if outcomes.connection_invalid.ndim == 3 else outcomes.connection_invalid[env_start:env_end],
+                        )
+                        with profiler.cuda_timer("gen.gpu_model_reward", device):
+                            with torch.amp.autocast(
+                                "cuda",
+                                dtype=torch.bfloat16,
+                                enabled=device.type == "cuda" and config.state_autocast,
                             ):
-                                with profiler.timer("gen.cpu_transfer_submit"):
-                                    env_features = transfer_state_features(
-                                        features, device, profiler, transfer_stream
-                                    )
-                                candidate_count = chunk.room_idx.shape[1]
-                                chunk_outcomes = Outcomes(
-                                    outcomes.door_invalid[env_start:env_end, start:end]
-                                    if outcomes.door_invalid.ndim == 3 else outcomes.door_invalid[env_start:env_end],
-                                    outcomes.connection_invalid[env_start:env_end, start:end]
-                                    if outcomes.connection_invalid.ndim == 3 else outcomes.connection_invalid[env_start:env_end],
-                                )
-                                with profiler.cuda_timer("gen.gpu_model_reward", device):
-                                    with torch.amp.autocast(
-                                        "cuda",
-                                        dtype=torch.bfloat16,
-                                        enabled=device.type == "cuda" and config.state_autocast,
-                                    ):
-                                        chunk_preds = model(env_features)
-                                    env_rewards.append(compute_expected_reward(
-                                        Predictions(
-                                            chunk_preds.door_invalid.view(env_end - env_start, candidate_count, -1),
-                                            chunk_preds.connection_invalid.view(env_end - env_start, candidate_count, -1),
-                                        ),
-                                        chunk_outcomes,
-                                        config,
-                                    ))
-                            candidate_rewards.append(torch.cat(env_rewards, dim=0))
-                        expected_reward = torch.cat(candidate_rewards, dim=1)
-                        kv_cache_candidates = None
-                    else:
-                        # Model inference to get predictions and updated key-value cache for next step
-                        preds, kv_cache_candidates = model.generate(candidates, kv_cache, config)
-                        expected_reward = compute_expected_reward(preds, outcomes, config)
+                                chunk_preds = model(env_features)
+                            env_rewards.append(compute_expected_reward(
+                                Predictions(
+                                    chunk_preds.door_invalid.view(env_end - env_start, candidate_count, -1),
+                                    chunk_preds.connection_invalid.view(env_end - env_start, candidate_count, -1),
+                                ),
+                                chunk_outcomes,
+                                config,
+                            ))
+                    expected_reward = torch.cat(env_rewards, dim=0)
                     # Compute expected reward and sample to select an action (per environment)
                     dummy_candidate = candidates.room_idx == num_rooms
                     expected_reward = torch.where(
@@ -793,9 +784,6 @@ def generate(
                         f"step {step}",
                     )
 
-                # Finalize the kv cache update based on the selected action
-                if not uses_state_features and kv_cache_candidates is not None:
-                    kv_cache = model.get_updated_kv_cache(kv_cache, kv_cache_candidates, action_index)
     finally:
         prefetcher.close()
         

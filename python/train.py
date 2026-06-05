@@ -21,7 +21,7 @@ from env import Actions, DoorMatchCounts, Engine, GenerateConfig, Outcomes, Stat
 from experience import ExperienceStorage
 from generate import Prefetcher, generate_cohorts
 from loss import LossConfig, compute_loss
-from model import CausalTransformerModel, FrontierStateModel
+from model import FrontierStateModel
 from profile_stats import ProfileStats
 from train_config import Config, episodes_per_round, instantiate_scheduleable_config, validate_config
 
@@ -47,8 +47,8 @@ class PreparedTrainBatch:
     kind: Literal["fresh", "replay"]
     actions: Actions
     outcomes: Outcomes
-    prefix_count: int | None
-    state_feature_batches: list[StateFeatures] | None = None
+    prefix_count: int
+    state_feature_batches: list[StateFeatures]
 
 
 def as_checkpoint_tensor(value: torch.Tensor) -> torch.Tensor:
@@ -280,10 +280,8 @@ class TrainingSession:
                 device=generation_device,
             ),
             lookahead_outcomes=step_config.generation.lookahead_outcomes,
-            state_candidate_chunk=step_config.generation.state_candidate_chunk,
-            state_environment_chunk=step_config.generation.state_environment_chunk,
+            state_feature_batch_size=step_config.generation.state_feature_batch_size,
             state_autocast=step_config.model.generation_autocast,
-            training_autocast=step_config.model.autocast,
         )
 
     def select_batch(self, actions: Actions, outcomes: Outcomes, start: int) -> tuple[Actions, Outcomes]:
@@ -382,9 +380,7 @@ class TrainingSession:
         if task.kind == "fresh":
             assert task.start is not None
             train_actions, train_outcomes = self.select_batch(fresh_actions, fresh_outcomes, task.start)
-            if getattr(self.main_model, "uses_state_features", False):
-                return self.prepare_state_feature_batch(task.kind, train_actions, train_outcomes, env)
-            return PreparedTrainBatch(task.kind, train_actions, train_outcomes, None, None)
+            return self.prepare_state_feature_batch(task.kind, train_actions, train_outcomes, env)
 
         with self.profiler.timer("round.replay_prepare"):
             replay_actions = self.experience.sample(
@@ -395,36 +391,18 @@ class TrainingSession:
             env.replay(replay_actions)
             replay_actions = replay_actions.to(self.device)
             replay_outcomes = env.get_outcomes(self.device)
-        if getattr(self.main_model, "uses_state_features", False):
-            return self.prepare_state_feature_batch(task.kind, replay_actions, replay_outcomes, env)
-        return PreparedTrainBatch(task.kind, replay_actions, replay_outcomes, None, None)
+        return self.prepare_state_feature_batch(task.kind, replay_actions, replay_outcomes, env)
 
     def train_batch_backward(
         self,
         prepared_batch: PreparedTrainBatch,
-        gen_config: GenerateConfig,
         loss_scale: float,
     ) -> float:
-        train_actions = prepared_batch.actions
-        train_outcomes = prepared_batch.outcomes
-        if getattr(self.main_model, "uses_state_features", False):
-            loss = self.train_state_feature_batch_backward(prepared_batch, loss_scale)
-        else:
-            with self.profiler.cuda_timer("train.gpu_forward", self.device):
-                preds = self.main_model(train_actions, gen_config)
-                repeated_outcomes = Outcomes(
-                    door_invalid=train_outcomes.door_invalid.unsqueeze(1).repeat(1, self.episode_length, 1),
-                    connection_invalid=train_outcomes.connection_invalid.unsqueeze(1).repeat(1, self.episode_length, 1),
-                )
-                mask = (train_actions.room_idx < self.num_rooms).unsqueeze(2)
-                loss = compute_loss(preds, repeated_outcomes, mask, self.loss_config)
+        loss = self.train_state_feature_batch_backward(prepared_batch, loss_scale)
 
         if not torch.isfinite(loss):
             raise RuntimeError(f"non-finite loss before backward: {loss.item()}")
 
-        if not getattr(self.main_model, "uses_state_features", False):
-            with self.profiler.cuda_timer("train.gpu_backward", self.device):
-                (loss * loss_scale).backward()
         return loss.item()
 
     def train_state_feature_batch_backward(
@@ -432,8 +410,6 @@ class TrainingSession:
         prepared_batch: PreparedTrainBatch,
         loss_scale: float,
     ) -> torch.Tensor:
-        if prepared_batch.state_feature_batches is None or prepared_batch.prefix_count is None:
-            raise RuntimeError("state-feature training batch was not prepared")
         if prepared_batch.prefix_count == 0:
             raise RuntimeError("state-feature training batch has no sampled prefixes")
 
@@ -555,7 +531,6 @@ class TrainingSession:
         )
 
     def train_round(self, actions: Actions, gen_outcomes: Outcomes, step_config: Config) -> float:
-        train_gen_config = self.get_gen_config(step_config, self.config.train.batch_size, self.device)
         self.main_optimizer.param_groups[0]["lr"] = step_config.optimizer.lr
 
         total_loss = 0.0
@@ -577,7 +552,6 @@ class TrainingSession:
                 with self.profiler.timer(timer_name):
                     group_loss += self.train_batch_backward(
                         prepared_batch,
-                        train_gen_config,
                         loss_scale,
                     )
             self.train_optimizer_step()
@@ -922,14 +896,7 @@ def create_environment_groups(config: Config, engine: Engine, generation_devices
 
 def create_models(config: Config, rooms: list[dict], engine: Engine, device: torch.device, generation_devices):
     output_metadata = engine.get_output_metadata()
-    model_class = {
-        "causal_transformer": CausalTransformerModel,
-        "frontier_state": FrontierStateModel,
-    }.get(config.model.type)
-    if model_class is None:
-        raise ValueError(f"unknown model.type: {config.model.type}")
-
-    common_model_kwargs = {
+    model_kwargs = {
         "num_rooms": len(rooms),
         "output_metadata": output_metadata,
         "map_x": config.map_size[0],
@@ -937,21 +904,11 @@ def create_models(config: Config, rooms: list[dict], engine: Engine, device: tor
         "embedding_width": config.model.embedding_width,
         "hidden_width": config.model.hidden_width,
         "num_layers": config.model.num_layers,
+        "frontier_window_size": config.generation.frontier_window_size,
+        "state_features": config.state_features,
     }
-    if config.model.type == "frontier_state":
-        model_kwargs = common_model_kwargs | {
-            "frontier_window_size": config.generation.frontier_window_size,
-            "state_features": config.state_features,
-        }
-    else:
-        model_kwargs = common_model_kwargs | {
-            "key_width": config.model.key_width,
-            "value_width": config.model.value_width,
-            "attn_heads": config.model.attn_heads,
-            "head_groups": config.model.head_groups,
-        }
 
-    main_model = model_class(**model_kwargs).to(device)
+    main_model = FrontierStateModel(**model_kwargs).to(device)
 
     ema_model = copy.deepcopy(main_model).to(device)
     ema_model.requires_grad_(False)
@@ -963,7 +920,7 @@ def create_models(config: Config, rooms: list[dict], engine: Engine, device: tor
             for generation_device in generation_devices[1:]
         ],
     ]
-    if config.model.type == "frontier_state" and config.model.compile:
+    if config.model.compile:
         main_model = torch.compile(main_model)
         generation_models = [torch.compile(model) for model in generation_models]
         ema_model = generation_models[0]
@@ -1038,8 +995,7 @@ def build_session(args: Args) -> TrainingSession:
         train_batch_prefetcher=Prefetcher(max_workers=config.train.state_pipeline_cohorts),
         generation_executor=ThreadPoolExecutor(max_workers=len(generation_devices)),
         generation_models_warmed_up=not (
-            config.model.type == "frontier_state"
-            and config.model.compile
+            config.model.compile
             and len(generation_devices) > 1
         ),
     )

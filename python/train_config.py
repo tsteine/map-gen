@@ -18,15 +18,10 @@ type ScheduleableFloat = float | Schedule
 
 
 class ModelConfig(StrictBaseModel):
-    type: str
     compile: bool
     autocast: bool
     generation_autocast: bool
     embedding_width: int
-    key_width: int
-    value_width: int
-    attn_heads: int
-    head_groups: int
     hidden_width: int
     num_layers: int
 
@@ -45,8 +40,7 @@ class GenerationConfig(StrictBaseModel):
     action_candidates: int
     lookahead_outcomes: bool
     temperature: ScheduleableFloat
-    state_candidate_chunk: int
-    state_environment_chunk: int
+    state_feature_batch_size: int
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
     frontier_neighbor_count: int
     frontier_window_size: int
@@ -150,10 +144,8 @@ def validate_config(config: Config) -> None:
             "generation.num_environments must be divisible by "
             "generation.num_devices * generation.state_pipeline_cohorts"
         )
-    if config.generation.state_candidate_chunk <= 0:
-        raise ValueError("generation.state_candidate_chunk must be greater than zero")
-    if config.generation.state_environment_chunk <= 0:
-        raise ValueError("generation.state_environment_chunk must be greater than zero")
+    if config.generation.state_feature_batch_size <= 0:
+        raise ValueError("generation.state_feature_batch_size must be greater than zero")
     if config.generation.frontier_neighbor_count < 0:
         raise ValueError("generation.frontier_neighbor_count must be greater than or equal to zero")
     if config.generation.frontier_window_size <= 0:
@@ -165,8 +157,6 @@ def validate_config(config: Config) -> None:
         and config.generation.num_threads % config.generation.state_pipeline_cohorts != 0
     ):
         raise ValueError("generation.num_threads must be divisible by generation.state_pipeline_cohorts")
-    if config.model.type != "frontier_state" and config.generation.state_pipeline_cohorts != 1:
-        raise ValueError("generation.state_pipeline_cohorts must be 1 unless model.type is frontier_state")
     if config.train.sample_period <= 0:
         raise ValueError("train.sample_period must be greater than zero")
     if config.train.state_pipeline_cohorts <= 0:

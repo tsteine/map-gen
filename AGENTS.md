@@ -8,4 +8,5 @@
 - Maintain clean, readable code. When there is an opportunity to improve code
   quality by refactoring, suggest this, even if not required for the current
   task.
+- Avoid defining functions inside of other function definitions.
 - Do not bother removing or clearing `python/__pycache__`.

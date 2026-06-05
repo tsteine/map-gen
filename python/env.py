@@ -18,11 +18,9 @@ class GenerateConfig:
     episode_length: int
     max_candidates: int
     temperature: torch.Tensor
-    lookahead_outcomes: bool = True
-    state_candidate_chunk: int = 1
-    state_environment_chunk: int = 8
-    state_autocast: bool = False
-    training_autocast: bool = True
+    lookahead_outcomes: bool
+    state_feature_batch_size: int
+    state_autocast: bool
 
 
 # Each tensor here is uint8 with shape
