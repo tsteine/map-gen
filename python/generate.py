@@ -14,7 +14,6 @@ from profile_stats import ProfileStats
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import partial
 import torch
 
 
@@ -35,15 +34,8 @@ class Prefetcher:
         items = iter(items)
         pending = deque()
 
-        def submit_next():
-            try:
-                pending.append(self.executor.submit(prepare, next(items)))
-                return True
-            except StopIteration:
-                return False
-
         for _ in range(self.max_workers):
-            if not submit_next():
+            if not submit_prefetch_item(self.executor, pending, items, prepare):
                 break
 
         while pending:
@@ -53,8 +45,16 @@ class Prefetcher:
             else:
                 with profiler.timer(wait_name):
                     result = future.result()
-            submit_next()
+            submit_prefetch_item(self.executor, pending, items, prepare)
             yield result
+
+
+def submit_prefetch_item(executor: ThreadPoolExecutor, pending: deque, items, prepare) -> bool:
+    try:
+        pending.append(executor.submit(prepare, next(items)))
+        return True
+    except StopIteration:
+        return False
 
 
 def rand_choice(p):
@@ -105,29 +105,36 @@ def merge_verified_outcomes(
     if known_outcomes is None:
         return current_outcomes
 
-    def merge_known(known: torch.Tensor, current: torch.Tensor, outcome_name: str):
-        inconsistent = (known >= 0) & (current >= 0) & (known != current)
-        if torch.any(inconsistent):
-            first_idx = torch.nonzero(inconsistent, as_tuple=False)[0].tolist()
-            invalid_to_valid = torch.sum((known == 1) & (current == 0)).item()
-            valid_to_invalid = torch.sum((known == 0) & (current == 1)).item()
-            raise RuntimeError(
-                f"{outcome_name} outcome changed after becoming known at {stage}: "
-                f"first index {first_idx}, invalid->valid {invalid_to_valid}, "
-                f"valid->invalid {valid_to_invalid}"
-            )
-        return torch.where(known >= 0, known, current)
-
     return Outcomes(
-        door_invalid=merge_known(
-            known_outcomes.door_invalid, current_outcomes.door_invalid, "door"
+        door_invalid=merge_known_outcome(
+            known_outcomes.door_invalid, current_outcomes.door_invalid, "door", stage
         ),
-        connection_invalid=merge_known(
+        connection_invalid=merge_known_outcome(
             known_outcomes.connection_invalid,
             current_outcomes.connection_invalid,
             "connection",
+            stage,
         ),
     )
+
+
+def merge_known_outcome(
+    known: torch.Tensor,
+    current: torch.Tensor,
+    outcome_name: str,
+    stage: str,
+) -> torch.Tensor:
+    inconsistent = (known >= 0) & (current >= 0) & (known != current)
+    if torch.any(inconsistent):
+        first_idx = torch.nonzero(inconsistent, as_tuple=False)[0].tolist()
+        invalid_to_valid = torch.sum((known == 1) & (current == 0)).item()
+        valid_to_invalid = torch.sum((known == 0) & (current == 1)).item()
+        raise RuntimeError(
+            f"{outcome_name} outcome changed after becoming known at {stage}: "
+            f"first index {first_idx}, invalid->valid {invalid_to_valid}, "
+            f"valid->invalid {valid_to_invalid}"
+        )
+    return torch.where(known >= 0, known, current)
 
 
 def extract_candidate_features(
@@ -226,41 +233,6 @@ def extract_candidate_features(
     return env_start, env_end, features
 
 
-def state_feature_batch_starts(num_envs: int, batch_size: int) -> range:
-    return range(0, num_envs, batch_size)
-
-
-def state_feature_slot(
-    feature_slots: list[PinnedSparseStateFeatureSlot] | None,
-    env_start: int,
-    batch_size: int,
-) -> PinnedSparseStateFeatureSlot | None:
-    if feature_slots is None:
-        return None
-    return feature_slots[(env_start // batch_size) % len(feature_slots)]
-
-
-def extract_state_feature_batch(
-    env: EnvironmentGroup,
-    candidates: Actions,
-    batch_size: int,
-    profiler: ProfileStats,
-    sparse_frontiers: bool,
-    feature_slots: list[PinnedSparseStateFeatureSlot] | None,
-    env_start: int,
-):
-    env_end = min(env_start + batch_size, env.num_envs)
-    return extract_candidate_features(
-        env,
-        candidates,
-        env_start,
-        env_end,
-        profiler,
-        sparse_frontiers,
-        state_feature_slot(feature_slots, env_start, batch_size),
-    )
-
-
 def transfer_state_features(
     features: StateFeatures | SparseStateFeatures,
     device: torch.device,
@@ -290,22 +262,6 @@ def transfer_state_features_sync(
     with profiler.timer("gen.cpu_transfer_sparse_index"):
         dense_row_idx = features.dense_row_idx.to(device, non_blocking=non_blocking)
 
-    def densify(value: torch.Tensor, fill_value: int = 0):
-        with profiler.timer("gen.cpu_frontier_dense_init_submit"):
-            dense_value = torch.full(
-                (*dense_shape, *value.shape[1:]),
-                fill_value,
-                dtype=value.dtype,
-                device=device,
-            )
-        with profiler.timer("gen.cpu_transfer_sparse_frontier"):
-            sparse_value = value.to(device, non_blocking=non_blocking)
-        with profiler.timer("gen.cpu_frontier_scatter_submit"):
-            dense_value.flatten(0, 1).view(torch.uint8).index_copy_(
-                0, dense_row_idx, sparse_value.view(torch.uint8)
-            )
-        return dense_value
-
     with profiler.timer("gen.cpu_transfer_fixed"):
         inventory = features.inventory.to(device, non_blocking=non_blocking)
         room_x = features.room_x.to(device, non_blocking=non_blocking)
@@ -319,13 +275,54 @@ def transfer_state_features_sync(
         room_x,
         room_y,
         room_placed,
-        densify(features.frontier),
-        densify(features.frontier_occupancy),
-        densify(features.frontier_neighbor, -1),
-        densify(features.frontier_neighbor_pair),
+        densify_sparse_feature(
+            features.frontier, 0, dense_shape, dense_row_idx, device, profiler, non_blocking
+        ),
+        densify_sparse_feature(
+            features.frontier_occupancy, 0, dense_shape, dense_row_idx, device, profiler, non_blocking
+        ),
+        densify_sparse_feature(
+            features.frontier_neighbor, -1, dense_shape, dense_row_idx, device, profiler, non_blocking
+        ),
+        densify_sparse_feature(
+            features.frontier_neighbor_pair, 0, dense_shape, dense_row_idx, device, profiler, non_blocking
+        ),
         connection_reachability,
-        densify(features.frontier_connection_reachability),
+        densify_sparse_feature(
+            features.frontier_connection_reachability,
+            0,
+            dense_shape,
+            dense_row_idx,
+            device,
+            profiler,
+            non_blocking,
+        ),
     )
+
+
+def densify_sparse_feature(
+    value: torch.Tensor,
+    fill_value: int,
+    dense_shape: tuple[int, int],
+    dense_row_idx: torch.Tensor,
+    device: torch.device,
+    profiler: ProfileStats,
+    non_blocking: bool,
+) -> torch.Tensor:
+    with profiler.timer("gen.cpu_frontier_dense_init_submit"):
+        dense_value = torch.full(
+            (*dense_shape, *value.shape[1:]),
+            fill_value,
+            dtype=value.dtype,
+            device=device,
+        )
+    with profiler.timer("gen.cpu_transfer_sparse_frontier"):
+        sparse_value = value.to(device, non_blocking=non_blocking)
+    with profiler.timer("gen.cpu_frontier_scatter_submit"):
+        dense_value.flatten(0, 1).view(torch.uint8).index_copy_(
+            0, dense_row_idx, sparse_value.view(torch.uint8)
+        )
+    return dense_value
 
 
 class PinnedSparseStateFeatureSlot:
@@ -449,9 +446,111 @@ class StateFeatureGenerationCohort:
     step: int = 0
     candidates: Actions | None = None
     outcomes: Outcomes | None = None
-    env_start: int = 0
-    env_rewards: list[torch.Tensor] | None = None
+    expected_reward: torch.Tensor | None = None
     feature_slot: PinnedSparseStateFeatureSlot | None = None
+
+
+def finish_state_feature_cohort_step(
+    cohort: StateFeatureGenerationCohort,
+    num_rooms: int,
+    device: torch.device,
+    verify_outcome_consistency: bool,
+    profiler: ProfileStats,
+) -> None:
+    expected_reward = cohort.expected_reward
+    dummy_candidate = cohort.candidates.room_idx == num_rooms
+    expected_reward = torch.where(
+        dummy_candidate,
+        torch.full_like(expected_reward, float("-inf")),
+        expected_reward,
+    )
+    with profiler.cuda_timer("gen.gpu_select", device):
+        probs = torch.softmax(
+            expected_reward / torch.unsqueeze(cohort.config.temperature, 1), dim=1
+        )
+        action_index = rand_choice(probs)
+        selected_actions = cohort.candidates.select(action_index)
+    if verify_outcome_consistency and cohort.config.lookahead_outcomes:
+        cohort.known_outcomes = merge_verified_outcomes(
+            cohort.known_outcomes,
+            select_outcomes(cohort.outcomes, action_index),
+            f"lookahead step {cohort.step}",
+        )
+    with profiler.timer("gen.cpu_step"):
+        cohort.env.step(selected_actions)
+    if verify_outcome_consistency:
+        cohort.known_outcomes = merge_verified_outcomes(
+            cohort.known_outcomes,
+            cohort.env.get_outcomes(device),
+            f"step {cohort.step}",
+        )
+    cohort.step += 1
+
+
+def submit_state_feature_cohort_extract(
+    cohort: StateFeatureGenerationCohort,
+    executor: ThreadPoolExecutor,
+    ready: deque,
+    device: torch.device,
+    profiler: ProfileStats,
+) -> None:
+    if device.type == "cuda" and cohort.feature_slot is None:
+        cohort.feature_slot = PinnedSparseStateFeatureSlot(cohort.env, pin_memory=True)
+    ready.append((
+        cohort,
+        executor.submit(
+            extract_candidate_features,
+            cohort.env,
+            cohort.candidates,
+            0,
+            cohort.env.num_envs,
+            profiler,
+            device.type == "cuda",
+            cohort.feature_slot,
+        ),
+    ))
+
+
+def start_state_feature_cohort_step(
+    cohort: StateFeatureGenerationCohort,
+    executor: ThreadPoolExecutor,
+    ready: deque,
+    device: torch.device,
+    verify_outcome_consistency: bool,
+    profiler: ProfileStats,
+) -> None:
+    while cohort.step < cohort.config.episode_length:
+        if cohort.config.lookahead_outcomes:
+            with profiler.timer("gen.cpu_candidates"):
+                cohort.candidates, cohort.outcomes = cohort.env.get_candidates_with_outcomes(
+                    cohort.config.max_candidates, device
+                )
+        else:
+            with profiler.timer("gen.cpu_candidates"):
+                cohort.candidates = cohort.env.get_candidates(cohort.config.max_candidates, device)
+                cohort.outcomes = cohort.env.get_outcomes(device)
+        if cohort.candidates.room_idx.shape[1] != 1:
+            cohort.expected_reward = None
+            submit_state_feature_cohort_extract(cohort, executor, ready, device, profiler)
+            return
+        action_index = torch.zeros(
+            cohort.candidates.room_idx.shape[0], dtype=torch.int64, device=device
+        )
+        if verify_outcome_consistency and cohort.config.lookahead_outcomes:
+            cohort.known_outcomes = merge_verified_outcomes(
+                cohort.known_outcomes,
+                select_outcomes(cohort.outcomes, action_index),
+                f"lookahead step {cohort.step}",
+            )
+        with profiler.timer("gen.cpu_step"):
+            cohort.env.step(cohort.candidates.select(action_index))
+        if verify_outcome_consistency:
+            cohort.known_outcomes = merge_verified_outcomes(
+                cohort.known_outcomes,
+                cohort.env.get_outcomes(device),
+                f"step {cohort.step}",
+            )
+        cohort.step += 1
 
 
 def generate_state_feature_cohorts(
@@ -474,97 +573,18 @@ def generate_state_feature_cohorts(
     executor = ThreadPoolExecutor(max_workers=len(cohorts))
     ready = deque()
 
-    def finish_step(cohort):
-        expected_reward = torch.cat(cohort.env_rewards, dim=0)
-        dummy_candidate = cohort.candidates.room_idx == num_rooms
-        expected_reward = torch.where(
-            dummy_candidate,
-            torch.full_like(expected_reward, float("-inf")),
-            expected_reward,
-        )
-        with profiler.cuda_timer("gen.gpu_select", device):
-            probs = torch.softmax(
-                expected_reward / torch.unsqueeze(cohort.config.temperature, 1), dim=1
-            )
-            action_index = rand_choice(probs)
-            selected_actions = cohort.candidates.select(action_index)
-        if verify_outcome_consistency and cohort.config.lookahead_outcomes:
-            cohort.known_outcomes = merge_verified_outcomes(
-                cohort.known_outcomes,
-                select_outcomes(cohort.outcomes, action_index),
-                f"lookahead step {cohort.step}",
-            )
-        with profiler.timer("gen.cpu_step"):
-            cohort.env.step(selected_actions)
-        if verify_outcome_consistency:
-            cohort.known_outcomes = merge_verified_outcomes(
-                cohort.known_outcomes,
-                cohort.env.get_outcomes(device),
-                f"step {cohort.step}",
-            )
-        cohort.step += 1
-
-    def submit_extract(cohort):
-        if device.type == "cuda" and cohort.feature_slot is None:
-            cohort.feature_slot = PinnedSparseStateFeatureSlot(cohort.env, pin_memory=True)
-        env_end = min(
-            cohort.env_start + cohort.config.state_feature_batch_size,
-            cohort.env.num_envs,
-        )
-        ready.append((
-            cohort,
-            executor.submit(
-                extract_candidate_features,
-                cohort.env,
-                cohort.candidates,
-                cohort.env_start,
-                env_end,
-                profiler,
-                device.type == "cuda",
-                cohort.feature_slot,
-            ),
-        ))
-
-    def start_step(cohort):
-        while cohort.step < cohort.config.episode_length:
-            if cohort.config.lookahead_outcomes:
-                with profiler.timer("gen.cpu_candidates"):
-                    cohort.candidates, cohort.outcomes = cohort.env.get_candidates_with_outcomes(
-                        cohort.config.max_candidates, device
-                    )
-            else:
-                with profiler.timer("gen.cpu_candidates"):
-                    cohort.candidates = cohort.env.get_candidates(cohort.config.max_candidates, device)
-                    cohort.outcomes = cohort.env.get_outcomes(device)
-            if cohort.candidates.room_idx.shape[1] != 1:
-                cohort.env_start = 0
-                cohort.env_rewards = []
-                submit_extract(cohort)
-                return
-            action_index = torch.zeros(
-                cohort.candidates.room_idx.shape[0], dtype=torch.int64, device=device
-            )
-            if verify_outcome_consistency and cohort.config.lookahead_outcomes:
-                cohort.known_outcomes = merge_verified_outcomes(
-                    cohort.known_outcomes,
-                    select_outcomes(cohort.outcomes, action_index),
-                    f"lookahead step {cohort.step}",
-                )
-            with profiler.timer("gen.cpu_step"):
-                cohort.env.step(cohort.candidates.select(action_index))
-            if verify_outcome_consistency:
-                cohort.known_outcomes = merge_verified_outcomes(
-                    cohort.known_outcomes,
-                    cohort.env.get_outcomes(device),
-                    f"step {cohort.step}",
-                )
-            cohort.step += 1
-
     try:
         with torch.no_grad():
             for cohort in cohorts:
                 cohort.env.clear()
-                start_step(cohort)
+                start_state_feature_cohort_step(
+                    cohort,
+                    executor,
+                    ready,
+                    device,
+                    verify_outcome_consistency,
+                    profiler,
+                )
             while ready:
                 cohort, future = ready.popleft()
                 with profiler.timer("gen.cpu_extract_wait"):
@@ -575,9 +595,9 @@ def generate_state_feature_cohorts(
                     )
                 candidate_count = cohort.candidates.room_idx.shape[1]
                 chunk_outcomes = Outcomes(
-                    cohort.outcomes.door_invalid[env_start:env_end]
+                    cohort.outcomes.door_invalid
                     if cohort.outcomes.door_invalid.ndim == 3 else cohort.outcomes.door_invalid[env_start:env_end],
-                    cohort.outcomes.connection_invalid[env_start:env_end]
+                    cohort.outcomes.connection_invalid
                     if cohort.outcomes.connection_invalid.ndim == 3 else cohort.outcomes.connection_invalid[env_start:env_end],
                 )
                 with profiler.cuda_timer("gen.gpu_model_reward", device):
@@ -587,20 +607,29 @@ def generate_state_feature_cohorts(
                         enabled=device.type == "cuda" and cohort.config.state_autocast,
                     ):
                         chunk_preds = model(env_features)
-                    cohort.env_rewards.append(compute_expected_reward(
+                    cohort.expected_reward = compute_expected_reward(
                         Predictions(
                             chunk_preds.door_invalid.view(env_end - env_start, candidate_count, -1),
                             chunk_preds.connection_invalid.view(env_end - env_start, candidate_count, -1),
                         ),
                         chunk_outcomes,
                         cohort.config,
-                    ))
-                cohort.env_start = env_end
-                if cohort.env_start < cohort.env.num_envs:
-                    submit_extract(cohort)
-                    continue
-                finish_step(cohort)
-                start_step(cohort)
+                    )
+                finish_state_feature_cohort_step(
+                    cohort,
+                    num_rooms,
+                    device,
+                    verify_outcome_consistency,
+                    profiler,
+                )
+                start_state_feature_cohort_step(
+                    cohort,
+                    executor,
+                    ready,
+                    device,
+                    verify_outcome_consistency,
+                    profiler,
+                )
     finally:
         executor.shutdown()
 
@@ -676,7 +705,6 @@ def generate(
     verify_outcome_consistency: bool = False,
     profiler: ProfileStats | None = None,
 ):
-    num_envs = env.num_envs
     engine = env.engine
     num_rooms = len(engine.rooms)
 
@@ -684,108 +712,86 @@ def generate(
     known_outcomes = None
     profiler = profiler or ProfileStats(False)
     transfer_stream = torch.cuda.Stream(device=device) if device.type == "cuda" else None
-
-    prefetcher = Prefetcher()
-    feature_slots = (
-        [PinnedSparseStateFeatureSlot(env, pin_memory=True) for _ in range(2)]
+    feature_slot = (
+        PinnedSparseStateFeatureSlot(env, pin_memory=True)
         if device.type == "cuda"
         else None
     )
-    try:
-        with torch.no_grad():
-            for step in range(config.episode_length):
-                if config.lookahead_outcomes:
-                    # Get candidate actions and their post-step known outcomes from environment.
-                    with profiler.timer("gen.cpu_candidates"):
-                        candidates, outcomes = env.get_candidates_with_outcomes(config.max_candidates, device)
-                else:
-                    # Use current known outcomes for all candidates.
-                    with profiler.timer("gen.cpu_candidates"):
-                        candidates = env.get_candidates(config.max_candidates, device)
-                        outcomes = env.get_outcomes(device)
+    with torch.no_grad():
+        for step in range(config.episode_length):
+            if config.lookahead_outcomes:
+                # Get candidate actions and their post-step known outcomes from environment.
+                with profiler.timer("gen.cpu_candidates"):
+                    candidates, outcomes = env.get_candidates_with_outcomes(config.max_candidates, device)
+            else:
+                # Use current known outcomes for all candidates.
+                with profiler.timer("gen.cpu_candidates"):
+                    candidates = env.get_candidates(config.max_candidates, device)
+                    outcomes = env.get_outcomes(device)
 
-                if candidates.room_idx.shape[1] == 1:
-                    # Only one candidate, so select it directly (e.g. on the first step)
-                    action_index = torch.zeros(candidates.room_idx.shape[0], dtype=torch.int64, device=device)
-                    selected_actions = candidates.select(action_index)
-                else:
-                    env_rewards = []
-                    env_starts = state_feature_batch_starts(
-                        num_envs,
-                        config.state_feature_batch_size,
+            if candidates.room_idx.shape[1] == 1:
+                # Only one candidate, so select it directly (e.g. on the first step)
+                action_index = torch.zeros(candidates.room_idx.shape[0], dtype=torch.int64, device=device)
+                selected_actions = candidates.select(action_index)
+            else:
+                env_start, env_end, features = extract_candidate_features(
+                    env,
+                    candidates,
+                    0,
+                    env.num_envs,
+                    profiler,
+                    device.type == "cuda",
+                    feature_slot,
+                )
+                with profiler.timer("gen.cpu_transfer_submit"):
+                    env_features = transfer_state_features(
+                        features, device, profiler, transfer_stream
                     )
-                    prepare_features = partial(
-                        extract_state_feature_batch,
-                        env,
-                        candidates,
-                        config.state_feature_batch_size,
-                        profiler,
-                        device.type == "cuda",
-                        feature_slots,
-                    )
-
-                    for env_start, env_end, features in prefetcher.map(
-                        env_starts, prepare_features, profiler, "gen.cpu_extract_wait"
+                candidate_count = candidates.room_idx.shape[1]
+                with profiler.cuda_timer("gen.gpu_model_reward", device):
+                    with torch.amp.autocast(
+                        "cuda",
+                        dtype=torch.bfloat16,
+                        enabled=device.type == "cuda" and config.state_autocast,
                     ):
-                        with profiler.timer("gen.cpu_transfer_submit"):
-                            env_features = transfer_state_features(
-                                features, device, profiler, transfer_stream
-                            )
-                        candidate_count = candidates.room_idx.shape[1]
-                        chunk_outcomes = Outcomes(
-                            outcomes.door_invalid[env_start:env_end]
-                            if outcomes.door_invalid.ndim == 3 else outcomes.door_invalid[env_start:env_end],
-                            outcomes.connection_invalid[env_start:env_end]
-                            if outcomes.connection_invalid.ndim == 3 else outcomes.connection_invalid[env_start:env_end],
-                        )
-                        with profiler.cuda_timer("gen.gpu_model_reward", device):
-                            with torch.amp.autocast(
-                                "cuda",
-                                dtype=torch.bfloat16,
-                                enabled=device.type == "cuda" and config.state_autocast,
-                            ):
-                                chunk_preds = model(env_features)
-                            env_rewards.append(compute_expected_reward(
-                                Predictions(
-                                    chunk_preds.door_invalid.view(env_end - env_start, candidate_count, -1),
-                                    chunk_preds.connection_invalid.view(env_end - env_start, candidate_count, -1),
-                                ),
-                                chunk_outcomes,
-                                config,
-                            ))
-                    expected_reward = torch.cat(env_rewards, dim=0)
-                    # Compute expected reward and sample to select an action (per environment)
-                    dummy_candidate = candidates.room_idx == num_rooms
-                    expected_reward = torch.where(
-                        dummy_candidate,
-                        torch.full_like(expected_reward, float('-inf')),
-                        expected_reward,
+                        chunk_preds = model(env_features)
+                    expected_reward = compute_expected_reward(
+                        Predictions(
+                            chunk_preds.door_invalid.view(env_end - env_start, candidate_count, -1),
+                            chunk_preds.connection_invalid.view(env_end - env_start, candidate_count, -1),
+                        ),
+                        outcomes,
+                        config,
                     )
-                    with profiler.cuda_timer("gen.gpu_select", device):
-                        probs = torch.softmax(expected_reward / torch.unsqueeze(config.temperature, 1), dim=1)
-                        action_index = rand_choice(probs)
-                        selected_actions = candidates.select(action_index)
+                # Compute expected reward and sample to select an action (per environment)
+                dummy_candidate = candidates.room_idx == num_rooms
+                expected_reward = torch.where(
+                    dummy_candidate,
+                    torch.full_like(expected_reward, float('-inf')),
+                    expected_reward,
+                )
+                with profiler.cuda_timer("gen.gpu_select", device):
+                    probs = torch.softmax(expected_reward / torch.unsqueeze(config.temperature, 1), dim=1)
+                    action_index = rand_choice(probs)
+                    selected_actions = candidates.select(action_index)
 
-                if verify_outcome_consistency and config.lookahead_outcomes:
-                    known_outcomes = merge_verified_outcomes(
-                        known_outcomes,
-                        select_outcomes(outcomes, action_index),
-                        f"lookahead step {step}",
-                    )
+            if verify_outcome_consistency and config.lookahead_outcomes:
+                known_outcomes = merge_verified_outcomes(
+                    known_outcomes,
+                    select_outcomes(outcomes, action_index),
+                    f"lookahead step {step}",
+                )
 
-                # Apply the selected action to the environment
-                with profiler.timer("gen.cpu_step"):
-                    env.step(selected_actions)
+            # Apply the selected action to the environment
+            with profiler.timer("gen.cpu_step"):
+                env.step(selected_actions)
 
-                if verify_outcome_consistency:
-                    known_outcomes = merge_verified_outcomes(
-                        known_outcomes,
-                        env.get_outcomes(device),
-                        f"step {step}",
-                    )
-
-    finally:
-        prefetcher.close()
+            if verify_outcome_consistency:
+                known_outcomes = merge_verified_outcomes(
+                    known_outcomes,
+                    env.get_outcomes(device),
+                    f"step {step}",
+                )
         
     with profiler.timer("gen.cpu_finish"):
         env.finish()

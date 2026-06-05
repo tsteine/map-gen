@@ -40,7 +40,6 @@ class GenerationConfig(StrictBaseModel):
     action_candidates: int
     lookahead_outcomes: bool
     temperature: ScheduleableFloat
-    state_feature_batch_size: int
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
     frontier_neighbor_count: int
     frontier_window_size: int
@@ -144,8 +143,6 @@ def validate_config(config: Config) -> None:
             "generation.num_environments must be divisible by "
             "generation.num_devices * generation.state_pipeline_cohorts"
         )
-    if config.generation.state_feature_batch_size <= 0:
-        raise ValueError("generation.state_feature_batch_size must be greater than zero")
     if config.generation.frontier_neighbor_count < 0:
         raise ValueError("generation.frontier_neighbor_count must be greater than or equal to zero")
     if config.generation.frontier_window_size <= 0:

@@ -25,7 +25,6 @@
     "action_candidates": 16,
     "lookahead_outcomes": false,
     "temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
-    "state_feature_batch_size": 256,
     "frontier_neighbor_algorithm": "nearest-exclusive",
     "frontier_neighbor_count": 1,
     "frontier_window_size": 16,

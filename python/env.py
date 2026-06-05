@@ -19,7 +19,6 @@ class GenerateConfig:
     max_candidates: int
     temperature: torch.Tensor
     lookahead_outcomes: bool
-    state_feature_batch_size: int
     state_autocast: bool
 
 

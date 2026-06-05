@@ -280,7 +280,6 @@ class TrainingSession:
                 device=generation_device,
             ),
             lookahead_outcomes=step_config.generation.lookahead_outcomes,
-            state_feature_batch_size=step_config.generation.state_feature_batch_size,
             state_autocast=step_config.model.generation_autocast,
         )
 

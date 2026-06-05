@@ -25,7 +25,6 @@
     "action_candidates": 8,
     "lookahead_outcomes": false,
     "temperature": {"linear": [10.0, 0.03, 0.03]},
-    "state_feature_batch_size": 256,
     "frontier_neighbor_algorithm": "delaunay",
     "frontier_neighbor_count": 4,
     "frontier_window_size": 16,
