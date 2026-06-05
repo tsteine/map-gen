@@ -22,6 +22,13 @@ import torch
 from train_config import Config
 
 
+# Generation runs several environment cohorts for each generation device.
+# The coordinator thread reads candidates/outcomes, submits only CPU feature
+# extraction to a small executor, then consumes completed extractions in FIFO
+# order. For each completed cohort step it transfers and scores candidates on the
+# generation device, steps that cohort's environment, and immediately starts the
+# next step for that cohort. This keeps expensive CPU extraction overlapped
+# across cohorts while avoiding CUDA work from multiple Python worker threads.
 KNOWN_INVALID_REWARD = -100.0
 
 
@@ -539,98 +546,6 @@ def verify_and_step(
         )
 
 
-def submit_generation_step(
-    cohort: GenerationCohort,
-    candidates: Actions,
-    outcomes: Outcomes,
-    sparse_frontiers: bool,
-    profiler: ProfileStats,
-    executor: ThreadPoolExecutor,
-    pending: deque[PendingGenerationStep],
-) -> None:
-    pending.append(
-        PendingGenerationStep(
-            cohort,
-            candidates,
-            outcomes,
-            executor.submit(
-                extract_candidate_features,
-                cohort.env,
-                candidates,
-                profiler,
-                sparse_frontiers,
-                cohort.feature_slot,
-            ),
-        )
-    )
-
-
-def process_single_candidate_step(
-    cohort: GenerationCohort,
-    device: torch.device,
-    verify_outcome_consistency: bool,
-    profiler: ProfileStats,
-    candidates: Actions,
-    outcomes: Outcomes,
-) -> None:
-    action_index = torch.zeros(
-        candidates.room_idx.shape[0],
-        dtype=torch.int64,
-        device=device,
-    )
-    selected_actions = candidates.select(action_index)
-
-    verify_and_step(
-        cohort,
-        selected_actions,
-        action_index,
-        outcomes,
-        cohort.step,
-        device,
-        verify_outcome_consistency,
-        profiler,
-    )
-    cohort.step += 1
-
-
-def process_scored_candidate_step(
-    cohort: GenerationCohort,
-    candidates: Actions,
-    outcomes: Outcomes,
-    features: StateFeatures | SparseStateFeatures,
-    model,
-    device: torch.device,
-    gpu_lock: threading.Lock,
-    transfer_stream: torch.cuda.Stream | None,
-    verify_outcome_consistency: bool,
-    profiler: ProfileStats,
-    num_rooms: int,
-) -> None:
-    action_index, selected_actions = select_candidate_actions(
-        cohort,
-        model,
-        candidates,
-        outcomes,
-        features,
-        device,
-        gpu_lock,
-        transfer_stream,
-        profiler,
-        num_rooms,
-    )
-    verify_and_step(
-        cohort,
-        selected_actions,
-        action_index,
-        outcomes,
-        cohort.step,
-        device,
-        verify_outcome_consistency,
-        profiler,
-    )
-    cohort.step += 1
-
-
 def start_generation_step(
     cohort: GenerationCohort,
     device: torch.device,
@@ -643,40 +558,38 @@ def start_generation_step(
     while cohort.step < cohort.config.episode_length:
         candidates, outcomes = get_generation_candidates(cohort, device, profiler)
         if candidates.room_idx.shape[1] != 1:
-            submit_generation_step(
-                cohort,
-                candidates,
-                outcomes,
-                sparse_frontiers,
-                profiler,
-                executor,
-                pending,
+            pending.append(
+                PendingGenerationStep(
+                    cohort,
+                    candidates,
+                    outcomes,
+                    executor.submit(
+                        extract_candidate_features,
+                        cohort.env,
+                        candidates,
+                        profiler,
+                        sparse_frontiers,
+                        cohort.feature_slot,
+                    ),
+                )
             )
             return
-        process_single_candidate_step(
+        action_index = torch.zeros(
+            candidates.room_idx.shape[0],
+            dtype=torch.int64,
+            device=device,
+        )
+        verify_and_step(
             cohort,
+            candidates.select(action_index),
+            action_index,
+            outcomes,
+            cohort.step,
             device,
             verify_outcome_consistency,
             profiler,
-            candidates,
-            outcomes,
         )
-
-
-def finish_generation_cohort(
-    cohort: GenerationCohort,
-    device: torch.device,
-    verify_outcome_consistency: bool,
-    profiler: ProfileStats,
-) -> tuple[Actions, Outcomes, DoorMatchCounts]:
-    with profiler.timer("gen.cpu_finish"):
-        cohort.env.finish()
-        actions = cohort.env.get_actions(device)
-        outcomes = cohort.env.get_outcomes(device)
-        door_match_counts = cohort.env.get_door_match_counts(device)
-    if verify_outcome_consistency:
-        merge_verified_outcomes(cohort.known_outcomes, outcomes, "finish")
-    return actions, outcomes, door_match_counts
+        cohort.step += 1
 
 
 def merge_generation_results(
@@ -752,19 +665,29 @@ def generate_cohorts(
                 step = pending.popleft()
                 with profiler.timer("gen.cpu_extract_wait"):
                     features = step.future.result()
-                process_scored_candidate_step(
+                action_index, selected_actions = select_candidate_actions(
                     step.cohort,
+                    model,
                     step.candidates,
                     step.outcomes,
                     features,
-                    model,
                     device,
                     gpu_lock,
                     transfer_stream,
-                    verify_outcome_consistency,
                     profiler,
                     num_rooms,
                 )
+                verify_and_step(
+                    step.cohort,
+                    selected_actions,
+                    action_index,
+                    step.outcomes,
+                    step.cohort.step,
+                    device,
+                    verify_outcome_consistency,
+                    profiler,
+                )
+                step.cohort.step += 1
                 if step.cohort.step < step.cohort.config.episode_length:
                     start_generation_step(
                         step.cohort,
@@ -775,13 +698,14 @@ def generate_cohorts(
                         executor,
                         pending,
                     )
-        results = [
-            finish_generation_cohort(
-                cohort,
-                device,
-                verify_outcome_consistency,
-                profiler,
-            )
-            for cohort in cohorts
-        ]
+        results = []
+        for cohort in cohorts:
+            with profiler.timer("gen.cpu_finish"):
+                cohort.env.finish()
+                actions = cohort.env.get_actions(device)
+                outcomes = cohort.env.get_outcomes(device)
+                door_match_counts = cohort.env.get_door_match_counts(device)
+            if verify_outcome_consistency:
+                merge_verified_outcomes(cohort.known_outcomes, outcomes, "finish")
+            results.append((actions, outcomes, door_match_counts))
     return merge_generation_results(results)
