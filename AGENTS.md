@@ -5,6 +5,13 @@
   This also applies to Python constructor/function parameters that are derived
   from config fields: keep them required instead of adding default values such
   as `None`, numeric fallbacks, or `x or default` handling.
+- More generally, avoid adding optional/default function parameters as a way to
+  preserve old call sites, enable temporary A/B behavior, or hide missing
+  required dependencies. If behavior needs to vary, make the choice explicit at
+  the call site with required parameters, separate functions, or a small
+  required config object. Do not add `None` defaults, optional lock/context
+  hooks, boolean mode defaults, or fallback construction inside the callee
+  unless the value is genuinely optional domain data.
 - Maintain clean, readable code. When there is an opportunity to improve code
   quality by refactoring, suggest this, even if not required for the current
   task.

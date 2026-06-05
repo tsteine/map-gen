@@ -20,7 +20,7 @@ from safetensors import safe_open
 
 from env import Actions, DoorMatchCounts, Engine, GenerateConfig, Outcomes, StateFeatures
 from experience import ExperienceStorage
-from generate import generate_cohorts
+from generate import create_generation_environment_groups, generate_cohorts
 from loss import LossConfig, compute_loss
 from model import FrontierStateModel
 from profile_stats import ProfileStats
@@ -876,48 +876,18 @@ def setup_logging(config: Config, args: Args) -> tuple[ProfileStats, str]:
     return profiler, run_path
 
 
-def create_environment_groups(config: Config, engine: Engine, generation_devices: list[torch.device]):
-    num_generation_cohorts = (
-        config.generation.num_devices * config.generation.state_pipeline_cohorts
-    )
-    generation_cohort_environments = config.generation.num_environments // num_generation_cohorts
-    generation_cohort_threads = (
-        None
-        if config.generation.num_threads is None
-        else config.generation.num_threads // config.generation.state_pipeline_cohorts
-    )
+def create_train_batch_environment_groups(config: Config, engine: Engine):
     train_state_cohort_threads = (
         None
         if config.generation.num_threads is None
         else config.generation.num_threads // config.train.state_pipeline_cohorts
     )
     logging.info(
-        "Using %s state pipeline cohort(s) per generation device with %s environment(s) and %s Rust worker(s) per cohort.",
-        config.generation.state_pipeline_cohorts,
-        generation_cohort_environments,
-        generation_cohort_threads if generation_cohort_threads is not None else "automatic",
-    )
-    logging.info(
         "Using %s training state pipeline cohort(s) with %s Rust worker(s) per cohort.",
         config.train.state_pipeline_cohorts,
         train_state_cohort_threads if train_state_cohort_threads is not None else "automatic",
     )
-    gen_envs = [
-        [
-            engine.create_environment_group(
-                config.map_size,
-                generation_cohort_environments,
-                seed=device_index * config.generation.state_pipeline_cohorts + cohort_index,
-                frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
-                frontier_neighbor_count=config.generation.frontier_neighbor_count,
-                frontier_window_size=config.generation.frontier_window_size,
-                num_threads=generation_cohort_threads,
-            )
-            for cohort_index in range(config.generation.state_pipeline_cohorts)
-        ]
-        for device_index in range(len(generation_devices))
-    ]
-    train_batch_envs = [
+    return [
         engine.create_environment_group(
             config.map_size,
             config.train.batch_size,
@@ -928,7 +898,6 @@ def create_environment_groups(config: Config, engine: Engine, generation_devices
         )
         for _ in range(config.train.state_pipeline_cohorts)
     ]
-    return gen_envs, train_batch_envs
 
 
 def create_models(config: Config, rooms: list[dict], engine: Engine, device: torch.device, generation_devices):
@@ -987,7 +956,8 @@ def build_session(args: Args) -> TrainingSession:
     )
 
     engine = Engine(rooms, config.state_features)
-    gen_envs, train_batch_envs = create_environment_groups(config, engine, generation_devices)
+    gen_envs = create_generation_environment_groups(config, engine, generation_devices)
+    train_batch_envs = create_train_batch_environment_groups(config, engine)
     main_model, ema_model, generation_models = create_models(
         config,
         rooms,
