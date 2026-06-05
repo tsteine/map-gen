@@ -155,6 +155,44 @@ class TrainingSession:
     def train_state_pipeline_cohorts(self) -> int:
         return self.config.train.state_pipeline_cohorts
 
+    def room_door_labels_by_direction(self, direction: str) -> list[str]:
+        labels = []
+        for room in self.rooms:
+            room_name = room["name"]
+            for door_group in room["doors"]:
+                for door in door_group:
+                    if door["direction"] == direction:
+                        labels.append(f"{room_name} {direction}({door['x']}, {door['y']})")
+        return labels
+
+    def format_horizontal_topk_door_connections(
+        self,
+        proportions: torch.Tensor,
+        k: int,
+    ) -> str:
+        left_door_labels = self.room_door_labels_by_direction("left")
+        right_door_labels = self.room_door_labels_by_direction("right")
+        if proportions.shape != (len(left_door_labels), len(right_door_labels)):
+            raise ValueError(
+                "horizontal door match proportions shape does not match left/right door counts: "
+                f"{tuple(proportions.shape)} vs ({len(left_door_labels)}, {len(right_door_labels)})"
+            )
+
+        topk = torch.topk(proportions.flatten(), k=k)
+        column_count = proportions.shape[1]
+        pairs = []
+        for rank, (flat_idx, value) in enumerate(
+            zip(topk.indices.tolist(), topk.values.tolist()),
+            start=1,
+        ):
+            left_idx = flat_idx // column_count
+            right_idx = flat_idx % column_count
+            pairs.append(
+                f"top{rank}: {left_door_labels[left_idx]} -> {right_door_labels[right_idx]} "
+                f"({value:.4f})"
+            )
+        return "; ".join(pairs)
+
     def request_stop(self) -> None:
         self.stop_requested = True
         logging.info("Stop signal received; training will stop after the current round finishes.")
@@ -648,6 +686,14 @@ class TrainingSession:
             scalar(door_match_sum_squares),
             schedule_progress,
         )
+        # logging.info(
+        #     "round %s horizontal_topk door connections: %s",
+        #     round_idx,
+        #     self.format_horizontal_topk_door_connections(
+        #         horizontal_door_match_proportions,
+        #         k=3,
+        #     ),
+        # )
 
     def run(self) -> None:
         try:
