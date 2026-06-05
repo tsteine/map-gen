@@ -3,8 +3,7 @@
 /// environment simulations in parallel.
 use crate::common::{Action, CommonData, Coord, Direction, DoorValidOutcome, Room, RoomIdx};
 use crate::environment::{
-    Environment, FEATURE_FRONTIER_WIDTH, FeatureConfig, FeatureProfile, Features,
-    FrontierNeighborAlgorithm,
+    Environment, FEATURE_FRONTIER_WIDTH, FeatureConfig, Features, FrontierNeighborAlgorithm,
 };
 use crossbeam_channel as channel;
 use numpy::{
@@ -17,9 +16,7 @@ use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
 
 fn pyarray2_from_flat_vec<'py, T: Element>(
     py: Python<'py>,
@@ -210,7 +207,7 @@ enum WorkerCommand {
 // written through shared memory, and other commands return "done" when they finish.
 enum WorkerResponse {
     Done,
-    FeatureProfile(FeatureProfile, usize, usize),
+    FeatureInfo(usize, usize),
 }
 
 struct WorkerHandle {
@@ -241,8 +238,8 @@ impl WorkerHandle {
     fn recv_done(&self) -> PyResult<()> {
         match self.recv()? {
             WorkerResponse::Done => Ok(()),
-            WorkerResponse::FeatureProfile(_, _, _) => Err(PyRuntimeError::new_err(
-                "engine worker thread returned unexpected feature profile",
+            WorkerResponse::FeatureInfo(_, _) => Err(PyRuntimeError::new_err(
+                "engine worker thread returned unexpected feature info",
             )),
         }
     }
@@ -544,8 +541,7 @@ fn worker_loop(
                     })
                     .collect();
                 let frontier_count = max_feature_frontier_count(&pending_features);
-                WorkerResponse::FeatureProfile(
-                    FeatureProfile::default(),
+                WorkerResponse::FeatureInfo(
                     frontier_count,
                     pending_features
                         .iter()
@@ -569,7 +565,6 @@ fn worker_loop(
                 let room_x = unsafe { room_x.into_slice() };
                 let room_y = unsafe { room_y.into_slice() };
                 let mut outputs = unsafe { outputs.into_slices() };
-                let mut profile = FeatureProfile::default();
                 for (env_idx, env) in environments
                     .iter_mut()
                     .skip(environment_start)
@@ -578,24 +573,22 @@ fn worker_loop(
                 {
                     for candidate_idx in 0..candidate_count {
                         let idx = env_idx * candidate_count + candidate_idx;
-                        let (features, candidate_profile) = env
-                            .features_after_candidate_with_occupancy(
-                                &common_data,
-                                Action {
-                                    room_idx: room_idx[idx],
-                                    x: room_x[idx],
-                                    y: room_y[idx],
-                                },
-                                &features,
-                                frontier_neighbor_algorithm,
-                                frontier_neighbor_count,
-                                frontier_window_size,
-                            );
+                        let features = env.features_after_candidate(
+                            &common_data,
+                            Action {
+                                room_idx: room_idx[idx],
+                                x: room_x[idx],
+                                y: room_y[idx],
+                            },
+                            &features,
+                            frontier_neighbor_algorithm,
+                            frontier_neighbor_count,
+                            frontier_window_size,
+                        );
                         outputs.write_features(idx, &features);
-                        profile.add(&candidate_profile);
                     }
                 }
-                WorkerResponse::FeatureProfile(profile, 0, 0)
+                WorkerResponse::FeatureInfo(0, 0)
             }
             WorkerCommand::GetSparseFeaturesAfterCandidates {
                 frontier_neighbor_algorithm,
@@ -613,7 +606,6 @@ fn worker_loop(
                 let room_x = unsafe { room_x.into_slice() };
                 let room_y = unsafe { room_y.into_slice() };
                 let mut outputs = unsafe { outputs.into_slices() };
-                let mut profile = FeatureProfile::default();
                 for (env_idx, env) in environments
                     .iter_mut()
                     .skip(environment_start)
@@ -622,24 +614,22 @@ fn worker_loop(
                 {
                     for candidate_idx in 0..candidate_count {
                         let idx = env_idx * candidate_count + candidate_idx;
-                        let (features, candidate_profile) = env
-                            .features_after_candidate_with_occupancy(
-                                &common_data,
-                                Action {
-                                    room_idx: room_idx[idx],
-                                    x: room_x[idx],
-                                    y: room_y[idx],
-                                },
-                                &features,
-                                frontier_neighbor_algorithm,
-                                frontier_neighbor_count,
-                                frontier_window_size,
-                            );
+                        let features = env.features_after_candidate(
+                            &common_data,
+                            Action {
+                                room_idx: room_idx[idx],
+                                x: room_x[idx],
+                                y: room_y[idx],
+                            },
+                            &features,
+                            frontier_neighbor_algorithm,
+                            frontier_neighbor_count,
+                            frontier_window_size,
+                        );
                         outputs.write_features(idx, &features);
-                        profile.add(&candidate_profile);
                     }
                 }
-                WorkerResponse::FeatureProfile(profile, 0, outputs.sparse_row_count)
+                WorkerResponse::FeatureInfo(0, outputs.sparse_row_count)
             }
             WorkerCommand::GetFeatureFrontierCountAfterCandidates {
                 environment_start,
@@ -674,11 +664,7 @@ fn worker_loop(
                         sparse_row_count += candidate_frontier_count;
                     }
                 }
-                WorkerResponse::FeatureProfile(
-                    FeatureProfile::default(),
-                    frontier_count,
-                    sparse_row_count,
-                )
+                WorkerResponse::FeatureInfo(frontier_count, sparse_row_count)
             }
             WorkerCommand::PackFeatures { outputs } => {
                 let mut outputs = unsafe { outputs.into_slices() };
@@ -754,30 +740,24 @@ fn wait_for_done_responses(
     }
 }
 
-fn collect_feature_profiles(
+fn collect_feature_info(
     workers: &[WorkerHandle],
     sent_workers: Vec<usize>,
     mut first_error: Option<PyErr>,
-) -> PyResult<(FeatureProfile, usize, usize, Vec<usize>)> {
-    let mut profile = FeatureProfile::default();
+) -> PyResult<(usize, usize, Vec<usize>)> {
     let mut frontier_count = 0;
     let mut sparse_row_count = 0;
     let mut worker_sparse_row_counts = vec![0; workers.len()];
     for worker_idx in sent_workers {
         match workers[worker_idx].recv() {
-            Ok(WorkerResponse::FeatureProfile(
-                worker_profile,
-                worker_frontier_count,
-                worker_sparse_row_count,
-            )) => {
-                profile.add(&worker_profile);
+            Ok(WorkerResponse::FeatureInfo(worker_frontier_count, worker_sparse_row_count)) => {
                 frontier_count = max(frontier_count, worker_frontier_count);
                 sparse_row_count += worker_sparse_row_count;
                 worker_sparse_row_counts[worker_idx] = worker_sparse_row_count;
             }
             Ok(WorkerResponse::Done) => set_first_error(
                 &mut first_error,
-                PyRuntimeError::new_err("engine worker thread returned no feature profile"),
+                PyRuntimeError::new_err("engine worker thread returned no feature info"),
             ),
             Err(err) => set_first_error(&mut first_error, err),
         }
@@ -786,12 +766,7 @@ fn collect_feature_profiles(
     if let Some(err) = first_error {
         Err(err)
     } else {
-        Ok((
-            profile,
-            frontier_count,
-            sparse_row_count,
-            worker_sparse_row_counts,
-        ))
+        Ok((frontier_count, sparse_row_count, worker_sparse_row_counts))
     }
 }
 
@@ -829,18 +804,6 @@ pub struct EnvironmentGroup {
     frontier_neighbor_count: usize,
     frontier_window_size: usize,
     action_count: usize,
-    feature_worker_ns: AtomicU64,
-    feature_pack_ns: AtomicU64,
-    feature_profile_calls: AtomicUsize,
-    feature_clone_ns: AtomicU64,
-    feature_step_ns: AtomicU64,
-    feature_assemble_ns: AtomicU64,
-    feature_assemble_setup_ns: AtomicU64,
-    feature_assemble_frontier_ns: AtomicU64,
-    feature_assemble_neighbor_ns: AtomicU64,
-    feature_assemble_pair_ns: AtomicU64,
-    feature_assemble_pair_flags_ns: AtomicU64,
-    feature_assemble_output_ns: AtomicU64,
 }
 
 fn output_sizes(common_data: &CommonData) -> (usize, usize) {
@@ -1355,32 +1318,6 @@ impl SparseFeatureBuffers {
     }
 }
 
-impl EnvironmentGroup {
-    fn record_feature_profile(&self, worker_start: Instant, worker_profile: &FeatureProfile) {
-        self.feature_worker_ns
-            .fetch_add(worker_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        self.feature_clone_ns
-            .fetch_add(worker_profile.clone_ns, Ordering::Relaxed);
-        self.feature_step_ns
-            .fetch_add(worker_profile.step_ns, Ordering::Relaxed);
-        self.feature_assemble_ns
-            .fetch_add(worker_profile.assemble_ns, Ordering::Relaxed);
-        self.feature_assemble_setup_ns
-            .fetch_add(worker_profile.assemble_setup_ns, Ordering::Relaxed);
-        self.feature_assemble_frontier_ns
-            .fetch_add(worker_profile.assemble_frontier_ns, Ordering::Relaxed);
-        self.feature_assemble_neighbor_ns
-            .fetch_add(worker_profile.assemble_neighbor_ns, Ordering::Relaxed);
-        self.feature_assemble_pair_ns
-            .fetch_add(worker_profile.assemble_pair_ns, Ordering::Relaxed);
-        self.feature_assemble_pair_flags_ns
-            .fetch_add(worker_profile.assemble_pair_flags_ns, Ordering::Relaxed);
-        self.feature_assemble_output_ns
-            .fetch_add(worker_profile.assemble_output_ns, Ordering::Relaxed);
-        self.feature_profile_calls.fetch_add(1, Ordering::Relaxed);
-    }
-}
-
 impl Drop for EnvironmentGroup {
     fn drop(&mut self) {
         for worker in &mut self.workers {
@@ -1544,18 +1481,6 @@ impl EnvironmentGroup {
             frontier_neighbor_count,
             frontier_window_size,
             action_count: 0,
-            feature_worker_ns: AtomicU64::new(0),
-            feature_pack_ns: AtomicU64::new(0),
-            feature_profile_calls: AtomicUsize::new(0),
-            feature_clone_ns: AtomicU64::new(0),
-            feature_step_ns: AtomicU64::new(0),
-            feature_assemble_ns: AtomicU64::new(0),
-            feature_assemble_setup_ns: AtomicU64::new(0),
-            feature_assemble_frontier_ns: AtomicU64::new(0),
-            feature_assemble_neighbor_ns: AtomicU64::new(0),
-            feature_assemble_pair_ns: AtomicU64::new(0),
-            feature_assemble_pair_flags_ns: AtomicU64::new(0),
-            feature_assemble_output_ns: AtomicU64::new(0),
         })
     }
 }
@@ -2041,7 +1966,7 @@ impl EnvironmentGroup {
                 "feature range must fit within the environment group",
             ));
         }
-        let (_, frontier_count, _, _) = py.detach(|| {
+        let (frontier_count, _, _) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -2062,7 +1987,7 @@ impl EnvironmentGroup {
                 }
                 sent_workers.push(worker_idx);
             }
-            collect_feature_profiles(&self.workers, sent_workers, first_error)
+            collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
         let mut buffers = FeatureBuffers::new(
             &self.common_data,
@@ -2215,8 +2140,7 @@ impl EnvironmentGroup {
         let connection_count = self.common_data.room_connection.len();
         let environment_count = shape[0];
         let snapshot_count = environment_count * candidate_count;
-        let worker_start = Instant::now();
-        let (_, frontier_count, _, _) = py.detach(|| {
+        let (frontier_count, _, _) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -2243,7 +2167,7 @@ impl EnvironmentGroup {
                 }
                 sent_workers.push(worker_idx);
             }
-            collect_feature_profiles(&self.workers, sent_workers, first_error)
+            collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
         let frontier_count = frontier_count * usize::from(self.features.has_frontier_features());
         let mut buffers = FeatureBuffers::new(
@@ -2254,7 +2178,7 @@ impl EnvironmentGroup {
             self.frontier_neighbor_count,
             self.frontier_window_size,
         );
-        let (worker_profile, _, _, _) = py.detach(|| {
+        let _ = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -2294,29 +2218,8 @@ impl EnvironmentGroup {
                 }
                 sent_workers.push(worker_idx);
             }
-            collect_feature_profiles(&self.workers, sent_workers, first_error)
+            collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
-        self.feature_worker_ns
-            .fetch_add(worker_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        self.feature_clone_ns
-            .fetch_add(worker_profile.clone_ns, Ordering::Relaxed);
-        self.feature_step_ns
-            .fetch_add(worker_profile.step_ns, Ordering::Relaxed);
-        self.feature_assemble_ns
-            .fetch_add(worker_profile.assemble_ns, Ordering::Relaxed);
-        self.feature_assemble_setup_ns
-            .fetch_add(worker_profile.assemble_setup_ns, Ordering::Relaxed);
-        self.feature_assemble_frontier_ns
-            .fetch_add(worker_profile.assemble_frontier_ns, Ordering::Relaxed);
-        self.feature_assemble_neighbor_ns
-            .fetch_add(worker_profile.assemble_neighbor_ns, Ordering::Relaxed);
-        self.feature_assemble_pair_ns
-            .fetch_add(worker_profile.assemble_pair_ns, Ordering::Relaxed);
-        self.feature_assemble_pair_flags_ns
-            .fetch_add(worker_profile.assemble_pair_flags_ns, Ordering::Relaxed);
-        self.feature_assemble_output_ns
-            .fetch_add(worker_profile.assemble_output_ns, Ordering::Relaxed);
-        self.feature_profile_calls.fetch_add(1, Ordering::Relaxed);
         Ok((
             pyarray3_from_flat_vec(
                 py,
@@ -2445,8 +2348,7 @@ impl EnvironmentGroup {
         let connection_count = self.common_data.room_connection.len();
         let environment_count = shape[0];
         let snapshot_count = environment_count * candidate_count;
-        let worker_start = Instant::now();
-        let (_, frontier_count, sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
+        let (frontier_count, sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -2473,7 +2375,7 @@ impl EnvironmentGroup {
                 }
                 sent_workers.push(worker_idx);
             }
-            collect_feature_profiles(&self.workers, sent_workers, first_error)
+            collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
         let frontier_count = frontier_count * usize::from(self.features.has_frontier_features());
         let sparse_row_count =
@@ -2486,7 +2388,7 @@ impl EnvironmentGroup {
             self.frontier_neighbor_count,
             self.frontier_window_size,
         );
-        let (worker_profile, _, actual_sparse_row_count, _) = py.detach(|| {
+        let (_, actual_sparse_row_count, _) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             let mut sparse_row_start = 0;
@@ -2533,14 +2435,13 @@ impl EnvironmentGroup {
                 sent_workers.push(worker_idx);
                 sparse_row_start += worker_sparse_row_count;
             }
-            collect_feature_profiles(&self.workers, sent_workers, first_error)
+            collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
         if actual_sparse_row_count != sparse_row_count {
             return Err(PyRuntimeError::new_err(format!(
                 "sparse feature row count changed between passes: expected {sparse_row_count}, got {actual_sparse_row_count}"
             )));
         }
-        self.record_feature_profile(worker_start, &worker_profile);
         Ok((
             (
                 pyarray3_from_flat_vec(
@@ -2644,7 +2545,7 @@ impl EnvironmentGroup {
             .as_slice()
             .map_err(|_| PyValueError::new_err("room_y must be contiguous"))?;
         let environment_count = shape[0];
-        let (_, frontier_count, sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
+        let (frontier_count, sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -2671,7 +2572,7 @@ impl EnvironmentGroup {
                 }
                 sent_workers.push(worker_idx);
             }
-            collect_feature_profiles(&self.workers, sent_workers, first_error)
+            collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
         Ok((
             frontier_count * usize::from(self.features.has_frontier_features()),
@@ -2846,8 +2747,7 @@ impl EnvironmentGroup {
             ));
         }
 
-        let worker_start = Instant::now();
-        let (worker_profile, _, actual_sparse_row_count, _) = py.detach(|| {
+        let (_, actual_sparse_row_count, _) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             let mut sparse_row_start = 0;
@@ -2963,33 +2863,13 @@ impl EnvironmentGroup {
                 sent_workers.push(worker_idx);
                 sparse_row_start += worker_sparse_row_count;
             }
-            collect_feature_profiles(&self.workers, sent_workers, first_error)
+            collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
         if actual_sparse_row_count != sparse_row_count {
             return Err(PyRuntimeError::new_err(format!(
                 "sparse feature row count changed between passes: expected {sparse_row_count}, got {actual_sparse_row_count}"
             )));
         }
-        self.record_feature_profile(worker_start, &worker_profile);
         Ok(())
-    }
-
-    fn take_feature_profile(&self) -> Vec<f64> {
-        vec![
-            self.feature_worker_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-            self.feature_pack_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-            self.feature_profile_calls.swap(0, Ordering::Relaxed) as f64,
-            self.feature_clone_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-            self.feature_step_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-            self.feature_assemble_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-            self.feature_assemble_setup_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-            self.feature_assemble_frontier_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-            self.feature_assemble_neighbor_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-            self.feature_assemble_pair_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-            self.feature_assemble_pair_flags_ns
-                .swap(0, Ordering::Relaxed) as f64
-                / 1_000_000_000.0,
-            self.feature_assemble_output_ns.swap(0, Ordering::Relaxed) as f64 / 1_000_000_000.0,
-        ]
     }
 }

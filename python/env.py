@@ -325,8 +325,5 @@ class EnvironmentGroup:
             frontier_count,
         )
 
-    def take_feature_profile(self) -> list[float]:
-        return self.env.take_feature_profile()
-
     def finish(self):
         self.env.finish()

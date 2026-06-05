@@ -6,7 +6,6 @@ use rand::prelude::*;
 use serde::Deserialize;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::time::Instant;
 
 use crate::common::{
     Action, CommonData, ConnectionVariantIdx, Coord, DirDoorIdx, Direction, DoorKind, DoorLocation,
@@ -160,19 +159,6 @@ pub struct Features {
     // Bit flags per frontier and required closure edge: source reaches frontier,
     // frontier reaches destination.
     pub frontier_connection_reachability: Vec<u8>,
-}
-
-#[derive(Default)]
-pub struct FeatureProfile {
-    pub clone_ns: u64,
-    pub step_ns: u64,
-    pub assemble_ns: u64,
-    pub assemble_setup_ns: u64,
-    pub assemble_frontier_ns: u64,
-    pub assemble_neighbor_ns: u64,
-    pub assemble_pair_ns: u64,
-    pub assemble_pair_flags_ns: u64,
-    pub assemble_output_ns: u64,
 }
 
 fn frontier_midpoint(location: DoorLocation) -> (i16, i16) {
@@ -334,20 +320,6 @@ fn prune_frontier_edges(
                 excess_vertices.push((degrees[endpoint], Reverse(endpoint)));
             }
         }
-    }
-}
-
-impl FeatureProfile {
-    pub fn add(&mut self, other: &Self) {
-        self.clone_ns += other.clone_ns;
-        self.step_ns += other.step_ns;
-        self.assemble_ns += other.assemble_ns;
-        self.assemble_setup_ns += other.assemble_setup_ns;
-        self.assemble_frontier_ns += other.assemble_frontier_ns;
-        self.assemble_neighbor_ns += other.assemble_neighbor_ns;
-        self.assemble_pair_ns += other.assemble_pair_ns;
-        self.assemble_pair_flags_ns += other.assemble_pair_flags_ns;
-        self.assemble_output_ns += other.assemble_output_ns;
     }
 }
 
@@ -961,7 +933,6 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
-            None,
         )
     }
 
@@ -974,9 +945,7 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        profile: Option<&mut FeatureProfile>,
     ) -> Features {
-        let setup_start = Instant::now();
         assert!(self.frontier.len() <= Self::max_frontiers(common));
         let frontier_count = if config.has_frontier_features() {
             self.frontier.len()
@@ -1027,8 +996,6 @@ impl Environment {
         } else {
             vec![]
         };
-        let setup_ns = setup_start.elapsed().as_nanos() as u64;
-        let frontier_start = Instant::now();
         let mut sorted_frontiers = if config.has_frontier_features() {
             self.frontier.iter().collect::<Vec<_>>()
         } else {
@@ -1112,7 +1079,6 @@ impl Environment {
                 }
             }
         }
-        let frontier_ns = frontier_start.elapsed().as_nanos() as u64;
         for (connection_idx, connection) in common.room_connection.iter().enumerate() {
             if !self.room_used[connection.room_idx as usize] {
                 continue;
@@ -1140,7 +1106,6 @@ impl Environment {
                 }
             }
         }
-        let neighbor_start = Instant::now();
         if config.frontier_neighbor {
             let locations = sorted_frontiers
                 .iter()
@@ -1164,8 +1129,6 @@ impl Environment {
                 }
             }
         }
-        let neighbor_ns = neighbor_start.elapsed().as_nanos() as u64;
-        let pair_flags_start = Instant::now();
         if config.frontier_neighbor_flags {
             for (src_idx, (_, src)) in sorted_frontiers.iter().enumerate() {
                 for neighbor_idx in 0..frontier_neighbor_count {
@@ -1191,10 +1154,7 @@ impl Environment {
                 }
             }
         }
-        let pair_flags_ns = pair_flags_start.elapsed().as_nanos() as u64;
-        let pair_ns = pair_flags_ns;
-        let output_start = Instant::now();
-        let features = Features {
+        Features {
             inventory,
             room_x: if config.room_position {
                 self.room_x.clone()
@@ -1213,20 +1173,9 @@ impl Environment {
             frontier_neighbor_pair,
             connection_reachability,
             frontier_connection_reachability,
-        };
-        let output_ns = output_start.elapsed().as_nanos() as u64;
-        if let Some(profile) = profile {
-            profile.assemble_setup_ns += setup_ns;
-            profile.assemble_frontier_ns += frontier_ns;
-            profile.assemble_neighbor_ns += neighbor_ns;
-            profile.assemble_pair_ns += pair_ns;
-            profile.assemble_pair_flags_ns += pair_flags_ns;
-            profile.assemble_output_ns += output_ns;
         }
-        features
     }
 
-    #[cfg(test)]
     pub fn features_after_candidate(
         &mut self,
         common: &CommonData,
@@ -1236,29 +1185,8 @@ impl Environment {
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> Features {
-        self.features_after_candidate_with_occupancy(
-            common,
-            candidate,
-            config,
-            frontier_neighbor_algorithm,
-            frontier_neighbor_count,
-            frontier_window_size,
-        )
-        .0
-    }
-
-    pub fn features_after_candidate_with_occupancy(
-        &mut self,
-        common: &CommonData,
-        candidate: Action,
-        config: &FeatureConfig,
-        frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
-        frontier_neighbor_count: usize,
-        frontier_window_size: usize,
-    ) -> (Features, FeatureProfile) {
-        let mut profile = FeatureProfile::default();
         if config.is_empty() {
-            return (Features::default(), profile);
+            return Features::default();
         }
         let extra_occupied =
             if config.frontier_occupancy && candidate.room_idx < common.room.len() as RoomIdx {
@@ -1271,10 +1199,7 @@ impl Environment {
             } else {
                 None
             };
-        let start = Instant::now();
         let snapshot = self.apply_feature_candidate(candidate, common);
-        profile.clone_ns = start.elapsed().as_nanos() as u64;
-        let start = Instant::now();
         let features = self.features_with_occupancy(
             common,
             config,
@@ -1283,13 +1208,9 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
-            Some(&mut profile),
         );
-        profile.assemble_ns = start.elapsed().as_nanos() as u64;
-        let start = Instant::now();
         self.restore_feature_candidate(candidate, snapshot);
-        profile.step_ns = start.elapsed().as_nanos() as u64;
-        (features, profile)
+        features
     }
 
     pub fn actions(&self) -> &[Action] {
@@ -2149,7 +2070,7 @@ mod tests {
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (4, 4), 0);
-        let (features, profile) = env.features_after_candidate_with_occupancy(
+        let features = env.features_after_candidate(
             &common,
             Action {
                 room_idx: 0,
@@ -2162,8 +2083,5 @@ mod tests {
             4,
         );
         assert_eq!(features, Features::default());
-        assert_eq!(profile.clone_ns, 0);
-        assert_eq!(profile.step_ns, 0);
-        assert_eq!(profile.assemble_ns, 0);
     }
 }

@@ -11,7 +11,6 @@ from env import (
     Features,
 )
 from model import Predictions
-from profile_stats import ProfileStats
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -120,104 +119,68 @@ def merge_known_outcome(
 def extract_candidate_features(
     env: EnvironmentGroup,
     candidates: Actions,
-    profiler: ProfileStats,
     sparse_frontiers: bool = False,
     feature_slot: PinnedSparseFeatureSlot | None = None,
 ):
-    with profiler.timer("gen.cpu_extract"):
-        if sparse_frontiers and feature_slot is not None:
-            frontier_count, sparse_row_count, worker_sparse_row_counts = (
-                env.env.get_sparse_feature_requirements_after_candidates(
-                    candidates.room_idx.contiguous().cpu().numpy(),
-                    candidates.room_x.contiguous().cpu().numpy(),
-                    candidates.room_y.contiguous().cpu().numpy(),
-                    0,
-                )
-            )
-            feature_slot.ensure(
-                candidates.room_idx.numel(),
-                sparse_row_count,
-                profiler,
-            )
-            env.env.get_sparse_features_after_candidates_into(
+    if sparse_frontiers and feature_slot is not None:
+        frontier_count, sparse_row_count, worker_sparse_row_counts = (
+            env.env.get_sparse_feature_requirements_after_candidates(
                 candidates.room_idx.contiguous().cpu().numpy(),
                 candidates.room_x.contiguous().cpu().numpy(),
                 candidates.room_y.contiguous().cpu().numpy(),
                 0,
-                frontier_count,
-                sparse_row_count,
-                worker_sparse_row_counts,
-                feature_slot.inventory.numpy(),
-                feature_slot.room_x.numpy(),
-                feature_slot.room_y.numpy(),
-                feature_slot.room_placed.numpy(),
-                feature_slot.frontier.numpy(),
-                feature_slot.frontier_occupancy.numpy(),
-                feature_slot.frontier_neighbor.numpy(),
-                feature_slot.frontier_neighbor_pair.numpy(),
-                feature_slot.connection_reachability.numpy(),
-                feature_slot.frontier_connection_reachability.numpy(),
-                feature_slot.dense_row_idx.numpy(),
             )
-            features = feature_slot.features(
-                candidates.room_idx.shape[0],
-                candidates.room_idx.shape[1],
-                sparse_row_count,
-                frontier_count,
-            ).flatten_candidates()
-        elif sparse_frontiers:
-            features = env.get_sparse_features_after_candidates(
-                candidates, torch.device("cpu"), 0
-            ).flatten_candidates()
-        else:
-            features = env.get_features_after_candidates(
-                candidates, torch.device("cpu"), 0
-            ).flatten_candidates()
-    if profiler.enabled:
-        (
-            worker_seconds,
-            pack_seconds,
-            profile_calls,
-            snapshot_apply_cpu_seconds,
-            restore_cpu_seconds,
-            assemble_cpu_seconds,
-            assemble_setup_cpu_seconds,
-            assemble_frontier_cpu_seconds,
-            assemble_neighbor_cpu_seconds,
-            assemble_pair_cpu_seconds,
-            assemble_pair_flags_cpu_seconds,
-            assemble_output_cpu_seconds,
-        ) = env.take_feature_profile()
-        if profile_calls != 1:
-            raise RuntimeError(
-                f"unexpected feature profile call count: {profile_calls}"
-            )
-        profiler.add("gen.cpu_extract_worker", worker_seconds)
-        profiler.add("gen.cpu_extract_pack", pack_seconds)
-        profiler.add("gen.cpu_extract_snapshot_apply_sum", snapshot_apply_cpu_seconds)
-        profiler.add("gen.cpu_extract_restore_sum", restore_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_sum", assemble_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_setup_sum", assemble_setup_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_frontier_sum", assemble_frontier_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_neighbor_sum", assemble_neighbor_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_pair_sum", assemble_pair_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_pair_flags_sum", assemble_pair_flags_cpu_seconds)
-        profiler.add("gen.cpu_extract_assemble_output_sum", assemble_output_cpu_seconds)
-    return features
+        )
+        feature_slot.ensure(
+            candidates.room_idx.numel(),
+            sparse_row_count,
+        )
+        env.env.get_sparse_features_after_candidates_into(
+            candidates.room_idx.contiguous().cpu().numpy(),
+            candidates.room_x.contiguous().cpu().numpy(),
+            candidates.room_y.contiguous().cpu().numpy(),
+            0,
+            frontier_count,
+            sparse_row_count,
+            worker_sparse_row_counts,
+            feature_slot.inventory.numpy(),
+            feature_slot.room_x.numpy(),
+            feature_slot.room_y.numpy(),
+            feature_slot.room_placed.numpy(),
+            feature_slot.frontier.numpy(),
+            feature_slot.frontier_occupancy.numpy(),
+            feature_slot.frontier_neighbor.numpy(),
+            feature_slot.frontier_neighbor_pair.numpy(),
+            feature_slot.connection_reachability.numpy(),
+            feature_slot.frontier_connection_reachability.numpy(),
+            feature_slot.dense_row_idx.numpy(),
+        )
+        return feature_slot.features(
+            candidates.room_idx.shape[0],
+            candidates.room_idx.shape[1],
+            sparse_row_count,
+            frontier_count,
+        ).flatten_candidates()
+    if sparse_frontiers:
+        return env.get_sparse_features_after_candidates(
+            candidates, torch.device("cpu"), 0
+        ).flatten_candidates()
+    return env.get_features_after_candidates(
+        candidates, torch.device("cpu"), 0
+    ).flatten_candidates()
 
 
 def transfer_features(
     features: Features | SparseFeatures,
     device: torch.device,
-    profiler: ProfileStats,
     transfer_stream: torch.cuda.Stream | None = None,
 ) -> Features:
     if isinstance(features, SparseFeatures):
         if transfer_stream is None or device.type != "cuda":
-            return transfer_features_sync(features, device, profiler)
+            return transfer_features_sync(features, device)
         current_stream = torch.cuda.current_stream(device)
         with torch.cuda.device(device), torch.cuda.stream(transfer_stream):
-            result = transfer_features_sync(features, device, profiler, non_blocking=True)
+            result = transfer_features_sync(features, device, non_blocking=True)
             ready = torch.cuda.Event()
             ready.record(transfer_stream)
         current_stream.wait_event(ready)
@@ -228,37 +191,33 @@ def transfer_features(
 def transfer_features_sync(
     features: SparseFeatures,
     device: torch.device,
-    profiler: ProfileStats,
     non_blocking: bool = False,
 ) -> Features:
     dense_shape = (features.inventory.shape[0], features.frontier_count)
-    with profiler.timer("gen.cpu_transfer_sparse_index"):
-        dense_row_idx = features.dense_row_idx.to(device, non_blocking=non_blocking)
-
-    with profiler.timer("gen.cpu_transfer_fixed"):
-        inventory = features.inventory.to(device, non_blocking=non_blocking)
-        room_x = features.room_x.to(device, non_blocking=non_blocking)
-        room_y = features.room_y.to(device, non_blocking=non_blocking)
-        room_placed = features.room_placed.to(device, non_blocking=non_blocking)
-        connection_reachability = features.connection_reachability.to(
-            device, non_blocking=non_blocking
-        )
+    dense_row_idx = features.dense_row_idx.to(device, non_blocking=non_blocking)
+    inventory = features.inventory.to(device, non_blocking=non_blocking)
+    room_x = features.room_x.to(device, non_blocking=non_blocking)
+    room_y = features.room_y.to(device, non_blocking=non_blocking)
+    room_placed = features.room_placed.to(device, non_blocking=non_blocking)
+    connection_reachability = features.connection_reachability.to(
+        device, non_blocking=non_blocking
+    )
     return Features(
         inventory,
         room_x,
         room_y,
         room_placed,
         densify_sparse_feature(
-            features.frontier, 0, dense_shape, dense_row_idx, device, profiler, non_blocking
+            features.frontier, 0, dense_shape, dense_row_idx, device, non_blocking
         ),
         densify_sparse_feature(
-            features.frontier_occupancy, 0, dense_shape, dense_row_idx, device, profiler, non_blocking
+            features.frontier_occupancy, 0, dense_shape, dense_row_idx, device, non_blocking
         ),
         densify_sparse_feature(
-            features.frontier_neighbor, -1, dense_shape, dense_row_idx, device, profiler, non_blocking
+            features.frontier_neighbor, -1, dense_shape, dense_row_idx, device, non_blocking
         ),
         densify_sparse_feature(
-            features.frontier_neighbor_pair, 0, dense_shape, dense_row_idx, device, profiler, non_blocking
+            features.frontier_neighbor_pair, 0, dense_shape, dense_row_idx, device, non_blocking
         ),
         connection_reachability,
         densify_sparse_feature(
@@ -267,7 +226,6 @@ def transfer_features_sync(
             dense_shape,
             dense_row_idx,
             device,
-            profiler,
             non_blocking,
         ),
     )
@@ -279,22 +237,18 @@ def densify_sparse_feature(
     dense_shape: tuple[int, int],
     dense_row_idx: torch.Tensor,
     device: torch.device,
-    profiler: ProfileStats,
     non_blocking: bool,
 ) -> torch.Tensor:
-    with profiler.timer("gen.cpu_frontier_dense_init_submit"):
-        dense_value = torch.full(
-            (*dense_shape, *value.shape[1:]),
-            fill_value,
-            dtype=value.dtype,
-            device=device,
-        )
-    with profiler.timer("gen.cpu_transfer_sparse_frontier"):
-        sparse_value = value.to(device, non_blocking=non_blocking)
-    with profiler.timer("gen.cpu_frontier_scatter_submit"):
-        dense_value.flatten(0, 1).view(torch.uint8).index_copy_(
-            0, dense_row_idx, sparse_value.view(torch.uint8)
-        )
+    dense_value = torch.full(
+        (*dense_shape, *value.shape[1:]),
+        fill_value,
+        dtype=value.dtype,
+        device=device,
+    )
+    sparse_value = value.to(device, non_blocking=non_blocking)
+    dense_value.flatten(0, 1).view(torch.uint8).index_copy_(
+        0, dense_row_idx, sparse_value.view(torch.uint8)
+    )
     return dense_value
 
 
@@ -342,46 +296,45 @@ class PinnedSparseFeatureSlot:
     def _empty(self, shape, dtype):
         return torch.empty(shape, dtype=dtype, pin_memory=self.pin_memory)
 
-    def ensure(self, snapshot_count: int, sparse_row_count: int, profiler: ProfileStats):
+    def ensure(self, snapshot_count: int, sparse_row_count: int):
         if (
             self.snapshot_capacity >= snapshot_count
             and self.sparse_row_capacity >= sparse_row_count
         ):
             return
-        with profiler.timer("gen.cpu_pinned_feature_alloc"):
-            self.snapshot_capacity = max(self.snapshot_capacity, snapshot_count)
-            self.sparse_row_capacity = max(self.sparse_row_capacity, sparse_row_count)
-            self.inventory = self._empty(
-                (self.snapshot_capacity, self.inventory_width), torch.uint8
-            )
-            self.room_x = self._empty((self.snapshot_capacity, self.room_width), torch.int8)
-            self.room_y = self._empty((self.snapshot_capacity, self.room_width), torch.int8)
-            self.room_placed = self._empty(
-                (self.snapshot_capacity, self.room_width), torch.uint8
-            )
-            self.frontier = self._empty(
-                (self.sparse_row_capacity, 5), torch.int8
-            )
-            self.frontier_occupancy = self._empty(
-                (self.sparse_row_capacity, self.frontier_occupancy_width), torch.uint8
-            )
-            self.frontier_neighbor = self._empty(
-                (self.sparse_row_capacity, self.frontier_neighbor_width), torch.int16
-            )
-            self.frontier_neighbor_pair = self._empty(
-                (self.sparse_row_capacity, self.frontier_neighbor_pair_width), torch.uint8
-            )
-            self.connection_reachability = self._empty(
-                (self.snapshot_capacity, self.connection_reachability_width), torch.uint8
-            )
-            self.frontier_connection_reachability = self._empty(
-                (
-                    self.sparse_row_capacity,
-                    self.frontier_connection_reachability_width,
-                ),
-                torch.uint8,
-            )
-            self.dense_row_idx = self._empty((self.sparse_row_capacity,), torch.int64)
+        self.snapshot_capacity = max(self.snapshot_capacity, snapshot_count)
+        self.sparse_row_capacity = max(self.sparse_row_capacity, sparse_row_count)
+        self.inventory = self._empty(
+            (self.snapshot_capacity, self.inventory_width), torch.uint8
+        )
+        self.room_x = self._empty((self.snapshot_capacity, self.room_width), torch.int8)
+        self.room_y = self._empty((self.snapshot_capacity, self.room_width), torch.int8)
+        self.room_placed = self._empty(
+            (self.snapshot_capacity, self.room_width), torch.uint8
+        )
+        self.frontier = self._empty(
+            (self.sparse_row_capacity, 5), torch.int8
+        )
+        self.frontier_occupancy = self._empty(
+            (self.sparse_row_capacity, self.frontier_occupancy_width), torch.uint8
+        )
+        self.frontier_neighbor = self._empty(
+            (self.sparse_row_capacity, self.frontier_neighbor_width), torch.int16
+        )
+        self.frontier_neighbor_pair = self._empty(
+            (self.sparse_row_capacity, self.frontier_neighbor_pair_width), torch.uint8
+        )
+        self.connection_reachability = self._empty(
+            (self.snapshot_capacity, self.connection_reachability_width), torch.uint8
+        )
+        self.frontier_connection_reachability = self._empty(
+            (
+                self.sparse_row_capacity,
+                self.frontier_connection_reachability_width,
+            ),
+            torch.uint8,
+        )
+        self.dense_row_idx = self._empty((self.sparse_row_capacity,), torch.int64)
 
     def features(
         self,
@@ -470,15 +423,13 @@ def create_generation_environment_groups(
 def get_generation_candidates(
     group: GenerationGroup,
     device: torch.device,
-    profiler: ProfileStats,
 ) -> tuple[Actions, Outcomes]:
-    with profiler.timer("gen.cpu_candidates"):
-        if group.config.lookahead_outcomes:
-            return group.env.get_candidates_with_outcomes(
-                group.config.max_candidates, device
-            )
-        candidates = group.env.get_candidates(group.config.max_candidates, device)
-        return candidates, group.env.get_outcomes(device)
+    if group.config.lookahead_outcomes:
+        return group.env.get_candidates_with_outcomes(
+            group.config.max_candidates, device
+        )
+    candidates = group.env.get_candidates(group.config.max_candidates, device)
+    return candidates, group.env.get_outcomes(device)
 
 
 def select_candidate_actions(
@@ -490,40 +441,36 @@ def select_candidate_actions(
     device: torch.device,
     gpu_lock: threading.Lock,
     transfer_stream: torch.cuda.Stream | None,
-    profiler: ProfileStats,
     num_rooms: int,
 ) -> tuple[torch.Tensor, Actions]:
     environment_count, candidate_count = candidates.room_idx.shape
     with gpu_lock:
-        with profiler.timer("gen.cpu_transfer_submit"):
-            env_features = transfer_features(features, device, profiler, transfer_stream)
-        with profiler.cuda_timer("gen.gpu_model_reward", device):
-            with torch.amp.autocast(
-                "cuda",
-                dtype=torch.bfloat16,
-                enabled=device.type == "cuda" and group.config.autocast,
-            ):
-                preds = model(env_features)
-            expected_reward = compute_expected_reward(
-                Predictions(
-                    preds.door_invalid.view(environment_count, candidate_count, -1),
-                    preds.connection_invalid.view(environment_count, candidate_count, -1),
-                ),
-                outcomes,
-                group.config,
-            )
-            expected_reward = torch.where(
-                candidates.room_idx == num_rooms,
-                torch.full_like(expected_reward, float("-inf")),
-                expected_reward,
-            )
-        with profiler.cuda_timer("gen.gpu_select", device):
-            probs = torch.softmax(
-                expected_reward / torch.unsqueeze(group.config.temperature, 1),
-                dim=1,
-            )
-            action_index = rand_choice(probs)
-            selected_actions = candidates.select(action_index)
+        env_features = transfer_features(features, device, transfer_stream)
+        with torch.amp.autocast(
+            "cuda",
+            dtype=torch.bfloat16,
+            enabled=device.type == "cuda" and group.config.autocast,
+        ):
+            preds = model(env_features)
+        expected_reward = compute_expected_reward(
+            Predictions(
+                preds.door_invalid.view(environment_count, candidate_count, -1),
+                preds.connection_invalid.view(environment_count, candidate_count, -1),
+            ),
+            outcomes,
+            group.config,
+        )
+        expected_reward = torch.where(
+            candidates.room_idx == num_rooms,
+            torch.full_like(expected_reward, float("-inf")),
+            expected_reward,
+        )
+        probs = torch.softmax(
+            expected_reward / torch.unsqueeze(group.config.temperature, 1),
+            dim=1,
+        )
+        action_index = rand_choice(probs)
+        selected_actions = candidates.select(action_index)
     return action_index, selected_actions
 
 
@@ -535,7 +482,6 @@ def verify_and_step(
     step: int,
     device: torch.device,
     verify_outcome_consistency: bool,
-    profiler: ProfileStats,
 ) -> None:
     if verify_outcome_consistency and group.config.lookahead_outcomes:
         group.known_outcomes = merge_verified_outcomes(
@@ -543,8 +489,7 @@ def verify_and_step(
             select_outcomes(outcomes, action_index),
             f"lookahead step {step}",
         )
-    with profiler.timer("gen.cpu_step"):
-        group.env.step(selected_actions)
+    group.env.step(selected_actions)
     if verify_outcome_consistency:
         group.known_outcomes = merge_verified_outcomes(
             group.known_outcomes,
@@ -558,12 +503,11 @@ def start_generation_step(
     device: torch.device,
     sparse_frontiers: bool,
     verify_outcome_consistency: bool,
-    profiler: ProfileStats,
     executor: ThreadPoolExecutor,
     pending: deque[PendingGenerationStep],
 ) -> None:
     while group.step < group.config.episode_length:
-        candidates, outcomes = get_generation_candidates(group, device, profiler)
+        candidates, outcomes = get_generation_candidates(group, device)
         if candidates.room_idx.shape[1] != 1:
             pending.append(
                 PendingGenerationStep(
@@ -574,7 +518,6 @@ def start_generation_step(
                         extract_candidate_features,
                         group.env,
                         candidates,
-                        profiler,
                         sparse_frontiers,
                         group.feature_slot,
                     ),
@@ -594,7 +537,6 @@ def start_generation_step(
             group.step,
             device,
             verify_outcome_consistency,
-            profiler,
         )
         group.step += 1
 
@@ -633,11 +575,9 @@ def run_generation_groups(
     configs: list[GenerateConfig],
     device: torch.device,
     verify_outcome_consistency: bool = False,
-    profiler: ProfileStats | None = None,
 ) -> tuple[Actions, Outcomes, DoorMatchCounts]:
     if not envs or len(envs) != len(configs):
         raise ValueError("generation groups require one config per environment group")
-    profiler = profiler or ProfileStats(False)
     transfer_stream = torch.cuda.Stream(device=device) if device.type == "cuda" else None
     gpu_lock = threading.Lock()
     num_rooms = len(envs[0].engine.rooms)
@@ -664,14 +604,12 @@ def run_generation_groups(
                     device,
                     sparse_frontiers,
                     verify_outcome_consistency,
-                    profiler,
                     executor,
                     pending,
                 )
             while pending:
                 step = pending.popleft()
-                with profiler.timer("gen.cpu_extract_wait"):
-                    features = step.future.result()
+                features = step.future.result()
                 action_index, selected_actions = select_candidate_actions(
                     step.group,
                     model,
@@ -681,7 +619,6 @@ def run_generation_groups(
                     device,
                     gpu_lock,
                     transfer_stream,
-                    profiler,
                     num_rooms,
                 )
                 verify_and_step(
@@ -692,7 +629,6 @@ def run_generation_groups(
                     step.group.step,
                     device,
                     verify_outcome_consistency,
-                    profiler,
                 )
                 step.group.step += 1
                 if step.group.step < step.group.config.episode_length:
@@ -701,17 +637,15 @@ def run_generation_groups(
                         device,
                         sparse_frontiers,
                         verify_outcome_consistency,
-                        profiler,
                         executor,
                         pending,
                     )
         results = []
         for group in groups:
-            with profiler.timer("gen.cpu_finish"):
-                group.env.finish()
-                actions = group.env.get_actions(device)
-                outcomes = group.env.get_outcomes(device)
-                door_match_counts = group.env.get_door_match_counts(device)
+            group.env.finish()
+            actions = group.env.get_actions(device)
+            outcomes = group.env.get_outcomes(device)
+            door_match_counts = group.env.get_door_match_counts(device)
             if verify_outcome_consistency:
                 merge_verified_outcomes(group.known_outcomes, outcomes, "finish")
             results.append((actions, outcomes, door_match_counts))

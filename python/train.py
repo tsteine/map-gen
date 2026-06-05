@@ -6,7 +6,6 @@ import logging
 import math
 import os
 import signal
-import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,7 +22,6 @@ from experience import ExperienceStorage
 from generate import create_generation_environment_groups, run_generation_groups
 from loss import LossConfig, compute_loss
 from model import FrontierModel
-from profile_stats import ProfileStats
 from train_config import Config, episodes_per_round, instantiate_scheduleable_config, validate_config
 
 
@@ -31,7 +29,6 @@ from train_config import Config, episodes_per_round, instantiate_scheduleable_co
 class Args:
     config: Path
     verify_outcome_consistency: bool
-    profile: bool
     device: str
     load_checkpoint: Path | None
 
@@ -62,7 +59,7 @@ class Prefetcher:
     def close(self):
         self.executor.shutdown()
 
-    def map(self, items, prepare, profiler=None, wait_name=None):
+    def map(self, items, prepare):
         items = iter(items)
         pending = deque()
 
@@ -72,11 +69,7 @@ class Prefetcher:
 
         while pending:
             future = pending.popleft()
-            if profiler is None or wait_name is None:
-                result = future.result()
-            else:
-                with profiler.timer(wait_name):
-                    result = future.result()
+            result = future.result()
             submit_prefetch_item(self.executor, pending, items, prepare)
             yield result
 
@@ -156,7 +149,6 @@ def load_optimizer_checkpoint_state(
 class TrainingSession:
     args: Args
     config: Config
-    profiler: ProfileStats
     run_path: str
     rooms: list[dict]
     device: torch.device
@@ -366,26 +358,24 @@ class TrainingSession:
         return tasks
 
     def prepare_feature_batches(self, train_actions: Actions, env) -> tuple[int, list[Features]]:
-        with self.profiler.timer("train.cpu_setup"):
-            offset = torch.randint(0, self.config.train.sample_period, [1]).item()
-            train_actions_cpu = train_actions.to(torch.device("cpu"))
-            env.clear()
-            feature_batches = []
-        with self.profiler.timer("train.cpu_prefix_prepare"):
-            for step in range(self.episode_length):
-                env.step(Actions(
-                    train_actions_cpu.room_idx[:, step],
-                    train_actions_cpu.room_x[:, step],
-                    train_actions_cpu.room_y[:, step],
-                ))
-                if step % self.config.train.sample_period == offset:
-                    feature_batches.append(
-                        env.get_features(
-                            torch.device("cpu"),
-                            0,
-                            train_actions.room_idx.shape[0],
-                        )
+        offset = torch.randint(0, self.config.train.sample_period, [1]).item()
+        train_actions_cpu = train_actions.to(torch.device("cpu"))
+        env.clear()
+        feature_batches = []
+        for step in range(self.episode_length):
+            env.step(Actions(
+                train_actions_cpu.room_idx[:, step],
+                train_actions_cpu.room_x[:, step],
+                train_actions_cpu.room_y[:, step],
+            ))
+            if step % self.config.train.sample_period == offset:
+                feature_batches.append(
+                    env.get_features(
+                        torch.device("cpu"),
+                        0,
+                        train_actions.room_idx.shape[0],
                     )
+                )
         return len(feature_batches), feature_batches
 
     def prepare_feature_batch(
@@ -419,15 +409,14 @@ class TrainingSession:
             train_actions, train_outcomes = self.select_batch(fresh_actions, fresh_outcomes, task.start)
             return self.prepare_feature_batch(task.kind, train_actions, train_outcomes, env)
 
-        with self.profiler.timer("round.replay_prepare"):
-            replay_actions = self.experience.sample(
-                self.config.train.batch_size,
-                self.config.train.episodes_per_file,
-                self.config.train.hist_c,
-            )
-            env.replay(replay_actions)
-            replay_actions = replay_actions.to(self.device)
-            replay_outcomes = env.get_outcomes(self.device)
+        replay_actions = self.experience.sample(
+            self.config.train.batch_size,
+            self.config.train.episodes_per_file,
+            self.config.train.hist_c,
+        )
+        env.replay(replay_actions)
+        replay_actions = replay_actions.to(self.device)
+        replay_outcomes = env.get_outcomes(self.device)
         return self.prepare_feature_batch(task.kind, replay_actions, replay_outcomes, env)
 
     def train_batch_backward(
@@ -464,84 +453,78 @@ class TrainingSession:
         prefix_weight = 1.0 / prepared_batch.prefix_count
 
         for features in prepared_batch.feature_batches:
-            with self.profiler.timer("train.cpu_transfer_submit"):
-                features = features.to(self.device)
-            with self.profiler.cuda_timer("train.gpu_forward_backward", self.device):
-                with torch.amp.autocast(
-                    "cuda",
-                    dtype=torch.bfloat16,
-                    enabled=self.device.type == "cuda" and self.config.model.autocast,
-                ):
-                    preds = self.main_model(features)
-                prefix_loss = compute_loss(preds, repeated_outcomes, mask, self.loss_config)
-                (prefix_loss * prefix_weight * loss_scale).backward()
+            features = features.to(self.device)
+            with torch.amp.autocast(
+                "cuda",
+                dtype=torch.bfloat16,
+                enabled=self.device.type == "cuda" and self.config.model.autocast,
+            ):
+                preds = self.main_model(features)
+            prefix_loss = compute_loss(preds, repeated_outcomes, mask, self.loss_config)
+            (prefix_loss * prefix_weight * loss_scale).backward()
             total_loss += prefix_loss.item() * prefix_weight
         return torch.tensor(total_loss, device=self.device)
 
     def train_optimizer_step(self) -> None:
-        with self.profiler.cuda_timer("train.gpu_optimizer", self.device):
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.main_model.parameters(), max_norm=1.0)
-            if not torch.isfinite(grad_norm):
-                raise RuntimeError(f"non-finite gradient norm: {grad_norm.item()}")
-            self.main_optimizer.step()
-            self.update_ema_model()
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.main_model.parameters(), max_norm=1.0)
+        if not torch.isfinite(grad_norm):
+            raise RuntimeError(f"non-finite gradient norm: {grad_norm.item()}")
+        self.main_optimizer.step()
+        self.update_ema_model()
 
     def generate_round(self) -> tuple[Actions, Outcomes, DoorMatchCounts]:
         action_iterations = []
         outcome_iterations = []
         door_match_count_iterations = []
-        with self.profiler.timer("round.generate"):
-            self.sync_generation_models()
-            for iteration in range(self.config.generation.num_iterations):
-                generation_config = instantiate_scheduleable_config(
-                    self.config,
-                    self.num_episodes + iteration * self.config.generation.num_environments,
-                )
-                shard_args = []
-                for device_envs, generation_model, generation_device in zip(
-                    self.gen_envs,
-                    self.generation_models,
-                    self.generation_devices,
-                ):
-                    gen_configs = [
-                        self.get_gen_config(generation_config, gen_env.num_envs, generation_device)
-                        for gen_env in device_envs
-                    ]
-                    shard_args.append((device_envs, generation_model, gen_configs, generation_device))
+        self.sync_generation_models()
+        for iteration in range(self.config.generation.num_iterations):
+            generation_config = instantiate_scheduleable_config(
+                self.config,
+                self.num_episodes + iteration * self.config.generation.num_environments,
+            )
+            shard_args = []
+            for device_envs, generation_model, generation_device in zip(
+                self.gen_envs,
+                self.generation_models,
+                self.generation_devices,
+            ):
+                gen_configs = [
+                    self.get_gen_config(generation_config, gen_env.num_envs, generation_device)
+                    for gen_env in device_envs
+                ]
+                shard_args.append((device_envs, generation_model, gen_configs, generation_device))
 
-                if self.generation_models_warmed_up:
-                    shard_results = [
-                        self.generation_executor.submit(
-                            run_generation_groups,
-                            *args,
-                            verify_outcome_consistency=self.args.verify_outcome_consistency,
-                            profiler=self.profiler,
-                        )
-                        for args in shard_args
-                    ]
-                    shard_results = [future.result() for future in shard_results]
-                else:
-                    logging.info(
-                        "Warming up compiled generation models serially before concurrent generation."
+            if self.generation_models_warmed_up:
+                shard_results = [
+                    self.generation_executor.submit(
+                        run_generation_groups,
+                        *args,
+                        verify_outcome_consistency=self.args.verify_outcome_consistency,
                     )
-                    shard_results = [
-                        run_generation_groups(
-                            *args,
-                            verify_outcome_consistency=self.args.verify_outcome_consistency,
-                            profiler=self.profiler,
-                        )
-                        for args in shard_args
-                    ]
-                    self.generation_models_warmed_up = True
+                    for args in shard_args
+                ]
+                shard_results = [future.result() for future in shard_results]
+            else:
+                logging.info(
+                    "Warming up compiled generation models serially before concurrent generation."
+                )
+                shard_results = [
+                    run_generation_groups(
+                        *args,
+                        verify_outcome_consistency=self.args.verify_outcome_consistency,
+                    )
+                    for args in shard_args
+                ]
+                self.generation_models_warmed_up = True
 
-                for (
-                    iteration_actions,
-                    iteration_outcomes,
-                    iteration_door_match_counts,
-                ) in shard_results:
-                    action_iterations.append(iteration_actions.to(self.device))
-                    outcome_iterations.append(iteration_outcomes.to(self.device))
-                    door_match_count_iterations.append(iteration_door_match_counts.to(self.device))
+            for (
+                iteration_actions,
+                iteration_outcomes,
+                iteration_door_match_counts,
+            ) in shard_results:
+                action_iterations.append(iteration_actions.to(self.device))
+                outcome_iterations.append(iteration_outcomes.to(self.device))
+                door_match_count_iterations.append(iteration_door_match_counts.to(self.device))
 
         return (
             Actions(
@@ -581,16 +564,10 @@ class TrainingSession:
             loss_scale = 1.0 / len(prepared_batches)
             group_loss = 0.0
             for prepared_batch in prepared_batches:
-                timer_name = (
-                    "round.train_fresh"
-                    if prepared_batch.kind == "fresh"
-                    else "round.train_replay"
+                group_loss += self.train_batch_backward(
+                    prepared_batch,
+                    loss_scale,
                 )
-                with self.profiler.timer(timer_name):
-                    group_loss += self.train_batch_backward(
-                        prepared_batch,
-                        loss_scale,
-                    )
             self.train_optimizer_step()
             return group_loss, len(prepared_batches)
 
@@ -598,8 +575,6 @@ class TrainingSession:
         for prepared_batch in self.train_batch_prefetcher.map(
             self.iter_train_batch_tasks(),
             prepare_train_task,
-            self.profiler,
-            "round.train_batch_wait",
         ):
             prepared_batch_group.append(prepared_batch)
             if len(prepared_batch_group) == self.config.train.gradient_accumulation_steps:
@@ -711,16 +686,12 @@ class TrainingSession:
             total_episodes = self.config.knot_episodes[-1]
             start_round = self.num_episodes // self.episodes_per_round
             for round_idx in range(start_round, total_episodes // self.episodes_per_round):
-                self.profiler.reset()
-                round_start = time.perf_counter()
-
                 actions, gen_outcomes, door_match_counts = self.generate_round()
                 self.num_episodes += self.episodes_per_round
                 step_config = instantiate_scheduleable_config(self.config, self.num_episodes)
                 avg_loss = self.train_round(actions, gen_outcomes, step_config)
 
-                with self.profiler.timer("round.store"):
-                    self.experience.store(actions)
+                self.experience.store(actions)
 
                 self.log_outcomes(
                     gen_outcomes,
@@ -729,12 +700,6 @@ class TrainingSession:
                     round_idx,
                     step_config,
                 )
-                self.profiler.add("round.total", time.perf_counter() - round_start)
-                if self.profiler.enabled:
-                    for name, value in self.profiler.metrics().items():
-                        self.aim_run.track(value, name=name, step=round_idx)
-                    logging.info("profile round %s:\n%s", round_idx, self.profiler.format())
-
                 completed_round = round_idx + 1
                 if completed_round % self.config.checkpoint_period == 0:
                     self.save_checkpoint(self.checkpoint_path(completed_round))
@@ -757,11 +722,6 @@ def parse_args() -> Args:
         help="fail if a known per-step outcome later changes",
     )
     parser.add_argument(
-        "--profile",
-        action="store_true",
-        help="log synchronized per-round timing breakdowns (changes CUDA throughput)",
-    )
-    parser.add_argument(
         "--device",
         default="auto",
         help=(
@@ -778,7 +738,6 @@ def parse_args() -> Args:
     return Args(
         config=namespace.config,
         verify_outcome_consistency=namespace.verify_outcome_consistency,
-        profile=namespace.profile,
         device=namespace.device,
         load_checkpoint=namespace.load_checkpoint,
     )
@@ -847,8 +806,7 @@ def select_devices(args: Args, config: Config) -> tuple[torch.device, list[torch
     return device, generation_devices
 
 
-def setup_logging(config: Config, args: Args) -> tuple[ProfileStats, str]:
-    profiler = ProfileStats(args.profile)
+def setup_logging(config: Config, args: Args) -> str:
     start_time = datetime.now()
     if args.load_checkpoint is not None:
         if args.load_checkpoint.parent.name != "checkpoints":
@@ -869,11 +827,9 @@ def setup_logging(config: Config, args: Args) -> tuple[ProfileStats, str]:
     logging.info("Config:\n%s", config.model_dump_json(indent=2))
     if args.verify_outcome_consistency:
         logging.info("Outcome consistency verification enabled.")
-    if profiler.enabled:
-        logging.info("Profiling enabled. CUDA timings synchronize the device and change throughput.")
     if args.load_checkpoint is not None:
         logging.info("Loading checkpoint from %s", args.load_checkpoint)
-    return profiler, run_path
+    return run_path
 
 
 def create_train_batch_environment_groups(config: Config, engine: Engine):
@@ -938,7 +894,7 @@ def build_session(args: Args) -> TrainingSession:
     config = Config.model_validate_json(args.config.read_text())
     validate_config(config)
     round_episode_count = episodes_per_round(config)
-    profiler, run_path = setup_logging(config, args)
+    run_path = setup_logging(config, args)
     rooms = json.loads(config.room_set.read_text())
     device, generation_devices = select_devices(args, config)
 
@@ -977,7 +933,6 @@ def build_session(args: Args) -> TrainingSession:
     session = TrainingSession(
         args=args,
         config=config,
-        profiler=profiler,
         run_path=run_path,
         rooms=rooms,
         device=device,
