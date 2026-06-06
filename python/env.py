@@ -40,6 +40,31 @@ class Actions:
     def to(self, device: torch.device) -> "Actions":
         return Actions(self.room_idx.to(device), self.room_x.to(device), self.room_y.to(device))
 
+    def slice(self, start: int, end: int) -> "Actions":
+        return Actions(
+            self.room_idx[start:end],
+            self.room_x[start:end],
+            self.room_y[start:end],
+        )
+
+
+@dataclass
+class EpisodeData:
+    actions: Actions
+    temperature: torch.Tensor
+
+    def to(self, device: torch.device) -> "EpisodeData":
+        return EpisodeData(
+            self.actions.to(device),
+            self.temperature.to(device),
+        )
+
+    def slice(self, start: int, end: int) -> "EpisodeData":
+        return EpisodeData(
+            self.actions.slice(start, end),
+            self.temperature[start:end],
+        )
+
 
 # Each tensor here is int8 with shape
 #    [batch, time, output]  during training,

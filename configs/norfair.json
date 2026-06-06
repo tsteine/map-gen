@@ -10,7 +10,7 @@
     "generation_autocast": true,
     "embedding_width": 256,
     "hidden_width": 256,
-    "num_layers": 2
+    "num_layers": 1
   },
   "optimizer": {
     "lr": {"log": [0.001, 0.001, 0.001, 0.0001]},

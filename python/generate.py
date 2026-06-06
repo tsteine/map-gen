@@ -5,6 +5,7 @@ from env import (
     DoorMatchCounts,
     Engine,
     EnvironmentGroup,
+    EpisodeData,
     GenerateConfig,
     Outcomes,
     SparseFeatures,
@@ -460,6 +461,7 @@ def select_candidate_actions(
             outcomes,
             group.config,
         )
+        # Replace dummy candidates to have -inf reward, so they are never selected unless there are no other candidates.
         expected_reward = torch.where(
             candidates.room_idx == num_rooms,
             torch.full_like(expected_reward, float("-inf")),
@@ -542,14 +544,17 @@ def start_generation_step(
 
 
 def merge_generation_results(
-    results: list[tuple[Actions, Outcomes, DoorMatchCounts]],
-) -> tuple[Actions, Outcomes, DoorMatchCounts]:
+    results: list[tuple[EpisodeData, Outcomes, DoorMatchCounts]],
+) -> tuple[EpisodeData, Outcomes, DoorMatchCounts]:
     return (
-        Actions(
-            *(
-                torch.cat([getattr(actions, name) for actions, _, _ in results])
-                for name in vars(results[0][0])
-            )
+        EpisodeData(
+            actions=Actions(
+                *(
+                    torch.cat([getattr(episode_data.actions, name) for episode_data, _, _ in results])
+                    for name in vars(results[0][0].actions)
+                )
+            ),
+            temperature=torch.cat([episode_data.temperature for episode_data, _, _ in results]),
         ),
         Outcomes(
             *(
@@ -575,7 +580,7 @@ def run_generation_groups(
     configs: list[GenerateConfig],
     device: torch.device,
     verify_outcome_consistency: bool = False,
-) -> tuple[Actions, Outcomes, DoorMatchCounts]:
+) -> tuple[EpisodeData, Outcomes, DoorMatchCounts]:
     if not envs or len(envs) != len(configs):
         raise ValueError("generation groups require one config per environment group")
     transfer_stream = torch.cuda.Stream(device=device) if device.type == "cuda" else None
@@ -648,5 +653,9 @@ def run_generation_groups(
             door_match_counts = group.env.get_door_match_counts(device)
             if verify_outcome_consistency:
                 merge_verified_outcomes(group.known_outcomes, outcomes, "finish")
-            results.append((actions, outcomes, door_match_counts))
+            results.append((
+                EpisodeData(actions, group.config.temperature),
+                outcomes,
+                door_match_counts,
+            ))
     return merge_generation_results(results)

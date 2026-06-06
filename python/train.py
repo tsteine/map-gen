@@ -17,7 +17,7 @@ import torch
 from aim import Run
 from safetensors import safe_open
 
-from env import Actions, DoorMatchCounts, Engine, GenerateConfig, Outcomes, Features
+from env import Actions, DoorMatchCounts, Engine, EpisodeData, GenerateConfig, Outcomes, Features
 from experience import ExperienceStorage
 from generate import create_generation_environment_groups, run_generation_groups
 from loss import LossConfig, compute_loss
@@ -43,7 +43,7 @@ class TrainBatchTask:
 @dataclass
 class PreparedTrainBatch:
     kind: Literal["fresh", "replay"]
-    actions: Actions
+    episode_data: EpisodeData
     outcomes: Outcomes
     prefix_count: int
     feature_batches: list[Features]
@@ -313,14 +313,15 @@ class TrainingSession:
             autocast=step_config.model.generation_autocast,
         )
 
-    def select_batch(self, actions: Actions, outcomes: Outcomes, start: int) -> tuple[Actions, Outcomes]:
+    def select_batch(
+        self,
+        episode_data: EpisodeData,
+        outcomes: Outcomes,
+        start: int,
+    ) -> tuple[EpisodeData, Outcomes]:
         end = start + self.config.train.batch_size
         return (
-            Actions(
-                room_idx=actions.room_idx[start:end],
-                room_x=actions.room_x[start:end],
-                room_y=actions.room_y[start:end],
-            ),
+            episode_data.slice(start, end),
             Outcomes(
                 door_invalid=outcomes.door_invalid[start:end],
                 connection_invalid=outcomes.connection_invalid[start:end],
@@ -381,17 +382,18 @@ class TrainingSession:
     def prepare_feature_batch(
         self,
         kind: Literal["fresh", "replay"],
-        train_actions: Actions,
+        train_episode_data: EpisodeData,
         train_outcomes: Outcomes,
         env,
     ) -> PreparedTrainBatch:
+        train_actions = train_episode_data.actions
         prefix_count, feature_batches = self.prepare_feature_batches(
             train_actions,
             env,
         )
         return PreparedTrainBatch(
             kind,
-            train_actions,
+            train_episode_data,
             train_outcomes,
             prefix_count=prefix_count,
             feature_batches=feature_batches,
@@ -400,24 +402,28 @@ class TrainingSession:
     def prepare_train_batch_task(
         self,
         task: TrainBatchTask,
-        fresh_actions: Actions,
+        fresh_episode_data: EpisodeData,
         fresh_outcomes: Outcomes,
     ) -> PreparedTrainBatch:
         env = self.train_batch_envs[task.env_index]
         if task.kind == "fresh":
             assert task.start is not None
-            train_actions, train_outcomes = self.select_batch(fresh_actions, fresh_outcomes, task.start)
-            return self.prepare_feature_batch(task.kind, train_actions, train_outcomes, env)
+            train_episode_data, train_outcomes = self.select_batch(
+                fresh_episode_data,
+                fresh_outcomes,
+                task.start,
+            )
+            return self.prepare_feature_batch(task.kind, train_episode_data, train_outcomes, env)
 
-        replay_actions = self.experience.sample(
+        replay_episode_data = self.experience.sample(
             self.config.train.batch_size,
             self.config.train.episodes_per_file,
             self.config.train.hist_c,
         )
-        env.replay(replay_actions)
-        replay_actions = replay_actions.to(self.device)
+        env.replay(replay_episode_data.actions)
+        replay_episode_data = replay_episode_data.to(self.device)
         replay_outcomes = env.get_outcomes(self.device)
-        return self.prepare_feature_batch(task.kind, replay_actions, replay_outcomes, env)
+        return self.prepare_feature_batch(task.kind, replay_episode_data, replay_outcomes, env)
 
     def train_batch_backward(
         self,
@@ -445,7 +451,7 @@ class TrainingSession:
             connection_invalid=train_outcomes.connection_invalid.unsqueeze(1),
         )
         mask = torch.ones(
-            [prepared_batch.actions.room_idx.shape[0], 1, 1],
+            [prepared_batch.episode_data.actions.room_idx.shape[0], 1, 1],
             dtype=torch.bool,
             device=self.device,
         )
@@ -472,8 +478,8 @@ class TrainingSession:
         self.main_optimizer.step()
         self.update_ema_model()
 
-    def generate_round(self) -> tuple[Actions, Outcomes, DoorMatchCounts]:
-        action_iterations = []
+    def generate_round(self) -> tuple[EpisodeData, Outcomes, DoorMatchCounts]:
+        episode_data_iterations = []
         outcome_iterations = []
         door_match_count_iterations = []
         self.sync_generation_models()
@@ -518,19 +524,30 @@ class TrainingSession:
                 self.generation_models_warmed_up = True
 
             for (
-                iteration_actions,
+                iteration_episode_data,
                 iteration_outcomes,
                 iteration_door_match_counts,
             ) in shard_results:
-                action_iterations.append(iteration_actions.to(self.device))
+                episode_data_iterations.append(iteration_episode_data.to(self.device))
                 outcome_iterations.append(iteration_outcomes.to(self.device))
                 door_match_count_iterations.append(iteration_door_match_counts.to(self.device))
 
         return (
-            Actions(
-                room_idx=torch.cat([actions.room_idx for actions in action_iterations]),
-                room_x=torch.cat([actions.room_x for actions in action_iterations]),
-                room_y=torch.cat([actions.room_y for actions in action_iterations]),
+            EpisodeData(
+                actions=Actions(
+                    room_idx=torch.cat([
+                        episode_data.actions.room_idx for episode_data in episode_data_iterations
+                    ]),
+                    room_x=torch.cat([
+                        episode_data.actions.room_x for episode_data in episode_data_iterations
+                    ]),
+                    room_y=torch.cat([
+                        episode_data.actions.room_y for episode_data in episode_data_iterations
+                    ]),
+                ),
+                temperature=torch.cat([
+                    episode_data.temperature for episode_data in episode_data_iterations
+                ]),
             ),
             Outcomes(
                 door_invalid=torch.cat([outcomes.door_invalid for outcomes in outcome_iterations]),
@@ -550,14 +567,19 @@ class TrainingSession:
             ),
         )
 
-    def train_round(self, actions: Actions, gen_outcomes: Outcomes, step_config: Config) -> float:
+    def train_round(
+        self,
+        episode_data: EpisodeData,
+        gen_outcomes: Outcomes,
+        step_config: Config,
+    ) -> float:
         self.main_optimizer.param_groups[0]["lr"] = step_config.optimizer.lr
 
         total_loss = 0.0
         train_batch_count = 0
 
         def prepare_train_task(task: TrainBatchTask) -> PreparedTrainBatch:
-            return self.prepare_train_batch_task(task, actions, gen_outcomes)
+            return self.prepare_train_batch_task(task, episode_data, gen_outcomes)
 
         def train_prepared_batch_group(prepared_batches: list[PreparedTrainBatch]) -> tuple[float, int]:
             self.main_model.zero_grad()
@@ -686,12 +708,12 @@ class TrainingSession:
             total_episodes = self.config.knot_episodes[-1]
             start_round = self.num_episodes // self.episodes_per_round
             for round_idx in range(start_round, total_episodes // self.episodes_per_round):
-                actions, gen_outcomes, door_match_counts = self.generate_round()
+                episode_data, gen_outcomes, door_match_counts = self.generate_round()
                 self.num_episodes += self.episodes_per_round
                 step_config = instantiate_scheduleable_config(self.config, self.num_episodes)
-                avg_loss = self.train_round(actions, gen_outcomes, step_config)
+                avg_loss = self.train_round(episode_data, gen_outcomes, step_config)
 
-                self.experience.store(actions)
+                self.experience.store(episode_data)
 
                 self.log_outcomes(
                     gen_outcomes,
@@ -871,6 +893,8 @@ def create_models(config: Config, rooms: list[dict], engine: Engine, device: tor
     }
 
     main_model = FrontierModel(**model_kwargs).to(device)
+    num_params = sum(p.numel() for p in main_model.parameters())
+    logging.info(f"Main model parameters: {num_params}")    
 
     ema_model = copy.deepcopy(main_model).to(device)
     ema_model.requires_grad_(False)
