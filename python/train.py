@@ -4,9 +4,10 @@ import copy
 import json
 import logging
 import math
+import multiprocessing
 import os
 import signal
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +20,7 @@ from safetensors import safe_open
 
 from env import Actions, DoorMatchCounts, Engine, EpisodeData, GenerateConfig, Outcomes, Features
 from experience import ExperienceStorage
-from generate import create_generation_environment_groups, run_generation_groups
+from generate import run_generation_groups
 from loss import LossConfig, compute_loss
 from model import FrontierModel
 from train_config import Config, episodes_per_round, instantiate_scheduleable_config, validate_config
@@ -145,6 +146,130 @@ def load_optimizer_checkpoint_state(
     })
 
 
+def frontier_model_kwargs(
+    config: Config,
+    rooms: list[dict],
+    engine: Engine,
+) -> dict[str, Any]:
+    return {
+        "num_rooms": len(rooms),
+        "output_metadata": engine.get_output_metadata(),
+        "map_x": config.map_size[0],
+        "map_y": config.map_size[1],
+        "embedding_width": config.model.embedding_width,
+        "hidden_width": config.model.hidden_width,
+        "num_layers": config.model.num_layers,
+        "frontier_window_size": config.generation.frontier_window_size,
+        "features": config.features,
+    }
+
+
+def create_generation_environment_groups_for_device(
+    config: Config,
+    engine: Engine,
+    device_index: int,
+):
+    num_generation_groups = (
+        config.generation.num_devices * config.generation.pipeline_groups
+    )
+    generation_group_environments = config.generation.num_environments // num_generation_groups
+    generation_group_threads = (
+        None
+        if config.generation.num_threads is None
+        else config.generation.num_threads // config.generation.pipeline_groups
+    )
+    return [
+        engine.create_environment_group(
+            config.map_size,
+            generation_group_environments,
+            seed=device_index * config.generation.pipeline_groups + group_index,
+            frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
+            frontier_neighbor_count=config.generation.frontier_neighbor_count,
+            frontier_window_size=config.generation.frontier_window_size,
+            num_threads=generation_group_threads,
+        )
+        for group_index in range(config.generation.pipeline_groups)
+    ]
+
+
+@dataclass
+class GenerationProcessState:
+    config: Config
+    episode_length: int
+    device: torch.device
+    envs: list
+    model: torch.nn.Module
+
+
+GENERATION_PROCESS_STATE: GenerationProcessState | None = None
+
+
+def initialize_generation_process(
+    config_json: str,
+    rooms_json: str,
+    device_text: str,
+    device_index: int,
+) -> None:
+    global GENERATION_PROCESS_STATE
+    config = Config.model_validate_json(config_json)
+    rooms = json.loads(rooms_json)
+    device = torch.device(device_text)
+    if device.type == "cuda":
+        torch.cuda.set_device(device)
+        torch.set_float32_matmul_precision("high")
+    engine = Engine(rooms, config.features)
+    envs = create_generation_environment_groups_for_device(
+        config,
+        engine,
+        device_index,
+    )
+    model = FrontierModel(**frontier_model_kwargs(config, rooms, engine)).to(device)
+    model.requires_grad_(False)
+    model.eval()
+    if config.model.compile:
+        model = torch.compile(model, dynamic=True)
+    GENERATION_PROCESS_STATE = GenerationProcessState(config, len(rooms), device, envs, model)
+
+
+def run_generation_process_task(
+    model_state: dict[str, torch.Tensor],
+    generation_config_json: str,
+    verify_outcome_consistency: bool,
+) -> tuple[EpisodeData, Outcomes, DoorMatchCounts]:
+    if GENERATION_PROCESS_STATE is None:
+        raise RuntimeError("generation process was not initialized")
+    state = GENERATION_PROCESS_STATE
+    state.model.load_state_dict(model_state)
+    generation_config = Config.model_validate_json(generation_config_json)
+    gen_configs = [
+        GenerateConfig(
+            episode_length=state.episode_length,
+            max_candidates=generation_config.generation.action_candidates,
+            temperature=torch.full(
+                [env.num_envs],
+                generation_config.generation.temperature,
+                dtype=torch.float32,
+                device=state.device,
+            ),
+            lookahead_outcomes=generation_config.generation.lookahead_outcomes,
+            autocast=generation_config.model.generation_autocast,
+        )
+        for env in state.envs
+    ]
+    episode_data, outcomes, door_match_counts = run_generation_groups(
+        state.envs,
+        state.model,
+        gen_configs,
+        state.device,
+        verify_outcome_consistency=verify_outcome_consistency,
+    )
+    return (
+        episode_data.to(torch.device("cpu")),
+        outcomes.to(torch.device("cpu")),
+        door_match_counts.to(torch.device("cpu")),
+    )
+
+
 @dataclass
 class TrainingSession:
     args: Args
@@ -154,18 +279,15 @@ class TrainingSession:
     device: torch.device
     generation_devices: list[torch.device]
     engine: Engine
-    gen_envs: list[list]
     train_batch_envs: list
     main_model: torch.nn.Module
     ema_model: torch.nn.Module
-    generation_models: list[torch.nn.Module]
     main_optimizer: torch.optim.Optimizer
     aim_run: Run
     loss_config: LossConfig
     experience: ExperienceStorage
     train_batch_prefetcher: Prefetcher
-    generation_executor: ThreadPoolExecutor
-    generation_models_warmed_up: bool
+    generation_executors: list[ProcessPoolExecutor]
     num_episodes: int = 0
     stop_requested: bool = False
 
@@ -273,7 +395,6 @@ class TrainingSession:
                 f"{self.episodes_per_round}"
             )
         self.experience.num_files = int(metadata["experience_num_files"])
-        self.sync_generation_models()
         logging.info(
             "Loaded checkpoint %s at %s episode(s) with %s replay file(s).",
             path,
@@ -285,33 +406,6 @@ class TrainingSession:
         with torch.no_grad():
             for ema_param, main_param in zip(self.ema_model.parameters(), self.main_model.parameters()):
                 ema_param.lerp_(main_param, 1.0 - self.config.train.ema_decay)
-
-    def sync_generation_models(self) -> None:
-        with torch.no_grad():
-            for generation_model in self.generation_models[1:]:
-                for generation_param, ema_param in zip(
-                    generation_model.parameters(), self.ema_model.parameters()
-                ):
-                    generation_param.copy_(ema_param)
-
-    def get_gen_config(
-        self,
-        step_config: Config,
-        num_environments: int,
-        generation_device: torch.device,
-    ) -> GenerateConfig:
-        return GenerateConfig(
-            episode_length=self.episode_length,
-            max_candidates=step_config.generation.action_candidates,
-            temperature=torch.full(
-                [num_environments],
-                step_config.generation.temperature,
-                dtype=torch.float32,
-                device=generation_device,
-            ),
-            lookahead_outcomes=step_config.generation.lookahead_outcomes,
-            autocast=step_config.model.generation_autocast,
-        )
 
     def select_batch(
         self,
@@ -494,46 +588,25 @@ class TrainingSession:
         episode_data_iterations = []
         outcome_iterations = []
         door_match_count_iterations = []
-        self.sync_generation_models()
+        model_state = {
+            name: as_checkpoint_tensor(value)
+            for name, value in self.ema_model.state_dict().items()
+        }
         for iteration in range(self.config.generation.num_iterations):
             generation_config = instantiate_scheduleable_config(
                 self.config,
                 self.num_episodes + iteration * self.config.generation.num_environments,
             )
-            shard_args = []
-            for device_envs, generation_model, generation_device in zip(
-                self.gen_envs,
-                self.generation_models,
-                self.generation_devices,
-            ):
-                gen_configs = [
-                    self.get_gen_config(generation_config, gen_env.num_envs, generation_device)
-                    for gen_env in device_envs
-                ]
-                shard_args.append((device_envs, generation_model, gen_configs, generation_device))
-
-            if self.generation_models_warmed_up:
-                shard_results = [
-                    self.generation_executor.submit(
-                        run_generation_groups,
-                        *args,
-                        verify_outcome_consistency=self.args.verify_outcome_consistency,
-                    )
-                    for args in shard_args
-                ]
-                shard_results = [future.result() for future in shard_results]
-            else:
-                logging.info(
-                    "Warming up compiled generation models serially before concurrent generation."
+            futures = [
+                executor.submit(
+                    run_generation_process_task,
+                    model_state,
+                    generation_config.model_dump_json(),
+                    self.args.verify_outcome_consistency,
                 )
-                shard_results = [
-                    run_generation_groups(
-                        *args,
-                        verify_outcome_consistency=self.args.verify_outcome_consistency,
-                    )
-                    for args in shard_args
-                ]
-                self.generation_models_warmed_up = True
+                for executor in self.generation_executors
+            ]
+            shard_results = [future.result() for future in futures]
 
             for (
                 iteration_episode_data,
@@ -747,7 +820,8 @@ class TrainingSession:
                     break
         finally:
             self.train_batch_prefetcher.close()
-            self.generation_executor.shutdown()
+            for generation_executor in self.generation_executors:
+                generation_executor.shutdown()
             self.aim_run.close()
 
 
@@ -895,39 +969,41 @@ def create_train_batch_environment_groups(config: Config, engine: Engine):
 
 
 def create_models(config: Config, rooms: list[dict], engine: Engine, device: torch.device, generation_devices):
-    output_metadata = engine.get_output_metadata()
-    model_kwargs = {
-        "num_rooms": len(rooms),
-        "output_metadata": output_metadata,
-        "map_x": config.map_size[0],
-        "map_y": config.map_size[1],
-        "embedding_width": config.model.embedding_width,
-        "hidden_width": config.model.hidden_width,
-        "num_layers": config.model.num_layers,
-        "frontier_window_size": config.generation.frontier_window_size,
-        "features": config.features,
-    }
-
-    main_model = FrontierModel(**model_kwargs).to(device)
+    main_model = FrontierModel(**frontier_model_kwargs(config, rooms, engine)).to(device)
     num_params = sum(p.numel() for p in main_model.parameters())
     logging.info(f"Main model parameters: {num_params}")    
 
     ema_model = copy.deepcopy(main_model).to(device)
     ema_model.requires_grad_(False)
     ema_model.eval()
-    generation_models = [
-        ema_model,
-        *[
-            copy.deepcopy(ema_model).to(generation_device)
-            for generation_device in generation_devices[1:]
-        ],
-    ]
     if config.model.compile:
-        main_model = torch.compile(main_model, dynamic=True)
-        generation_models = [torch.compile(model, dynamic=True) for model in generation_models]
-        ema_model = generation_models[0]
+        main_model = torch.compile(main_model)
+        ema_model = torch.compile(ema_model)
 
-    return main_model, ema_model, generation_models
+    return main_model, ema_model
+
+
+def create_generation_process_executors(
+    config: Config,
+    rooms: list[dict],
+    generation_devices: list[torch.device],
+) -> list[ProcessPoolExecutor]:
+    logging.info(
+        "Using %s generation process(es), one per generation device.",
+        len(generation_devices),
+    )
+    context = multiprocessing.get_context("spawn")
+    config_json = config.model_dump_json()
+    rooms_json = json.dumps(rooms)
+    return [
+        ProcessPoolExecutor(
+            max_workers=1,
+            mp_context=context,
+            initializer=initialize_generation_process,
+            initargs=(config_json, rooms_json, str(generation_device), device_index),
+        )
+        for device_index, generation_device in enumerate(generation_devices)
+    ]
 
 
 def build_session(args: Args) -> TrainingSession:
@@ -952,13 +1028,17 @@ def build_session(args: Args) -> TrainingSession:
     )
 
     engine = Engine(rooms, config.features)
-    gen_envs = create_generation_environment_groups(config, engine, generation_devices)
     train_batch_envs = create_train_batch_environment_groups(config, engine)
-    main_model, ema_model, generation_models = create_models(
+    main_model, ema_model = create_models(
         config,
         rooms,
         engine,
         device,
+        generation_devices,
+    )
+    generation_executors = create_generation_process_executors(
+        config,
+        rooms,
         generation_devices,
     )
     initial_config = instantiate_scheduleable_config(config, 0)
@@ -978,11 +1058,9 @@ def build_session(args: Args) -> TrainingSession:
         device=device,
         generation_devices=generation_devices,
         engine=engine,
-        gen_envs=gen_envs,
         train_batch_envs=train_batch_envs,
         main_model=main_model,
         ema_model=ema_model,
-        generation_models=generation_models,
         main_optimizer=main_optimizer,
         aim_run=aim_run,
         loss_config=LossConfig(
@@ -995,11 +1073,7 @@ def build_session(args: Args) -> TrainingSession:
             round_episode_count,
         ),
         train_batch_prefetcher=Prefetcher(max_workers=config.train.pipeline_groups),
-        generation_executor=ThreadPoolExecutor(max_workers=len(generation_devices)),
-        generation_models_warmed_up=not (
-            config.model.compile
-            and len(generation_devices) > 1
-        ),
+        generation_executors=generation_executors,
     )
     if args.load_checkpoint is not None:
         session.load_checkpoint(args.load_checkpoint)
