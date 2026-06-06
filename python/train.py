@@ -550,10 +550,20 @@ class TrainingSession:
             self.config.train.episodes_per_file,
             self.config.train.hist_c,
         )
-        env.replay(replay_episode_data.actions)
+        prefix_count, feature_batches = self.prepare_feature_batches(
+            replay_episode_data,
+            env,
+        )
+        env.finish()
         replay_episode_data = replay_episode_data.to(self.device)
         replay_outcomes = env.get_outcomes(self.device)
-        return self.prepare_feature_batch(task.kind, replay_episode_data, replay_outcomes, env)
+        return PreparedTrainBatch(
+            task.kind,
+            replay_episode_data,
+            replay_outcomes,
+            prefix_count=prefix_count,
+            feature_batches=feature_batches,
+        )
 
     def train_batch_backward(
         self,
