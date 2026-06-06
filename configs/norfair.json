@@ -22,7 +22,7 @@
     "num_iterations": 4,
     "num_devices": 2,
     "pipeline_groups": 2,
-    "action_candidates": 16,
+    "action_candidates": {"log": [1, 2, 4, 16]},
     "lookahead_outcomes": false,
     "temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
     "frontier_neighbor_algorithm": "nearest-exclusive",

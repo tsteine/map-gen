@@ -15,6 +15,7 @@ class Schedule(StrictBaseModel):
 
 
 type ScheduleableFloat = float | Schedule
+type ScheduleableInt = int | Schedule
 
 
 class ModelConfig(StrictBaseModel):
@@ -37,7 +38,7 @@ class GenerationConfig(StrictBaseModel):
     num_iterations: int
     num_devices: int
     pipeline_groups: int
-    action_candidates: int
+    action_candidates: ScheduleableInt
     lookahead_outcomes: bool
     temperature: ScheduleableFloat
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
@@ -99,9 +100,17 @@ def instantiate_scheduleable_config(config: Config, num_episodes: int) -> Config
             field_path = f"{path}.{field_name}"
             if field_info.annotation is ScheduleableFloat:
                 updates[field_name] = instantiate_float(value, field_path)
+            elif field_info.annotation is ScheduleableInt:
+                updates[field_name] = instantiate_int(value, field_path)
             elif isinstance(value, BaseModel):
                 updates[field_name] = instantiate_model(value, field_path)
         return model.model_copy(update=updates)
+
+    def instantiate_int(value: ScheduleableInt, path: str) -> int:
+        result = round(instantiate_float(value, path))
+        if result <= 0:
+            raise ValueError(f"{path} must round to an integer greater than zero")
+        return result
 
     def instantiate_float(value: ScheduleableFloat, path: str) -> float:
         if isinstance(value, Schedule):
@@ -134,6 +143,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("generation.num_devices must be greater than zero")
     if config.generation.pipeline_groups <= 0:
         raise ValueError("generation.pipeline_groups must be greater than zero")
+    if isinstance(config.generation.action_candidates, int) and config.generation.action_candidates <= 0:
+        raise ValueError("generation.action_candidates must be greater than zero")
     if config.generation.num_devices > config.generation.num_environments:
         raise ValueError("generation.num_devices must not exceed generation.num_environments")
     num_generation_groups = (

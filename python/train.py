@@ -671,6 +671,7 @@ class TrainingSession:
             "num_episodes": self.num_episodes,
             "lr": step_config.optimizer.lr,
             "temperature": step_config.generation.temperature,
+            "action_candidates": step_config.generation.action_candidates,
             "door_match_horizontal_top1": horizontal_topk[0],
             "door_match_horizontal_top2": horizontal_topk[1],
             "door_match_horizontal_top3": horizontal_topk[2],
