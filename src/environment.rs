@@ -18,13 +18,13 @@ use crate::scc_dag::SccDag;
 
 const NO_COMPONENT: usize = usize::MAX;
 pub const FEATURE_FRONTIER_WIDTH: usize = 5;
-const PROFILE_STEP_PUSH_ACTION: usize = 14;
-const PROFILE_STEP_MARK_ROOM_USED: usize = 15;
-const PROFILE_STEP_COMPONENTS_EDGES: usize = 16;
-const PROFILE_STEP_OCCUPANCY: usize = 17;
-const PROFILE_STEP_MATCH_EXISTING_FRONTIERS: usize = 18;
-const PROFILE_STEP_BUILD_NEW_FRONTIER_CANDIDATES: usize = 19;
-const PROFILE_STEP_FILTER_EXISTING_FRONTIERS: usize = 20;
+const PROFILE_STEP_PUSH_ACTION: usize = 13;
+const PROFILE_STEP_MARK_ROOM_USED: usize = 14;
+const PROFILE_STEP_COMPONENTS_EDGES: usize = 15;
+const PROFILE_STEP_OCCUPANCY: usize = 16;
+const PROFILE_STEP_MATCH_EXISTING_FRONTIERS: usize = 17;
+const PROFILE_STEP_BUILD_NEW_FRONTIER_CANDIDATES: usize = 18;
+const PROFILE_STEP_FILTER_EXISTING_FRONTIERS: usize = 19;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CandidateUpdate {
@@ -706,14 +706,6 @@ impl Environment {
             }
             profile_end(PROFILE_STEP_FILTER_EXISTING_FRONTIERS, profile);
         }
-    }
-
-    pub fn replay(&mut self, actions: &[Action], common: &CommonData) {
-        self.clear(common);
-        for &action in actions {
-            self.step_known(action, common);
-        }
-        self.finish();
     }
 
     pub fn finish(&mut self) {
@@ -1878,7 +1870,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_rebuilds_episode_and_finishes_environment() {
+    fn known_steps_rebuild_episode_and_finish_environment() {
         let rooms_json = r#"
         [
             {
@@ -1925,7 +1917,11 @@ mod tests {
                 y: 0,
             },
         ];
-        env.replay(&actions, &common);
+        env.clear(&common);
+        for action in actions {
+            env.step_known(action, &common);
+        }
+        env.finish();
 
         assert_eq!(env.actions(), actions);
         assert!(env.room_used[0]);
@@ -2139,7 +2135,11 @@ mod tests {
             full_env.step(action, &common);
         }
         full_env.finish();
-        replay_env.replay(&actions, &common);
+        replay_env.clear(&common);
+        for action in actions {
+            replay_env.step_known(action, &common);
+        }
+        replay_env.finish();
 
         let full_outcomes = full_env.outcomes(&common);
         let replay_outcomes = replay_env.outcomes(&common);

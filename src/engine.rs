@@ -20,12 +20,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const PROFILE_METRIC_COUNT: usize = 22;
+const PROFILE_METRIC_COUNT: usize = 21;
 const PROFILE_METRIC_NAMES: [&str; PROFILE_METRIC_COUNT] = [
     "worker.clear",
     "worker.finish",
     "worker.step",
-    "worker.replay",
     "worker.get_candidates",
     "worker.get_candidates_with_outcomes",
     "worker.get_actions",
@@ -198,12 +197,6 @@ enum WorkerCommand {
         room_x: InputShard<Coord>,
         room_y: InputShard<Coord>,
     },
-    Replay {
-        action_count: usize,
-        room_idx: InputShard<RoomIdx>,
-        room_x: InputShard<Coord>,
-        room_y: InputShard<Coord>,
-    },
     GetCandidates {
         max_candidates: usize,
         room_idx: OutputShard<RoomIdx>,
@@ -287,18 +280,17 @@ impl WorkerCommand {
             WorkerCommand::Clear => Some(0),
             WorkerCommand::Finish => Some(1),
             WorkerCommand::Step { .. } => Some(2),
-            WorkerCommand::Replay { .. } => Some(3),
-            WorkerCommand::GetCandidates { .. } => Some(4),
-            WorkerCommand::GetCandidatesWithOutcomes { .. } => Some(5),
-            WorkerCommand::GetActions { .. } => Some(6),
-            WorkerCommand::GetOutcomes { .. } => Some(7),
-            WorkerCommand::GetDoorMatchCounts { .. } => Some(8),
-            WorkerCommand::GetFeatures { .. } => Some(9),
-            WorkerCommand::GetFeaturesAfterCandidates { .. } => Some(10),
-            WorkerCommand::GetSparseFeaturesAfterCandidates { .. } => Some(11),
-            WorkerCommand::GetFeatureFrontierCountAfterCandidates { .. } => Some(12),
-            WorkerCommand::PackFeatures { .. } => Some(13),
-            WorkerCommand::StepKnown { .. } => Some(21),
+            WorkerCommand::GetCandidates { .. } => Some(3),
+            WorkerCommand::GetCandidatesWithOutcomes { .. } => Some(4),
+            WorkerCommand::GetActions { .. } => Some(5),
+            WorkerCommand::GetOutcomes { .. } => Some(6),
+            WorkerCommand::GetDoorMatchCounts { .. } => Some(7),
+            WorkerCommand::GetFeatures { .. } => Some(8),
+            WorkerCommand::GetFeaturesAfterCandidates { .. } => Some(9),
+            WorkerCommand::GetSparseFeaturesAfterCandidates { .. } => Some(10),
+            WorkerCommand::GetFeatureFrontierCountAfterCandidates { .. } => Some(11),
+            WorkerCommand::PackFeatures { .. } => Some(12),
+            WorkerCommand::StepKnown { .. } => Some(20),
             WorkerCommand::Shutdown => None,
         }
     }
@@ -442,37 +434,6 @@ fn worker_loop(
                         },
                         &common_data,
                     );
-                }
-                WorkerResponse::Done
-            }
-            WorkerCommand::Replay {
-                action_count,
-                room_idx,
-                room_x,
-                room_y,
-            } => {
-                // SAFETY: The main thread guarantees that for the duration of this command,
-                // the input slices remain valid and that no other thread mutates them.
-                let room_idx = unsafe { room_idx.into_slice() };
-                let room_x = unsafe { room_x.into_slice() };
-                let room_y = unsafe { room_y.into_slice() };
-                debug_assert_eq!(room_idx.len(), environments.len() * action_count);
-                debug_assert_eq!(room_x.len(), environments.len() * action_count);
-                debug_assert_eq!(room_y.len(), environments.len() * action_count);
-
-                for (env_idx, env) in environments.iter_mut().enumerate() {
-                    let row_start = env_idx * action_count;
-                    let actions = (0..action_count)
-                        .map(|action_idx| {
-                            let idx = row_start + action_idx;
-                            Action {
-                                room_idx: room_idx[idx],
-                                x: room_x[idx],
-                                y: room_y[idx],
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    env.replay(&actions, &common_data);
                 }
                 WorkerResponse::Done
             }
@@ -1797,66 +1758,6 @@ impl EnvironmentGroup {
         room_y: PyReadonlyArray1<'py, Coord>,
     ) -> PyResult<()> {
         self.step_with_kind(py, room_idx, room_x, room_y, StepCommandKind::StepKnown)
-    }
-
-    fn replay<'py>(
-        &mut self,
-        py: Python<'py>,
-        room_idx: PyReadonlyArray2<'py, RoomIdx>,
-        room_x: PyReadonlyArray2<'py, Coord>,
-        room_y: PyReadonlyArray2<'py, Coord>,
-    ) -> PyResult<()> {
-        let room_idx_shape = room_idx.as_array().shape().to_vec();
-        let room_x_shape = room_x.as_array().shape().to_vec();
-        let room_y_shape = room_y.as_array().shape().to_vec();
-        if room_idx_shape != room_x_shape || room_idx_shape != room_y_shape {
-            return Err(PyValueError::new_err(format!(
-                "room_idx, room_x, and room_y must have the same shape; got {:?}, {:?}, and {:?}",
-                room_idx_shape, room_x_shape, room_y_shape
-            )));
-        }
-
-        if room_idx_shape[0] != self.num_environments {
-            return Err(PyValueError::new_err(format!(
-                "action arrays must have first dimension num_environments {}; got {}",
-                self.num_environments, room_idx_shape[0],
-            )));
-        }
-
-        let action_count = room_idx_shape[1];
-        let room_idx = room_idx
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_idx must be a contiguous 2D numpy array"))?;
-        let room_x = room_x
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_x must be a contiguous 2D numpy array"))?;
-        let room_y = room_y
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_y must be a contiguous 2D numpy array"))?;
-
-        py.detach(|| {
-            let mut sent_workers = Vec::with_capacity(self.workers.len());
-            let mut first_error = None;
-            for (worker_idx, worker) in self.workers.iter().enumerate() {
-                let action_start = worker.start * action_count;
-                let action_end = worker.end() * action_count;
-                if let Err(err) = worker.send(WorkerCommand::Replay {
-                    action_count,
-                    room_idx: InputShard::from_slice(&room_idx[action_start..action_end]),
-                    room_x: InputShard::from_slice(&room_x[action_start..action_end]),
-                    room_y: InputShard::from_slice(&room_y[action_start..action_end]),
-                }) {
-                    set_first_error(&mut first_error, err);
-                    break;
-                }
-                sent_workers.push(worker_idx);
-            }
-
-            wait_for_done_responses(&self.workers, sent_workers, first_error)
-        })?;
-
-        self.action_count = action_count;
-        Ok(())
     }
 
     #[allow(clippy::type_complexity)]

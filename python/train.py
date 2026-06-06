@@ -840,20 +840,28 @@ class TrainingSession:
             logging.info("round %s Rust profile: no samples recorded", round_idx)
             return
 
-        total_nanos = sum(nanos for _, _, nanos in rows)
-        logging.info("round %s Rust profile, summed worker CPU time:", round_idx)
-        for name, count, nanos in sorted(rows, key=lambda row: row[2], reverse=True):
-            total_ms = nanos / 1_000_000.0
-            avg_us = nanos / count / 1_000.0 if count > 0 else 0.0
-            pct = nanos / total_nanos * 100.0 if total_nanos > 0 else 0.0
-            logging.info(
-                "  %-55s %10.3f ms %6.2f%% %8s calls %10.3f us/call",
-                name,
-                total_ms,
-                pct,
-                count,
-                avg_us,
-            )
+        for section_name, prefix in [
+            ("worker commands", "worker."),
+            ("environment step spans", "env."),
+        ]:
+            section_rows = [row for row in rows if row[0].startswith(prefix)]
+            if not section_rows:
+                continue
+
+            total_nanos = sum(nanos for _, _, nanos in section_rows)
+            logging.info("round %s Rust profile: %s", round_idx, section_name)
+            for name, count, nanos in sorted(section_rows, key=lambda row: row[2], reverse=True):
+                total_ms = nanos / 1_000_000.0
+                avg_us = nanos / count / 1_000.0 if count > 0 else 0.0
+                pct = nanos / total_nanos * 100.0 if total_nanos > 0 else 0.0
+                logging.info(
+                    "  %-55s %10.3f ms %6.2f%% %8s calls %10.3f us/call",
+                    name,
+                    total_ms,
+                    pct,
+                    count,
+                    avg_us,
+                )
 
     def run(self) -> None:
         try:

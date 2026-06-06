@@ -275,13 +275,6 @@ class EnvironmentGroup:
             actions.room_y.contiguous().cpu().numpy(),
         )
 
-    def replay(self, actions: Actions):
-        self.env.replay(
-            actions.room_idx.contiguous().cpu().numpy(),
-            actions.room_x.contiguous().cpu().numpy(),
-            actions.room_y.contiguous().cpu().numpy(),
-        )
-        
     def get_actions(self, device: torch.device) -> Actions:
         room_idx, room_x, room_y = self.env.get_actions()
         return Actions(
