@@ -26,7 +26,7 @@ from loss import (
     LossConfig,
     compute_balance_door_match_ss,
     compute_balance_loss,
-    compute_balance_score_targets,
+    compute_balance_score_target_logits,
     compute_loss_breakdown,
 )
 from model import BalanceModel, FrontierModel
@@ -677,11 +677,11 @@ class TrainingSession:
         )
         with torch.no_grad():
             balance_preds = self.balance_model(torch.log(prepared_batch.episode_data.temperature))
-            balance_score_targets, balance_score_mask = compute_balance_score_targets(
+            balance_score_target_logits, balance_score_mask = compute_balance_score_target_logits(
                 balance_preds,
                 prepared_batch.door_matches,
             )
-        repeated_balance_score_targets = balance_score_targets.unsqueeze(1)
+        repeated_balance_score_target_logits = balance_score_target_logits.unsqueeze(1)
         repeated_balance_score_mask = balance_score_mask.unsqueeze(1)
         mask = torch.ones(
             [prepared_batch.episode_data.actions.room_idx.shape[0], 1, 1],
@@ -703,7 +703,7 @@ class TrainingSession:
                 preds,
                 repeated_outcomes,
                 mask,
-                repeated_balance_score_targets,
+                repeated_balance_score_target_logits,
                 repeated_balance_score_mask,
                 self.loss_config,
             )

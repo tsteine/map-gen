@@ -1,28 +1,28 @@
 {
-  "experiment_name": "norfair-initial-testing",
+  "experiment_name": "norfair-testing",
   "room_set": "room_definitions/norfair.json",
   "map_size": [72, 72],
-  "knot_episodes": [0, 50000, 300000, 2000000],
+  "knot_episodes": [0, 50000, 300000, 4000000],
   "checkpoint_period": 100,
   "model": {
     "compile": true,
     "autocast": true,
     "generation_autocast": true,
-    "embedding_width": 256,
-    "hidden_width": 256,
-    "num_layers": 2
+    "embedding_width": 512,
+    "hidden_width": 512,
+    "num_layers": 4
   },
   "optimizer": {
-    "lr": {"log": [0.001, 0.001, 0.001, 0.0001]},
+    "lr": {"log": [0.0005, 0.0005, 0.0005, 0.0001]},
     "beta1": 0.95,
     "beta2": 0.99
   },
   "balance_model": {
     "hidden_width": 64,
-    "num_layers": 2
+    "num_layers": 1
   },
   "balance_optimizer": {
-    "lr": {"log": [0.001, 0.001, 0.001, 0.0001]},
+    "lr": {"log": [0.001, 0.0001, 0.00005, 0.00002]},
     "beta1": 0.95,
     "beta2": 0.99
   },
@@ -36,7 +36,7 @@
     "temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
     "reward_door": 1.0,
     "reward_connection": 1.0,
-    "reward_balance": 1.0,
+    "reward_balance": 0.2,
     "frontier_neighbor_algorithm": "nearest-exclusive",
     "frontier_neighbor_count": 1,
     "frontier_window_size": 16,
@@ -68,7 +68,7 @@
     "hist_c": 3.0,
     "door_weight": 1.0,
     "connection_weight": 1.0,
-    "balance_weight": 1.0,
+    "balance_weight": 5.0,
     "pipeline_groups": 4,
     "gradient_accumulation_steps": 1
   }

@@ -5,6 +5,8 @@ import torch
 from env import DoorMatches, Outcomes
 from model import BalancePredictions, Predictions
 
+BALANCE_TARGET_LOG_ODDS_LIMIT = 20.0
+
 
 @dataclass
 class LossConfig:
@@ -33,22 +35,22 @@ def masked_binary_cross_entropy_loss(preds: torch.Tensor, outcomes: torch.Tensor
 
 def masked_bernoulli_kl_loss(
     logits: torch.Tensor,
-    target_prob: torch.Tensor,
+    target_logits: torch.Tensor,
     mask: torch.Tensor,
     weight: float,
 ) -> torch.Tensor:
     logits = logits.to(torch.float32)
     mask = mask.to(logits.dtype)
-    target_prob = target_prob.to(logits.dtype)
+    target_logits = target_logits.detach().to(logits.dtype)
+    target_prob = torch.sigmoid(target_logits)
     prediction_cross_entropy = torch.nn.functional.binary_cross_entropy_with_logits(
         logits,
         target_prob,
         reduction="none",
     )
-    clamped_target_prob = torch.clamp(target_prob, min=1e-6, max=1.0 - 1e-6)
     target_entropy = -(
-        target_prob * torch.log(clamped_target_prob)
-        + (1.0 - target_prob) * torch.log(1.0 - clamped_target_prob)
+        target_prob * torch.nn.functional.logsigmoid(target_logits)
+        + (1.0 - target_prob) * torch.nn.functional.logsigmoid(-target_logits)
     )
     return (
         weight * torch.sum((prediction_cross_entropy - target_entropy) * mask),
@@ -60,7 +62,7 @@ def compute_loss_breakdown(
     preds: Predictions,
     outcomes: Outcomes,
     mask: torch.Tensor,
-    balance_score_targets: torch.Tensor,
+    balance_score_target_logits: torch.Tensor,
     balance_score_mask: torch.Tensor,
     config: LossConfig,
 ) -> LossBreakdown:
@@ -70,7 +72,7 @@ def compute_loss_breakdown(
         preds.connection_invalid, outcomes.connection_invalid, mask, config.connection_weight)
     balance_loss, balance_wt = masked_bernoulli_kl_loss(
         preds.balance_score,
-        balance_score_targets,
+        balance_score_target_logits,
         mask & balance_score_mask,
         config.balance_weight,
     )
@@ -119,28 +121,43 @@ def compute_balance_door_match_ss(preds: BalancePredictions) -> torch.Tensor:
     )
 
 
-def direction_balance_score_targets(
+def direction_balance_score_target_logits(
     logits: torch.Tensor,
     targets: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     mask = targets >= 0
-    safe_targets = torch.clamp(targets, min=0)
-    values = torch.gather(
-        torch.softmax(logits, dim=-1),
+    if logits.shape[-1] == 0:
+        return logits.new_empty(targets.shape, dtype=torch.float32), mask
+    safe_targets = torch.clamp(targets, min=0).to(torch.int64)
+    logits = logits.to(torch.float32)
+    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+    target_log_probs = torch.gather(
+        log_probs,
         -1,
         safe_targets.unsqueeze(-1),
     ).squeeze(-1)
-    return values.detach(), mask
+    non_target_logits = logits.masked_fill(
+        torch.nn.functional.one_hot(safe_targets, logits.shape[-1]).to(torch.bool),
+        -torch.inf,
+    )
+    log_total = torch.logsumexp(logits, dim=-1)
+    non_target_log_probs = torch.logsumexp(non_target_logits, dim=-1) - log_total
+    target_logits = torch.clamp(
+        target_log_probs - non_target_log_probs,
+        min=-BALANCE_TARGET_LOG_ODDS_LIMIT,
+        max=BALANCE_TARGET_LOG_ODDS_LIMIT,
+    )
+    return target_logits.detach(), mask
 
 
-def compute_balance_score_targets(
+def compute_balance_score_target_logits(
     preds: BalancePredictions,
     door_matches: DoorMatches,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    left_values, left_mask = direction_balance_score_targets(preds.left, door_matches.left)
-    right_values, right_mask = direction_balance_score_targets(preds.right, door_matches.right)
-    up_values, up_mask = direction_balance_score_targets(preds.up, door_matches.up)
-    down_values, down_mask = direction_balance_score_targets(preds.down, door_matches.down)
+    left_values, left_mask = direction_balance_score_target_logits(preds.left, door_matches.left)
+    right_values, right_mask = direction_balance_score_target_logits(preds.right, door_matches.right)
+    up_values, up_mask = direction_balance_score_target_logits(preds.up, door_matches.up)
+    down_values, down_mask = direction_balance_score_target_logits(preds.down, door_matches.down)
     return (
         torch.cat([left_values, right_values, up_values, down_values], dim=-1),
         torch.cat([left_mask, right_mask, up_mask, down_mask], dim=-1),
