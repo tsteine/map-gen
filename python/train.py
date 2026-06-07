@@ -22,7 +22,13 @@ from safetensors import safe_open
 from env import Actions, DoorMatchCounts, DoorMatches, Engine, EpisodeData, GenerateConfig, Outcomes, Features
 from experience import ExperienceStorage
 from generate import run_generation_groups
-from loss import LossConfig, compute_balance_door_match_ss, compute_balance_loss, compute_loss
+from loss import (
+    LossConfig,
+    compute_balance_door_match_ss,
+    compute_balance_loss,
+    compute_balance_score_targets,
+    compute_loss,
+)
 from model import BalanceModel, FrontierModel
 from train_config import Config, episodes_per_round, instantiate_scheduleable_config, validate_config
 
@@ -655,6 +661,14 @@ class TrainingSession:
             door_invalid=train_outcomes.door_invalid.unsqueeze(1),
             connection_invalid=train_outcomes.connection_invalid.unsqueeze(1),
         )
+        with torch.no_grad():
+            balance_preds = self.balance_model(torch.log(prepared_batch.episode_data.temperature))
+            balance_score_targets, balance_score_mask = compute_balance_score_targets(
+                balance_preds,
+                prepared_batch.door_matches,
+            )
+        repeated_balance_score_targets = balance_score_targets.unsqueeze(1)
+        repeated_balance_score_mask = balance_score_mask.unsqueeze(1)
         mask = torch.ones(
             [prepared_batch.episode_data.actions.room_idx.shape[0], 1, 1],
             dtype=torch.bool,
@@ -671,7 +685,14 @@ class TrainingSession:
                 enabled=self.device.type == "cuda" and self.config.model.autocast,
             ):
                 preds = self.main_model(features)
-            prefix_loss = compute_loss(preds, repeated_outcomes, mask, self.loss_config)
+            prefix_loss = compute_loss(
+                preds,
+                repeated_outcomes,
+                mask,
+                repeated_balance_score_targets,
+                repeated_balance_score_mask,
+                self.loss_config,
+            )
             (prefix_loss * prefix_weight * loss_scale).backward()
             total_loss += prefix_loss.item() * prefix_weight
         return torch.tensor(total_loss, device=self.device)
@@ -1278,6 +1299,7 @@ def build_session(args: Args) -> TrainingSession:
         loss_config=LossConfig(
             door_weight=config.train.door_weight,
             connection_weight=config.train.connection_weight,
+            balance_weight=config.train.balance_weight,
         ),
         experience=ExperienceStorage(
             len(rooms),

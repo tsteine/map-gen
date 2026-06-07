@@ -498,6 +498,7 @@ def select_candidate_actions(
             Predictions(
                 preds.door_invalid.view(environment_count, candidate_count, -1),
                 preds.connection_invalid.view(environment_count, candidate_count, -1),
+                preds.balance_score.view(environment_count, candidate_count, -1),
             ),
             outcomes,
             group.config,

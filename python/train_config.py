@@ -78,6 +78,7 @@ class TrainConfig(StrictBaseModel):
     hist_c: float
     door_weight: float
     connection_weight: float
+    balance_weight: float
     ema_decay: float
     pipeline_groups: int
     gradient_accumulation_steps: int

@@ -22,6 +22,8 @@ class Predictions:
     door_invalid: torch.Tensor
     # log-odds of invalid connection (lack of return path):
     connection_invalid: torch.Tensor
+    # Predicted balance-model probability of the matched target door:
+    balance_score: torch.Tensor
 
 
 @dataclass
@@ -42,6 +44,7 @@ def get_predictions(raw_preds, output_sizes):
     return Predictions(
         door_invalid=preds[0],
         connection_invalid=preds[1],
+        balance_score=preds[2],
     )
 
 
@@ -106,7 +109,12 @@ class FrontierModel(torch.nn.Module):
         self.map_x = map_x
         self.map_y = map_y
         self.embedding_width = embedding_width
-        self.output_sizes = output_metadata.get_output_sizes()
+        door_output_size, connection_output_size = output_metadata.get_output_sizes()
+        self.output_sizes = (
+            door_output_size,
+            connection_output_size,
+            door_output_size,
+        )
         self.num_connection_outputs = len(output_metadata.connection)
         self.include_inventory = self.features.inventory
         # self.inventory_embedding = torch.nn.Parameter(
@@ -211,6 +219,8 @@ class FrontierModel(torch.nn.Module):
             output_metadata.door, output_metadata.num_door_variants, embedding_width)
         self.connection_output = FactorizedOutcomeHead(
             output_metadata.connection, output_metadata.num_connection_variants, embedding_width)
+        self.balance_score_output = FactorizedOutcomeHead(
+            output_metadata.door, output_metadata.num_door_variants, embedding_width)
 
     def _position_embedding(self, x, y, embedding_x, embedding_y, offset=0):
         x = x.to(torch.int64) + offset
@@ -373,7 +383,15 @@ class FrontierModel(torch.nn.Module):
         X = global_state.unsqueeze(1)
         door = self.door_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
         connection = self.connection_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
-        return get_predictions(torch.cat([door, connection], dim=-1), self.output_sizes)
+        balance_score = self.balance_score_output(
+            X,
+            room_x,
+            room_y,
+            room_placed,
+            self.pos_embedding_x,
+            self.pos_embedding_y,
+        )
+        return get_predictions(torch.cat([door, connection, balance_score], dim=-1), self.output_sizes)
 
 
 class BalanceModel(torch.nn.Module):
