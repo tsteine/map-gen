@@ -22,7 +22,7 @@ class Predictions:
     door_invalid: torch.Tensor
     # log-odds of invalid connection (lack of return path):
     connection_invalid: torch.Tensor
-    # Predicted balance-model probability of the matched target door:
+    # Predicted balance-model log-odds for the matched target door:
     balance_score: torch.Tensor
 
 
