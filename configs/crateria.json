@@ -65,7 +65,7 @@
     "hist_c": 3.0,
     "door_weight": 1.0,
     "connection_weight": 1.0,
-    "balance_weight": 1.0,
+    "balance_weight": 5.0,
     "pipeline_groups": 4,
     "gradient_accumulation_steps": 1
   }

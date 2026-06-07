@@ -68,6 +68,9 @@ class MainLossBreakdown:
     door: float
     connection: float
     balance: float
+    door_contribution: float
+    connection_contribution: float
+    balance_contribution: float
 
 
 class Prefetcher:
@@ -682,7 +685,7 @@ class TrainingSession:
             dtype=torch.bool,
             device=self.device,
         )
-        total_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0)
+        total_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         prefix_weight = 1.0 / prepared_batch.prefix_count
 
         for features in prepared_batch.feature_batches:
@@ -706,6 +709,13 @@ class TrainingSession:
             total_loss.door += prefix_loss.door.item() * prefix_weight
             total_loss.connection += prefix_loss.connection.item() * prefix_weight
             total_loss.balance += prefix_loss.balance.item() * prefix_weight
+            total_loss.door_contribution += prefix_loss.door_contribution.item() * prefix_weight
+            total_loss.connection_contribution += (
+                prefix_loss.connection_contribution.item() * prefix_weight
+            )
+            total_loss.balance_contribution += (
+                prefix_loss.balance_contribution.item() * prefix_weight
+            )
         return total_loss
 
     def train_optimizer_step(self) -> None:
@@ -806,7 +816,7 @@ class TrainingSession:
         self.main_optimizer.param_groups[0]["lr"] = step_config.optimizer.lr
         self.balance_optimizer.param_groups[0]["lr"] = step_config.balance_optimizer.lr
 
-        total_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0)
+        total_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         total_balance_loss = 0.0
         train_batch_count = 0
 
@@ -817,7 +827,7 @@ class TrainingSession:
             self.main_model.zero_grad()
             self.balance_model.zero_grad()
             loss_scale = 1.0 / len(prepared_batches)
-            group_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0)
+            group_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
             group_balance_loss = 0.0
             for prepared_batch in prepared_batches:
                 batch_loss, batch_balance_loss = self.train_batch_backward(
@@ -828,6 +838,9 @@ class TrainingSession:
                 group_loss.door += batch_loss.door
                 group_loss.connection += batch_loss.connection
                 group_loss.balance += batch_loss.balance
+                group_loss.door_contribution += batch_loss.door_contribution
+                group_loss.connection_contribution += batch_loss.connection_contribution
+                group_loss.balance_contribution += batch_loss.balance_contribution
                 group_balance_loss += batch_balance_loss
             self.train_optimizer_step()
             return group_loss, group_balance_loss, len(prepared_batches)
@@ -844,6 +857,9 @@ class TrainingSession:
                 total_loss.door += group_loss.door
                 total_loss.connection += group_loss.connection
                 total_loss.balance += group_loss.balance
+                total_loss.door_contribution += group_loss.door_contribution
+                total_loss.connection_contribution += group_loss.connection_contribution
+                total_loss.balance_contribution += group_loss.balance_contribution
                 total_balance_loss += group_balance_loss
                 train_batch_count += group_count
                 prepared_batch_group = []
@@ -853,17 +869,23 @@ class TrainingSession:
             total_loss.door += group_loss.door
             total_loss.connection += group_loss.connection
             total_loss.balance += group_loss.balance
+            total_loss.door_contribution += group_loss.door_contribution
+            total_loss.connection_contribution += group_loss.connection_contribution
+            total_loss.balance_contribution += group_loss.balance_contribution
             total_balance_loss += group_balance_loss
             train_batch_count += group_count
 
         if train_batch_count == 0:
-            return MainLossBreakdown(0.0, 0.0, 0.0, 0.0), 0.0
+            return MainLossBreakdown(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0), 0.0
         return (
             MainLossBreakdown(
                 total_loss.total / train_batch_count,
                 total_loss.door / train_batch_count,
                 total_loss.connection / train_batch_count,
                 total_loss.balance / train_batch_count,
+                total_loss.door_contribution / train_batch_count,
+                total_loss.connection_contribution / train_batch_count,
+                total_loss.balance_contribution / train_batch_count,
             ),
             total_balance_loss / train_batch_count,
         )
@@ -923,12 +945,19 @@ class TrainingSession:
             )
             balance_preds = self.balance_model(torch.log(generate_config.temperature))
             balance_door_match_ss = compute_balance_door_match_ss(balance_preds)
+        loss_denominator = loss.total + 1e-15
+        door_loss_pct = 100.0 * loss.door_contribution / loss_denominator
+        connection_loss_pct = 100.0 * loss.connection_contribution / loss_denominator
+        main_balance_loss_pct = 100.0 * loss.balance_contribution / loss_denominator
 
         metrics = {
             "loss": loss.total,
             "door_loss": loss.door,
+            "door_loss_pct": door_loss_pct,
             "connection_loss": loss.connection,
+            "connection_loss_pct": connection_loss_pct,
             "main_balance_loss": loss.balance,
+            "main_balance_loss_pct": main_balance_loss_pct,
             "balance_loss": balance_loss,
             "success_rate": success_rate,
             "success_door": success_door,
@@ -960,15 +989,19 @@ class TrainingSession:
 
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
-            "round %s, loss %.4f (door %.4f, conn %.4f, main_bal %.4f), "
+            "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, "
+            "main_bal %.4f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
             "conn %.2f (min %s), ss %.4f, bal_loss %.4f, "
             "bal_ss %.4f, frac %.4f",
             round_idx,
             loss.total,
             loss.door,
+            door_loss_pct,
             loss.connection,
+            connection_loss_pct,
             loss.balance,
+            main_balance_loss_pct,
             scalar(success_rate),
             scalar(avg_invalid),
             scalar(min_invalid),

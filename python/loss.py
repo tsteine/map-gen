@@ -19,6 +19,9 @@ class LossBreakdown:
     door: torch.Tensor
     connection: torch.Tensor
     balance: torch.Tensor
+    door_contribution: torch.Tensor
+    connection_contribution: torch.Tensor
+    balance_contribution: torch.Tensor
 
 
 def masked_binary_cross_entropy_loss(preds: torch.Tensor, outcomes: torch.Tensor, mask: torch.Tensor, weight: float) -> torch.Tensor:
@@ -57,14 +60,19 @@ def compute_loss_breakdown(
         mask & balance_score_mask,
         config.balance_weight,
     )
-    mean_loss = (door_loss + conn_loss + balance_loss) / (
-        door_wt + conn_wt + balance_wt + 1e-15
-    )
+    total_weight = door_wt + conn_wt + balance_wt + 1e-15
+    door_contribution = door_loss / total_weight
+    connection_contribution = conn_loss / total_weight
+    balance_contribution = balance_loss / total_weight
+    mean_loss = door_contribution + connection_contribution + balance_contribution
     return LossBreakdown(
         total=mean_loss,
         door=door_loss / (door_wt + 1e-15),
         connection=conn_loss / (conn_wt + 1e-15),
         balance=balance_loss / (balance_wt + 1e-15),
+        door_contribution=door_contribution,
+        connection_contribution=connection_contribution,
+        balance_contribution=balance_contribution,
     )
 
 
