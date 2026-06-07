@@ -1287,6 +1287,19 @@ impl Environment {
         );
     }
 
+    pub fn write_door_matches(
+        &self,
+        left: &mut [i16],
+        right: &mut [i16],
+        up: &mut [i16],
+        down: &mut [i16],
+    ) {
+        write_direction_door_matches(&self.door_matches[Direction::Left as usize], left);
+        write_direction_door_matches(&self.door_matches[Direction::Right as usize], right);
+        write_direction_door_matches(&self.door_matches[Direction::Up as usize], up);
+        write_direction_door_matches(&self.door_matches[Direction::Down as usize], down);
+    }
+
     pub fn outcomes(&self, common: &CommonData) -> Outcomes {
         let mut door_valid = vec![];
         for dir in 0..NUM_DIRS {
@@ -1391,6 +1404,17 @@ fn add_orientation_match_counts(
         if row_idx == DirDoorIdx::MAX {
             counts[unmatched_row * (column_count + 1) + column_idx] += 1;
         }
+    }
+}
+
+fn write_direction_door_matches(matches: &[DirDoorIdx], output: &mut [i16]) {
+    debug_assert_eq!(matches.len(), output.len());
+    for (dst, &door_idx) in output.iter_mut().zip(matches) {
+        *dst = if door_idx == DirDoorIdx::MAX {
+            -1
+        } else {
+            i16::from(door_idx)
+        };
     }
 }
 
@@ -1685,6 +1709,17 @@ mod tests {
 
         assert_eq!(horizontal_counts, vec![1, 0, 0, 0, 0, 1, 0, 1, 0]);
         assert_eq!(vertical_counts, vec![0]);
+
+        let mut left = vec![-1; 2];
+        let mut right = vec![-1; 2];
+        let mut up = vec![];
+        let mut down = vec![];
+        env.write_door_matches(&mut left, &mut right, &mut up, &mut down);
+
+        assert_eq!(left, vec![0, -1]);
+        assert_eq!(right, vec![0, -1]);
+        assert_eq!(up, Vec::<i16>::new());
+        assert_eq!(down, Vec::<i16>::new());
     }
 
     #[test]

@@ -99,6 +99,20 @@ class DoorMatchCounts:
 
 
 @dataclass
+class DoorMatches:
+    left: torch.Tensor
+    right: torch.Tensor
+    up: torch.Tensor
+    down: torch.Tensor
+
+    def to(self, device: torch.device) -> "DoorMatches":
+        return DoorMatches(*(value.to(device) for value in vars(self).values()))
+
+    def slice(self, start: int, end: int) -> "DoorMatches":
+        return DoorMatches(*(value[start:end] for value in vars(self).values()))
+
+
+@dataclass
 class Features:
     inventory: torch.Tensor
     room_x: torch.Tensor
@@ -321,6 +335,15 @@ class EnvironmentGroup:
         return DoorMatchCounts(
             horizontal=torch.from_numpy(horizontal).to(device=device, dtype=torch.int64),
             vertical=torch.from_numpy(vertical).to(device=device, dtype=torch.int64),
+        )
+
+    def get_door_matches(self, device: torch.device) -> DoorMatches:
+        left, right, up, down = self.env.get_door_matches()
+        return DoorMatches(
+            left=torch.from_numpy(left).to(device=device, dtype=torch.int64),
+            right=torch.from_numpy(right).to(device=device, dtype=torch.int64),
+            up=torch.from_numpy(up).to(device=device, dtype=torch.int64),
+            down=torch.from_numpy(down).to(device=device, dtype=torch.int64),
         )
 
     @staticmethod

@@ -24,6 +24,14 @@ class Predictions:
     connection_invalid: torch.Tensor
 
 
+@dataclass
+class BalancePredictions:
+    left: torch.Tensor
+    right: torch.Tensor
+    up: torch.Tensor
+    down: torch.Tensor
+
+
 def get_predictions(raw_preds, output_sizes):
     preds = []
     col = 0
@@ -366,3 +374,65 @@ class FrontierModel(torch.nn.Module):
         door = self.door_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
         connection = self.connection_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
         return get_predictions(torch.cat([door, connection], dim=-1), self.output_sizes)
+
+
+class BalanceModel(torch.nn.Module):
+    def __init__(
+        self,
+        left_count: int,
+        right_count: int,
+        up_count: int,
+        down_count: int,
+        hidden_width: int,
+        num_layers: int,
+    ):
+        super().__init__()
+        if hidden_width <= 0:
+            raise ValueError("balance model hidden_width must be greater than zero")
+        if num_layers <= 0:
+            raise ValueError("balance model num_layers must be greater than zero")
+        self.left_count = left_count
+        self.right_count = right_count
+        self.up_count = up_count
+        self.down_count = down_count
+        self.output_width = (
+            left_count * right_count
+            + right_count * left_count
+            + up_count * down_count
+            + down_count * up_count
+        )
+
+        layers: list[torch.nn.Module] = []
+        input_width = 1
+        for _ in range(num_layers):
+            layers.extend([
+                torch.nn.Linear(input_width, hidden_width),
+                torch.nn.GELU(),
+            ])
+            input_width = hidden_width
+        layers.append(torch.nn.Linear(input_width, self.output_width))
+        self.net = torch.nn.Sequential(*layers)
+
+    def forward(self, log_temperature: torch.Tensor) -> BalancePredictions:
+        raw = self.net(log_temperature.to(next(self.parameters()).dtype).unsqueeze(-1))
+        offset = 0
+        left_size = self.left_count * self.right_count
+        right_size = self.right_count * self.left_count
+        up_size = self.up_count * self.down_count
+        down_size = self.down_count * self.up_count
+        left = raw[:, offset:offset + left_size].reshape(
+            log_temperature.shape[0], self.left_count, self.right_count
+        )
+        offset += left_size
+        right = raw[:, offset:offset + right_size].reshape(
+            log_temperature.shape[0], self.right_count, self.left_count
+        )
+        offset += right_size
+        up = raw[:, offset:offset + up_size].reshape(
+            log_temperature.shape[0], self.up_count, self.down_count
+        )
+        offset += up_size
+        down = raw[:, offset:offset + down_size].reshape(
+            log_temperature.shape[0], self.down_count, self.up_count
+        )
+        return BalancePredictions(left, right, up, down)

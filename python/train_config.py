@@ -33,6 +33,11 @@ class OptimizerConfig(StrictBaseModel):
     beta2: float
 
 
+class BalanceModelConfig(StrictBaseModel):
+    hidden_width: int
+    num_layers: int
+
+
 class GenerationConfig(StrictBaseModel):
     num_environments: int
     num_iterations: int
@@ -86,6 +91,8 @@ class Config(StrictBaseModel):
     checkpoint_period: int
     model: ModelConfig
     optimizer: OptimizerConfig
+    balance_model: BalanceModelConfig
+    balance_optimizer: OptimizerConfig
     generation: GenerationConfig
     features: FeatureConfig
     train: TrainConfig

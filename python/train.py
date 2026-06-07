@@ -19,11 +19,11 @@ import map_gen
 from aim import Run
 from safetensors import safe_open
 
-from env import Actions, DoorMatchCounts, Engine, EpisodeData, GenerateConfig, Outcomes, Features
+from env import Actions, DoorMatchCounts, DoorMatches, Engine, EpisodeData, GenerateConfig, Outcomes, Features
 from experience import ExperienceStorage
 from generate import run_generation_groups
-from loss import LossConfig, compute_loss
-from model import FrontierModel
+from loss import LossConfig, compute_balance_door_match_ss, compute_balance_loss, compute_loss
+from model import BalanceModel, FrontierModel
 from train_config import Config, episodes_per_round, instantiate_scheduleable_config, validate_config
 
 
@@ -51,6 +51,7 @@ class PreparedTrainBatch:
     kind: Literal["fresh", "replay"]
     episode_data: EpisodeData
     outcomes: Outcomes
+    door_matches: DoorMatches
     prefix_count: int
     feature_batches: list[Features]
 
@@ -113,6 +114,7 @@ def without_prefix(
 
 def optimizer_checkpoint_state(
     optimizer: torch.optim.Optimizer,
+    prefix: str,
 ) -> tuple[dict[str, torch.Tensor], list[dict[str, Any]], dict[str, dict[str, Any]]]:
     state_dict = optimizer.state_dict()
     tensors = {}
@@ -121,7 +123,7 @@ def optimizer_checkpoint_state(
         param_scalar_state = {}
         for state_name, value in param_state.items():
             if torch.is_tensor(value):
-                tensors[f"optimizer.state.{param_id}.{state_name}"] = as_checkpoint_tensor(value)
+                tensors[f"{prefix}.state.{param_id}.{state_name}"] = as_checkpoint_tensor(value)
             else:
                 param_scalar_state[state_name] = value
         if param_scalar_state:
@@ -134,13 +136,14 @@ def load_optimizer_checkpoint_state(
     tensors: dict[str, torch.Tensor],
     param_groups: list[dict[str, Any]],
     scalar_state: dict[str, dict[str, Any]],
+    prefix: str,
 ) -> None:
     state: dict[int, dict[str, Any]] = {}
-    prefix = "optimizer.state."
+    state_prefix = f"{prefix}.state."
     for key, value in tensors.items():
-        if not key.startswith(prefix):
+        if not key.startswith(state_prefix):
             continue
-        suffix = key[len(prefix):]
+        suffix = key[len(state_prefix):]
         param_id_text, state_name = suffix.split(".", 1)
         state.setdefault(int(param_id_text), {})[state_name] = value
     for param_id_text, param_scalar_state in scalar_state.items():
@@ -169,6 +172,16 @@ def frontier_model_kwargs(
     }
 
 
+def count_room_doors_by_direction(rooms: list[dict], direction: str) -> int:
+    return sum(
+        1
+        for room in rooms
+        for door_group in room["doors"]
+        for door in door_group
+        if door["direction"] == direction
+    )
+
+
 def create_generation_environment_groups_for_device(
     config: Config,
     engine: Engine,
@@ -195,6 +208,26 @@ def create_generation_environment_groups_for_device(
         )
         for group_index in range(config.generation.pipeline_groups)
     ]
+
+
+def create_generate_config(
+    config: Config,
+    episode_length: int,
+    num_envs: int,
+    device: torch.device,
+) -> GenerateConfig:
+    return GenerateConfig(
+        episode_length=episode_length,
+        max_candidates=config.generation.action_candidates,
+        temperature=torch.full(
+            [num_envs],
+            config.generation.temperature,
+            dtype=torch.float32,
+            device=device,
+        ),
+        lookahead_outcomes=config.generation.lookahead_outcomes,
+        autocast=config.model.generation_autocast,
+    )
 
 
 @dataclass
@@ -252,17 +285,11 @@ def run_generation_process_task(
     state.model.load_state_dict(model_state)
     generation_config = Config.model_validate_json(generation_config_json)
     gen_configs = [
-        GenerateConfig(
-            episode_length=state.episode_length,
-            max_candidates=generation_config.generation.action_candidates,
-            temperature=torch.full(
-                [env.num_envs],
-                generation_config.generation.temperature,
-                dtype=torch.float32,
-                device=state.device,
-            ),
-            lookahead_outcomes=generation_config.generation.lookahead_outcomes,
-            autocast=generation_config.model.generation_autocast,
+        create_generate_config(
+            generation_config,
+            state.episode_length,
+            env.num_envs,
+            state.device,
         )
         for env in state.envs
     ]
@@ -306,7 +333,9 @@ class TrainingSession:
     train_batch_envs: list
     main_model: torch.nn.Module
     ema_model: torch.nn.Module
+    balance_model: torch.nn.Module
     main_optimizer: torch.optim.Optimizer
+    balance_optimizer: torch.optim.Optimizer
     aim_run: Run
     loss_config: LossConfig
     experience: ExperienceStorage
@@ -381,16 +410,25 @@ class TrainingSession:
         tensors = {}
         tensors.update(prefixed_state_dict("main_model", self.main_model))
         tensors.update(prefixed_state_dict("ema_model", self.ema_model))
+        tensors.update(prefixed_state_dict("balance_model", self.balance_model))
         optimizer_tensors, optimizer_param_groups, optimizer_scalar_state = optimizer_checkpoint_state(
-            self.main_optimizer
+            self.main_optimizer,
+            "optimizer",
+        )
+        balance_optimizer_tensors, balance_optimizer_param_groups, balance_optimizer_scalar_state = optimizer_checkpoint_state(
+            self.balance_optimizer,
+            "balance_optimizer",
         )
         tensors.update(optimizer_tensors)
+        tensors.update(balance_optimizer_tensors)
         metadata = {
             "format": "map-gen-training-session-checkpoint-v1",
             "num_episodes": str(self.num_episodes),
             "experience_num_files": str(self.experience.num_files),
             "optimizer_param_groups": json.dumps(optimizer_param_groups),
             "optimizer_scalar_state": json.dumps(optimizer_scalar_state),
+            "balance_optimizer_param_groups": json.dumps(balance_optimizer_param_groups),
+            "balance_optimizer_scalar_state": json.dumps(balance_optimizer_scalar_state),
         }
         temp_path = path.with_suffix(f"{path.suffix}.tmp")
         safetensors.torch.save_file(tensors, temp_path, metadata=metadata)
@@ -406,11 +444,20 @@ class TrainingSession:
 
         self.main_model.load_state_dict(without_prefix(tensors, "main_model"))
         self.ema_model.load_state_dict(without_prefix(tensors, "ema_model"))
+        self.balance_model.load_state_dict(without_prefix(tensors, "balance_model"))
         load_optimizer_checkpoint_state(
             self.main_optimizer,
             tensors,
             json.loads(metadata["optimizer_param_groups"]),
             json.loads(metadata["optimizer_scalar_state"]),
+            "optimizer",
+        )
+        load_optimizer_checkpoint_state(
+            self.balance_optimizer,
+            tensors,
+            json.loads(metadata["balance_optimizer_param_groups"]),
+            json.loads(metadata["balance_optimizer_scalar_state"]),
+            "balance_optimizer",
         )
         self.num_episodes = int(metadata["num_episodes"])
         if self.num_episodes % self.episodes_per_round != 0:
@@ -521,10 +568,12 @@ class TrainingSession:
             train_episode_data,
             env,
         )
+        door_matches = env.get_door_matches(self.device)
         return PreparedTrainBatch(
             kind,
             train_episode_data,
             train_outcomes,
+            door_matches,
             prefix_count=prefix_count,
             feature_batches=feature_batches,
         )
@@ -554,6 +603,7 @@ class TrainingSession:
             replay_episode_data,
             env,
         )
+        replay_door_matches = env.get_door_matches(self.device)
         env.finish()
         replay_episode_data = replay_episode_data.to(self.device)
         replay_outcomes = env.get_outcomes(self.device)
@@ -561,6 +611,7 @@ class TrainingSession:
             task.kind,
             replay_episode_data,
             replay_outcomes,
+            replay_door_matches,
             prefix_count=prefix_count,
             feature_batches=feature_batches,
         )
@@ -569,13 +620,27 @@ class TrainingSession:
         self,
         prepared_batch: PreparedTrainBatch,
         loss_scale: float,
-    ) -> float:
+    ) -> tuple[float, float]:
         loss = self.train_feature_batch_backward(prepared_batch, loss_scale)
+        balance_loss = self.train_balance_batch_backward(prepared_batch, loss_scale)
 
         if not torch.isfinite(loss):
             raise RuntimeError(f"non-finite loss before backward: {loss.item()}")
+        if not torch.isfinite(balance_loss):
+            raise RuntimeError(f"non-finite balance loss before backward: {balance_loss.item()}")
 
-        return loss.item()
+        return loss.item(), balance_loss.item()
+
+    def train_balance_batch_backward(
+        self,
+        prepared_batch: PreparedTrainBatch,
+        loss_scale: float,
+    ) -> torch.Tensor:
+        log_temperature = torch.log(prepared_batch.episode_data.temperature)
+        preds = self.balance_model(log_temperature)
+        balance_loss = compute_balance_loss(preds, prepared_batch.door_matches)
+        (balance_loss * loss_scale).backward()
+        return balance_loss
 
     def train_feature_batch_backward(
         self,
@@ -615,7 +680,14 @@ class TrainingSession:
         grad_norm = torch.nn.utils.clip_grad_norm_(self.main_model.parameters(), max_norm=1.0)
         if not torch.isfinite(grad_norm):
             raise RuntimeError(f"non-finite gradient norm: {grad_norm.item()}")
+        balance_grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.balance_model.parameters(),
+            max_norm=1.0,
+        )
+        if not torch.isfinite(balance_grad_norm):
+            raise RuntimeError(f"non-finite balance gradient norm: {balance_grad_norm.item()}")
         self.main_optimizer.step()
+        self.balance_optimizer.step()
         self.update_ema_model()
 
     def generate_round(self) -> tuple[EpisodeData, Outcomes, DoorMatchCounts, RustProfileReport]:
@@ -698,26 +770,32 @@ class TrainingSession:
         episode_data: EpisodeData,
         gen_outcomes: Outcomes,
         step_config: Config,
-    ) -> float:
+    ) -> tuple[float, float]:
         self.main_optimizer.param_groups[0]["lr"] = step_config.optimizer.lr
+        self.balance_optimizer.param_groups[0]["lr"] = step_config.balance_optimizer.lr
 
         total_loss = 0.0
+        total_balance_loss = 0.0
         train_batch_count = 0
 
         def prepare_train_task(task: TrainBatchTask) -> PreparedTrainBatch:
             return self.prepare_train_batch_task(task, episode_data, gen_outcomes)
 
-        def train_prepared_batch_group(prepared_batches: list[PreparedTrainBatch]) -> tuple[float, int]:
+        def train_prepared_batch_group(prepared_batches: list[PreparedTrainBatch]) -> tuple[float, float, int]:
             self.main_model.zero_grad()
+            self.balance_model.zero_grad()
             loss_scale = 1.0 / len(prepared_batches)
             group_loss = 0.0
+            group_balance_loss = 0.0
             for prepared_batch in prepared_batches:
-                group_loss += self.train_batch_backward(
+                batch_loss, batch_balance_loss = self.train_batch_backward(
                     prepared_batch,
                     loss_scale,
                 )
+                group_loss += batch_loss
+                group_balance_loss += batch_balance_loss
             self.train_optimizer_step()
-            return group_loss, len(prepared_batches)
+            return group_loss, group_balance_loss, len(prepared_batches)
 
         prepared_batch_group = []
         for prepared_batch in self.train_batch_prefetcher.map(
@@ -726,22 +804,27 @@ class TrainingSession:
         ):
             prepared_batch_group.append(prepared_batch)
             if len(prepared_batch_group) == self.config.train.gradient_accumulation_steps:
-                group_loss, group_count = train_prepared_batch_group(prepared_batch_group)
+                group_loss, group_balance_loss, group_count = train_prepared_batch_group(prepared_batch_group)
                 total_loss += group_loss
+                total_balance_loss += group_balance_loss
                 train_batch_count += group_count
                 prepared_batch_group = []
         if prepared_batch_group:
-            group_loss, group_count = train_prepared_batch_group(prepared_batch_group)
+            group_loss, group_balance_loss, group_count = train_prepared_batch_group(prepared_batch_group)
             total_loss += group_loss
+            total_balance_loss += group_balance_loss
             train_batch_count += group_count
 
-        return total_loss / train_batch_count if train_batch_count > 0 else 0.0
+        if train_batch_count == 0:
+            return 0.0, 0.0
+        return total_loss / train_batch_count, total_balance_loss / train_batch_count
 
     def log_outcomes(
         self,
         outcomes: Outcomes,
         door_match_counts: DoorMatchCounts,
         loss: float,
+        balance_loss: float,
         round_idx: int,
         step_config: Config,
     ) -> None:
@@ -782,9 +865,19 @@ class TrainingSession:
             torch.sum(right_door_match_p.square()) + \
             torch.sum(up_door_match_p.square()) + \
             torch.sum(down_door_match_p.square())
+        with torch.no_grad():
+            generate_config = create_generate_config(
+                step_config,
+                self.episode_length,
+                1,
+                self.device,
+            )
+            balance_preds = self.balance_model(torch.log(generate_config.temperature))
+            balance_door_match_ss = compute_balance_door_match_ss(balance_preds)
 
         metrics = {
             "loss": loss,
+            "balance_loss": balance_loss,
             "success_rate": success_rate,
             "success_door": success_door,
             "success_conn": success_conn,
@@ -805,6 +898,7 @@ class TrainingSession:
             "door_match_up_top2": up_topk[1],
             "door_match_up_top3": up_topk[2],
             "door_match_ss": door_match_ss,
+            "balance_door_match_ss": balance_door_match_ss,
         }
         for name, value in metrics.items():
             self.aim_run.track(value, name=name, step=round_idx)
@@ -815,7 +909,8 @@ class TrainingSession:
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
             "round %s, loss %.4f, succ %.4f, total %.2f (min %s), door %.2f (min %s), "
-            "conn %.2f (min %s), door_match_ss %.4f, schedule_progress %.4f",
+            "conn %.2f (min %s), ss %.4f, bal_loss %.4f, "
+            "bal_ss %.4f, frac %.4f",
             round_idx,
             loss,
             scalar(success_rate),
@@ -826,6 +921,8 @@ class TrainingSession:
             scalar(avg_conn),
             scalar(min_conn),
             scalar(door_match_ss),
+            balance_loss,
+            scalar(balance_door_match_ss),
             schedule_progress,
         )
         # logging.info(
@@ -880,7 +977,7 @@ class TrainingSession:
                 episode_data, gen_outcomes, door_match_counts, generation_profile = self.generate_round()
                 self.num_episodes += self.episodes_per_round
                 step_config = instantiate_scheduleable_config(self.config, self.num_episodes)
-                avg_loss = self.train_round(episode_data, gen_outcomes, step_config)
+                avg_loss, avg_balance_loss = self.train_round(episode_data, gen_outcomes, step_config)
 
                 self.experience.store(episode_data)
 
@@ -888,6 +985,7 @@ class TrainingSession:
                     gen_outcomes,
                     door_match_counts,
                     avg_loss,
+                    avg_balance_loss,
                     round_idx,
                     step_config,
                 )
@@ -1070,11 +1168,21 @@ def create_models(config: Config, rooms: list[dict], engine: Engine, device: tor
     ema_model = copy.deepcopy(main_model).to(device)
     ema_model.requires_grad_(False)
     ema_model.eval()
+    balance_model = BalanceModel(
+        left_count=count_room_doors_by_direction(rooms, "left"),
+        right_count=count_room_doors_by_direction(rooms, "right"),
+        up_count=count_room_doors_by_direction(rooms, "up"),
+        down_count=count_room_doors_by_direction(rooms, "down"),
+        hidden_width=config.balance_model.hidden_width,
+        num_layers=config.balance_model.num_layers,
+    ).to(device)
+    balance_num_params = sum(p.numel() for p in balance_model.parameters())
+    logging.info(f"Balance model parameters: {balance_num_params}")
     if config.model.compile:
         main_model = torch.compile(main_model)
         ema_model = torch.compile(ema_model)
 
-    return main_model, ema_model
+    return main_model, ema_model, balance_model
 
 
 def create_generation_process_executors(
@@ -1125,7 +1233,7 @@ def build_session(args: Args) -> TrainingSession:
 
     engine = Engine(rooms, config.features)
     train_batch_envs = create_train_batch_environment_groups(config, engine)
-    main_model, ema_model = create_models(
+    main_model, ema_model, balance_model = create_models(
         config,
         rooms,
         engine,
@@ -1144,6 +1252,11 @@ def build_session(args: Args) -> TrainingSession:
         lr=initial_config.optimizer.lr,
         betas=(config.optimizer.beta1, config.optimizer.beta2),
     )
+    balance_optimizer = torch.optim.Adam(
+        balance_model.parameters(),
+        lr=initial_config.balance_optimizer.lr,
+        betas=(config.balance_optimizer.beta1, config.balance_optimizer.beta2),
+    )
     aim_run = Run(experiment=config.experiment_name, system_tracking_interval=None)
     aim_run["config"] = json.loads(config.model_dump_json())
 
@@ -1158,7 +1271,9 @@ def build_session(args: Args) -> TrainingSession:
         train_batch_envs=train_batch_envs,
         main_model=main_model,
         ema_model=ema_model,
+        balance_model=balance_model,
         main_optimizer=main_optimizer,
+        balance_optimizer=balance_optimizer,
         aim_run=aim_run,
         loss_config=LossConfig(
             door_weight=config.train.door_weight,
