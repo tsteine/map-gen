@@ -764,17 +764,24 @@ class TrainingSession:
 
         horizontal_door_match_counts = door_match_counts.horizontal[:-1, :-1].to(torch.float64)
         vertical_door_match_counts = door_match_counts.vertical[:-1, :-1].to(torch.float64)
-        horizontal_door_match_proportions = (
+        left_door_match_p = (
             horizontal_door_match_counts / torch.sum(horizontal_door_match_counts, dim=1, keepdim=True)
         )
-        vertical_door_match_proportions = (
+        right_door_match_p = (
+            horizontal_door_match_counts / torch.sum(horizontal_door_match_counts, dim=0, keepdim=True)
+        )
+        up_door_match_p = (
             vertical_door_match_counts / torch.sum(vertical_door_match_counts, dim=1, keepdim=True)
         )
-        horizontal_topk = torch.topk(horizontal_door_match_proportions.flatten(), k=3).values
-        vertical_topk = torch.topk(vertical_door_match_proportions.flatten(), k=3).values
-        door_match_sum_squares = torch.sum(horizontal_door_match_proportions.square()) + torch.sum(
-            vertical_door_match_proportions.square()
+        down_door_match_p = (
+            vertical_door_match_counts / torch.sum(vertical_door_match_counts, dim=0, keepdim=True)
         )
+        left_topk = torch.topk(left_door_match_p.flatten(), k=3).values
+        up_topk = torch.topk(up_door_match_p.flatten(), k=3).values
+        door_match_ss = torch.sum(left_door_match_p.square()) + \
+            torch.sum(right_door_match_p.square()) + \
+            torch.sum(up_door_match_p.square()) + \
+            torch.sum(down_door_match_p.square())
 
         metrics = {
             "loss": loss,
@@ -791,13 +798,13 @@ class TrainingSession:
             "lr": step_config.optimizer.lr,
             "temperature": step_config.generation.temperature,
             "action_candidates": step_config.generation.action_candidates,
-            "door_match_horizontal_top1": horizontal_topk[0],
-            "door_match_horizontal_top2": horizontal_topk[1],
-            "door_match_horizontal_top3": horizontal_topk[2],
-            "door_match_vertical_top1": vertical_topk[0],
-            "door_match_vertical_top2": vertical_topk[1],
-            "door_match_vertical_top3": vertical_topk[2],
-            "door_match_sum_squares": door_match_sum_squares,
+            "door_match_left_top1": left_topk[0],
+            "door_match_left_top2": left_topk[1],
+            "door_match_left_top3": left_topk[2],
+            "door_match_up_top1": up_topk[0],
+            "door_match_up_top2": up_topk[1],
+            "door_match_up_top3": up_topk[2],
+            "door_match_ss": door_match_ss,
         }
         for name, value in metrics.items():
             self.aim_run.track(value, name=name, step=round_idx)
@@ -818,7 +825,7 @@ class TrainingSession:
             scalar(min_door),
             scalar(avg_conn),
             scalar(min_conn),
-            scalar(door_match_sum_squares),
+            scalar(door_match_ss),
             schedule_progress,
         )
         # logging.info(

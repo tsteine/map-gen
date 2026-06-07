@@ -1,32 +1,32 @@
 {
-  "experiment_name": "crateria-initial-testing",
+  "experiment_name": "crateria-testing",
   "room_set": "room_definitions/crateria.json",
-  "knot_episodes": [0, 1000000, 4000000],
-  "checkpoint_period": 50,
   "map_size": [72, 72],
+  "knot_episodes": [0, 50000, 300000, 2000000],
+  "checkpoint_period": 100,
   "model": {
     "compile": true,
     "autocast": true,
-    "generation_autocast": false,
+    "generation_autocast": true,
     "embedding_width": 256,
     "hidden_width": 256,
     "num_layers": 2
   },
   "optimizer": {
-    "lr": 0.0005,
+    "lr": {"log": [0.001, 0.001, 0.001, 0.0001]},
     "beta1": 0.95,
     "beta2": 0.99
   },
   "generation": {
     "num_environments": 2048,
-    "num_iterations": 1,
-    "num_devices": 1,
-    "pipeline_groups": 1,
-    "action_candidates": 8,
+    "num_iterations": 4,
+    "num_devices": 2,
+    "pipeline_groups": 2,
+    "action_candidates": {"log": [1, 4, 8, 16]},
     "lookahead_outcomes": false,
-    "temperature": {"linear": [10.0, 0.03, 0.03]},
-    "frontier_neighbor_algorithm": "delaunay",
-    "frontier_neighbor_count": 4,
+    "temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
+    "frontier_neighbor_algorithm": "nearest-exclusive",
+    "frontier_neighbor_count": 1,
     "frontier_window_size": 16,
     "num_threads": 32
   },
@@ -48,15 +48,15 @@
   },
   "train": {
     "batch_size": 512,
-    "fresh_pass_factor": 1.0,
-    "replay_pass_factor": 1.0,
+    "fresh_pass_factor": 2.0,
+    "replay_pass_factor": 2.0,
     "sample_period": 16,
     "episodes_per_file": 64,
     "ema_decay": 0.995,
     "hist_c": 3.0,
     "door_weight": 1.0,
     "connection_weight": 1.0,
-    "pipeline_groups": 1,
+    "pipeline_groups": 4,
     "gradient_accumulation_steps": 1
   }
 }
