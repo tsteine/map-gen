@@ -256,7 +256,6 @@ def create_generate_config(
         reward_door=config.generation.reward_door,
         reward_connection=config.generation.reward_connection,
         reward_balance=config.generation.reward_balance,
-        lookahead_outcomes=config.generation.lookahead_outcomes,
         autocast=config.model.generation_autocast,
     )
 

@@ -21,7 +21,6 @@ class GenerateConfig:
     reward_door: float
     reward_connection: float
     reward_balance: float
-    lookahead_outcomes: bool
     autocast: bool
 
 

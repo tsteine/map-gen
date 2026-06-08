@@ -44,7 +44,6 @@ class GenerationConfig(StrictBaseModel):
     num_devices: int
     pipeline_groups: int
     action_candidates: ScheduleableInt
-    lookahead_outcomes: bool
     temperature: ScheduleableFloat
     reward_door: ScheduleableFloat
     reward_connection: ScheduleableFloat

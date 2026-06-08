@@ -2,7 +2,7 @@
   "experiment_name": "norfair-testing",
   "room_set": "room_definitions/norfair.json",
   "map_size": [72, 72],
-  "knot_episodes": [0, 50000, 300000, 4000000],
+  "knot_episodes": [0, 50000, 300000, 4000000, 16000000],
   "checkpoint_period": 100,
   "model": {
     "compile": true,
@@ -13,7 +13,7 @@
     "num_layers": 4
   },
   "optimizer": {
-    "lr": {"log": [0.0005, 0.0005, 0.0005, 0.0001]},
+    "lr": {"log": [0.0005, 0.0005, 0.0005, 0.0001, 0.0001]},
     "beta1": 0.95,
     "beta2": 0.99
   },
@@ -22,7 +22,7 @@
     "num_layers": 1
   },
   "balance_optimizer": {
-    "lr": {"log": [0.001, 0.0001, 0.00005, 0.00002]},
+    "lr": {"log": [0.001, 0.0001, 0.00005, 0.00002, 0.00002]},
     "beta1": 0.95,
     "beta2": 0.99
   },
@@ -31,9 +31,8 @@
     "num_iterations": 4,
     "num_devices": 2,
     "pipeline_groups": 2,
-    "action_candidates": {"log": [1, 4, 8, 16]},
-    "lookahead_outcomes": true,
-    "temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
+    "action_candidates": {"log": [1, 4, 8, 16, 16]},
+    "temperature": {"log": [10.0, 1.0, 0.03, 0.03, 0.03]},
     "reward_door": 1.0,
     "reward_connection": 1.0,
     "reward_balance": 0.2,

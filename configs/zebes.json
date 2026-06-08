@@ -32,7 +32,6 @@
     "num_devices": 2,
     "pipeline_groups": 2,
     "action_candidates": {"log": [1, 4, 8, 32]},
-    "lookahead_outcomes": false,
     "temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
     "reward_door": 1.0,
     "reward_connection": 1.0,
