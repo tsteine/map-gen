@@ -437,6 +437,23 @@ struct FeatureSnapshot {
     scc_dag: SccDag,
 }
 
+struct LookaheadSnapshot {
+    action_len: usize,
+    finished: bool,
+    frontier: HashMap<DoorLocation, Frontier>,
+    room_idx: Option<RoomIdx>,
+    room_used: bool,
+    room_x: Coord,
+    room_y: Coord,
+    geometry_idx: Option<GeometryIdx>,
+    geometry_unused_count: usize,
+    connection_variant_idx: Option<ConnectionVariantIdx>,
+    connection_variant_unused_count: usize,
+    door_matches: Vec<(usize, usize, DirDoorIdx)>,
+    room_part_component: Vec<usize>,
+    scc_dag: SccDag,
+}
+
 impl Environment {
     pub fn new(common: &CommonData, map_size: (Coord, Coord), seed: u64) -> Self {
         Self {
@@ -947,21 +964,21 @@ impl Environment {
     }
 
     fn evaluate_candidate_outcome(
-        &self,
+        &mut self,
         common: &CommonData,
         pre_candidate_outcomes: &Outcomes,
         candidate: Action,
     ) -> Result<CandidateOutcome, String> {
-        let mut env = self.clone_for_lookahead();
-        env.step_for_lookahead(candidate, common);
+        let snapshot = self.apply_lookahead_candidate(candidate, common);
         let mut door_valid = Vec::with_capacity(pre_candidate_outcomes.door_valid.len());
         let mut outcome_idx = 0;
         for dir in 0..NUM_DIRS {
             for i in 0..common.room_dir_door[dir].len() {
                 let before = pre_candidate_outcomes.door_valid[outcome_idx];
                 if before == DoorValidOutcome::Unknown {
-                    let after = env.door_outcome(common, dir, i);
+                    let after = self.door_outcome(common, dir, i);
                     if after == DoorValidOutcome::Invalid {
+                        self.restore_lookahead_candidate(snapshot);
                         return Ok(CandidateOutcome::Rejected);
                     }
                     door_valid.push(after);
@@ -972,10 +989,10 @@ impl Environment {
             }
         }
 
-        let frontier_reachability = if env.finished {
+        let frontier_reachability = if self.finished {
             None
         } else {
-            Some(env.scc_dag_with_merged_frontiers())
+            Some(self.scc_dag_with_merged_frontiers())
         };
         let mut connections_valid =
             Vec::with_capacity(pre_candidate_outcomes.connections_valid.len());
@@ -983,8 +1000,9 @@ impl Environment {
             let before = pre_candidate_outcomes.connections_valid[connection_idx];
             if before == DoorValidOutcome::Unknown {
                 let after =
-                    env.connection_outcome(common, connection_idx, frontier_reachability.as_ref());
+                    self.connection_outcome(common, connection_idx, frontier_reachability.as_ref());
                 if after == DoorValidOutcome::Invalid {
+                    self.restore_lookahead_candidate(snapshot);
                     return Ok(CandidateOutcome::Rejected);
                 }
                 connections_valid.push(after);
@@ -993,37 +1011,95 @@ impl Environment {
             }
         }
 
+        self.restore_lookahead_candidate(snapshot);
         Ok(CandidateOutcome::Clean(Outcomes {
             door_valid,
             connections_valid,
         }))
     }
 
-    pub fn outcomes_after_candidate(&self, common: &CommonData, candidate: Action) -> Outcomes {
-        let mut env = self.clone_for_lookahead();
-        env.step_for_lookahead(candidate, common);
-        env.outcomes(common)
+    pub fn outcomes_after_candidate(&mut self, common: &CommonData, candidate: Action) -> Outcomes {
+        let snapshot = self.apply_lookahead_candidate(candidate, common);
+        let outcomes = self.outcomes(common);
+        self.restore_lookahead_candidate(snapshot);
+        outcomes
     }
 
-    fn clone_for_lookahead(&self) -> Self {
-        Self {
-            // Lookahead only calls step() and outcomes(); candidate RNG state must not advance.
-            rng: rand::rngs::StdRng::seed_from_u64(0),
-            map_size: self.map_size,
-            actions: self.actions.clone(),
+    fn apply_lookahead_candidate(
+        &mut self,
+        candidate: Action,
+        common: &CommonData,
+    ) -> LookaheadSnapshot {
+        let room_idx =
+            (candidate.room_idx < common.room.len() as RoomIdx).then_some(candidate.room_idx);
+        let geometry_idx = room_idx.map(|room_idx| common.room[room_idx as usize].geometry_idx);
+        let connection_variant_idx =
+            room_idx.map(|room_idx| common.room[room_idx as usize].connection_variant_idx);
+        let mut door_matches = Vec::new();
+        if !self.finished {
+            if let Some(room_idx) = room_idx {
+                for door in &common.room[room_idx as usize].doors {
+                    let door_loc = DoorLocation::new(door, candidate.x, candidate.y);
+                    if let Some(frontier) = self.frontier.get(&door_loc) {
+                        let dir = door.direction as usize;
+                        let opposite_dir = door.direction.opposite() as usize;
+                        door_matches.push((
+                            dir,
+                            door.dir_door_idx as usize,
+                            self.door_matches[dir][door.dir_door_idx as usize],
+                        ));
+                        door_matches.push((
+                            opposite_dir,
+                            frontier.dir_door_idx as usize,
+                            self.door_matches[opposite_dir][frontier.dir_door_idx as usize],
+                        ));
+                    }
+                }
+            }
+        }
+        let snapshot = LookaheadSnapshot {
+            action_len: self.actions.len(),
             finished: self.finished,
             frontier: self.frontier.clone(),
-            door_matches: self.door_matches.clone(),
-            room_used: self.room_used.clone(),
-            room_x: self.room_x.clone(),
-            room_y: self.room_y.clone(),
-            geometry_unused_count: self.geometry_unused_count.clone(),
-            connection_variant_unused_count: self.connection_variant_unused_count.clone(),
+            room_idx,
+            room_used: room_idx.is_some_and(|room_idx| self.room_used[room_idx as usize]),
+            room_x: room_idx.map_or(0, |room_idx| self.room_x[room_idx as usize]),
+            room_y: room_idx.map_or(0, |room_idx| self.room_y[room_idx as usize]),
+            geometry_idx,
+            geometry_unused_count: geometry_idx
+                .map_or(0, |idx| self.geometry_unused_count[idx as usize]),
+            connection_variant_idx,
+            connection_variant_unused_count: connection_variant_idx
+                .map_or(0, |idx| self.connection_variant_unused_count[idx as usize]),
+            door_matches,
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
-            occupancy: Vec::new(),
-            known_outcomes: None,
+        };
+        self.step_for_lookahead(candidate, common);
+        snapshot
+    }
+
+    fn restore_lookahead_candidate(&mut self, snapshot: LookaheadSnapshot) {
+        self.actions.truncate(snapshot.action_len);
+        self.finished = snapshot.finished;
+        self.frontier = snapshot.frontier;
+        if let Some(room_idx) = snapshot.room_idx {
+            self.room_used.set(room_idx as usize, snapshot.room_used);
+            self.room_x[room_idx as usize] = snapshot.room_x;
+            self.room_y[room_idx as usize] = snapshot.room_y;
         }
+        if let Some(geometry_idx) = snapshot.geometry_idx {
+            self.geometry_unused_count[geometry_idx as usize] = snapshot.geometry_unused_count;
+        }
+        if let Some(connection_variant_idx) = snapshot.connection_variant_idx {
+            self.connection_variant_unused_count[connection_variant_idx as usize] =
+                snapshot.connection_variant_unused_count;
+        }
+        for (dir, idx, value) in snapshot.door_matches {
+            self.door_matches[dir][idx] = value;
+        }
+        self.room_part_component = snapshot.room_part_component;
+        self.scc_dag = snapshot.scc_dag;
     }
 
     fn apply_feature_candidate(
