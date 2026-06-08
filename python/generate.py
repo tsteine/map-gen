@@ -115,15 +115,13 @@ def extract_candidate_features(
             candidates.room_idx.numel(),
             sparse_row_count,
         )
-        env.env.get_sparse_features_after_candidates_into(
-            candidates.room_idx.contiguous().cpu().numpy(),
-            candidates.room_x.contiguous().cpu().numpy(),
-            candidates.room_y.contiguous().cpu().numpy(),
+        env.env.pack_sparse_features_after_candidates_into(
+            candidates.room_idx.shape[0],
+            candidates.room_idx.shape[1],
             0,
             frontier_count,
             sparse_row_count,
             worker_sparse_row_counts,
-            True,
             feature_slot.inventory.numpy(),
             feature_slot.room_x.numpy(),
             feature_slot.room_y.numpy(),

@@ -306,14 +306,6 @@ class EnvironmentGroup:
             room_y=torch.from_numpy(room_y).to(device),
         )
 
-    def get_candidates(self, max_candidates: int, device: torch.device) -> Actions:
-        room_idx, room_x, room_y = self.env.get_candidates(max_candidates)
-        return Actions(
-            room_idx=torch.from_numpy(room_idx).to(device),
-            room_x=torch.from_numpy(room_x).to(device),
-            room_y=torch.from_numpy(room_y).to(device),
-        )
-
     def get_candidates_with_outcomes(
         self, max_candidates: int, device: torch.device
     ) -> tuple[Actions, Outcomes, Outcomes, SparseFeatureRequirements]:

@@ -916,13 +916,6 @@ impl Environment {
         candidates
     }
 
-    pub fn get_candidates(&mut self, common: &CommonData, max_candidates: usize) -> Vec<Action> {
-        let mut candidates = self.get_all_candidates(common);
-        candidates.shuffle(&mut self.rng);
-        candidates.truncate(max_candidates);
-        candidates
-    }
-
     pub fn get_filtered_candidates_with_outcomes(
         &mut self,
         common: &CommonData,

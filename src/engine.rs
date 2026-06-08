@@ -21,12 +21,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const PROFILE_METRIC_COUNT: usize = 22;
+const PROFILE_METRIC_COUNT: usize = 21;
 const PROFILE_METRIC_NAMES: [&str; PROFILE_METRIC_COUNT] = [
     "worker.clear",
     "worker.finish",
     "worker.step",
-    "worker.get_candidates",
     "worker.get_candidates_with_outcomes",
     "worker.get_actions",
     "worker.get_outcomes",
@@ -199,12 +198,6 @@ enum WorkerCommand {
         room_x: InputShard<Coord>,
         room_y: InputShard<Coord>,
     },
-    GetCandidates {
-        max_candidates: usize,
-        room_idx: OutputShard<RoomIdx>,
-        room_x: OutputShard<Coord>,
-        room_y: OutputShard<Coord>,
-    },
     GetCandidatesWithOutcomes {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
@@ -301,18 +294,17 @@ impl WorkerCommand {
             WorkerCommand::Clear => Some(0),
             WorkerCommand::Finish => Some(1),
             WorkerCommand::Step { .. } => Some(2),
-            WorkerCommand::GetCandidates { .. } => Some(3),
-            WorkerCommand::GetCandidatesWithOutcomes { .. } => Some(4),
-            WorkerCommand::GetActions { .. } => Some(5),
-            WorkerCommand::GetOutcomes { .. } => Some(6),
-            WorkerCommand::GetDoorMatchCounts { .. } => Some(7),
-            WorkerCommand::GetDoorMatches { .. } => Some(8),
-            WorkerCommand::GetFeatures { .. } => Some(9),
-            WorkerCommand::GetFeaturesAfterCandidates { .. } => Some(10),
-            WorkerCommand::GetSparseFeaturesAfterCandidates { .. } => Some(11),
-            WorkerCommand::GetFeatureFrontierCountAfterCandidates { .. } => Some(12),
-            WorkerCommand::PackFeatures { .. } => Some(13),
-            WorkerCommand::PackSparseFeatures { .. } => Some(13),
+            WorkerCommand::GetCandidatesWithOutcomes { .. } => Some(3),
+            WorkerCommand::GetActions { .. } => Some(4),
+            WorkerCommand::GetOutcomes { .. } => Some(5),
+            WorkerCommand::GetDoorMatchCounts { .. } => Some(6),
+            WorkerCommand::GetDoorMatches { .. } => Some(7),
+            WorkerCommand::GetFeatures { .. } => Some(8),
+            WorkerCommand::GetFeaturesAfterCandidates { .. } => Some(9),
+            WorkerCommand::GetSparseFeaturesAfterCandidates { .. } => Some(10),
+            WorkerCommand::GetFeatureFrontierCountAfterCandidates { .. } => Some(11),
+            WorkerCommand::PackFeatures { .. } => Some(12),
+            WorkerCommand::PackSparseFeatures { .. } => Some(12),
             WorkerCommand::StepKnown { .. } => Some(20),
             WorkerCommand::Shutdown => None,
         }
@@ -459,33 +451,6 @@ fn worker_loop(
                         },
                         &common_data,
                     );
-                }
-                WorkerResponse::Done
-            }
-            WorkerCommand::GetCandidates {
-                max_candidates,
-                room_idx,
-                room_x,
-                room_y,
-            } => {
-                // SAFETY: The main thread guarantees that for the duration of this command,
-                // the output slices remain valid and that no other thread accesses them.
-                let room_idx = unsafe { room_idx.into_mut_slice() };
-                let room_x = unsafe { room_x.into_mut_slice() };
-                let room_y = unsafe { room_y.into_mut_slice() };
-                debug_assert_eq!(room_idx.len(), environments.len() * max_candidates);
-                debug_assert_eq!(room_x.len(), environments.len() * max_candidates);
-                debug_assert_eq!(room_y.len(), environments.len() * max_candidates);
-
-                for (env_idx, env) in environments.iter_mut().enumerate() {
-                    let candidates = env.get_candidates(&common_data, max_candidates);
-                    let row_start = env_idx * max_candidates;
-                    for (candidate_idx, candidate) in candidates.iter().enumerate() {
-                        let idx = row_start + candidate_idx;
-                        room_idx[idx] = candidate.room_idx;
-                        room_x[idx] = candidate.x;
-                        room_y[idx] = candidate.y;
-                    }
                 }
                 WorkerResponse::Done
             }
@@ -1917,59 +1882,6 @@ impl EnvironmentGroup {
     }
 
     #[allow(clippy::type_complexity)]
-    fn get_candidates<'py>(
-        &mut self,
-        py: Python<'py>,
-        mut max_candidates: usize,
-    ) -> PyResult<(
-        Bound<'py, PyArray2<RoomIdx>>,
-        Bound<'py, PyArray2<Coord>>,
-        Bound<'py, PyArray2<Coord>>,
-    )> {
-        if self.action_count == 0 {
-            max_candidates = 1;
-        }
-        let output_len = self.num_environments * max_candidates;
-        let dummy_candidate = Action {
-            room_idx: self.common_data.room.len() as RoomIdx, // an invalid room index to indicate no-op
-            x: 0,
-            y: 0,
-        };
-
-        let mut room_idx = vec![dummy_candidate.room_idx; output_len];
-        let mut room_x = vec![dummy_candidate.x; output_len];
-        let mut room_y = vec![dummy_candidate.y; output_len];
-
-        py.detach(|| {
-            let mut sent_workers = Vec::with_capacity(self.workers.len());
-            let mut first_error = None;
-            for (worker_idx, worker) in self.workers.iter().enumerate() {
-                let output_start = worker.start * max_candidates;
-                let output_end = output_start + worker.len * max_candidates;
-
-                if let Err(err) = worker.send(WorkerCommand::GetCandidates {
-                    max_candidates,
-                    room_idx: OutputShard::from_slice(&mut room_idx[output_start..output_end]),
-                    room_x: OutputShard::from_slice(&mut room_x[output_start..output_end]),
-                    room_y: OutputShard::from_slice(&mut room_y[output_start..output_end]),
-                }) {
-                    set_first_error(&mut first_error, err);
-                    break;
-                }
-                sent_workers.push(worker_idx);
-            }
-
-            wait_for_done_responses(&self.workers, sent_workers, first_error)
-        })?;
-
-        Ok((
-            pyarray2_from_flat_vec(py, room_idx, self.num_environments, max_candidates)?,
-            pyarray2_from_flat_vec(py, room_x, self.num_environments, max_candidates)?,
-            pyarray2_from_flat_vec(py, room_y, self.num_environments, max_candidates)?,
-        ))
-    }
-
-    #[allow(clippy::type_complexity)]
     fn get_candidates_with_outcomes<'py>(
         &mut self,
         py: Python<'py>,
@@ -2926,17 +2838,15 @@ impl EnvironmentGroup {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn get_sparse_features_after_candidates_into<'py>(
+    fn pack_sparse_features_after_candidates_into<'py>(
         &self,
         py: Python<'py>,
-        room_idx: PyReadonlyArray2<'py, RoomIdx>,
-        room_x: PyReadonlyArray2<'py, Coord>,
-        room_y: PyReadonlyArray2<'py, Coord>,
+        environment_count: usize,
+        candidate_count: usize,
         environment_start: usize,
         frontier_count: usize,
         sparse_row_count: usize,
         worker_sparse_row_counts: Vec<usize>,
-        use_cached: bool,
         mut inventory: PyReadwriteArray2<'py, u8>,
         mut out_room_x: PyReadwriteArray2<'py, Coord>,
         mut out_room_y: PyReadwriteArray2<'py, Coord>,
@@ -2949,27 +2859,12 @@ impl EnvironmentGroup {
         mut frontier_connection_reachability: PyReadwriteArray2<'py, u8>,
         mut dense_row_idx: PyReadwriteArray1<'py, i64>,
     ) -> PyResult<()> {
-        let shape = room_idx.as_array().shape().to_vec();
-        if room_x.as_array().shape() != shape
-            || room_y.as_array().shape() != shape
-            || environment_start + shape[0] > self.num_environments
-        {
+        if environment_start + environment_count > self.num_environments {
             return Err(PyValueError::new_err(
-                "candidate action arrays must fit within the environment group",
+                "candidate dimensions must fit within the environment group",
             ));
         }
-        let candidate_count = shape[1];
-        let environment_count = shape[0];
         let snapshot_count = environment_count * candidate_count;
-        let room_idx = room_idx
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_idx must be contiguous"))?;
-        let room_x = room_x
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_x must be contiguous"))?;
-        let room_y = room_y
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_y must be contiguous"))?;
 
         let inventory_count = self.common_data.connection_variant_rooms.len();
         let room_count = self.common_data.room.len();
@@ -3185,30 +3080,7 @@ impl EnvironmentGroup {
                     snapshot_start,
                     dense_frontier_count: frontier_count,
                 };
-                let send_result = if use_cached {
-                    worker.send(WorkerCommand::PackSparseFeatures { outputs })
-                } else {
-                    let len = snapshot_count;
-                    worker.send(WorkerCommand::GetSparseFeaturesAfterCandidates {
-                        frontier_neighbor_algorithm: self.frontier_neighbor_algorithm,
-                        frontier_neighbor_count: self.frontier_neighbor_count,
-                        frontier_window_size: self.frontier_window_size,
-                        environment_start: start - worker.start,
-                        environment_count: end - start,
-                        candidate_count,
-                        room_idx: InputShard::from_slice(
-                            &room_idx[snapshot_start..snapshot_start + len],
-                        ),
-                        room_x: InputShard::from_slice(
-                            &room_x[snapshot_start..snapshot_start + len],
-                        ),
-                        room_y: InputShard::from_slice(
-                            &room_y[snapshot_start..snapshot_start + len],
-                        ),
-                        outputs,
-                    })
-                };
-                if let Err(err) = send_result {
+                if let Err(err) = worker.send(WorkerCommand::PackSparseFeatures { outputs }) {
                     set_first_error(&mut first_error, err);
                     break;
                 }
