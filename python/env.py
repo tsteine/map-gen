@@ -129,6 +129,8 @@ class Features:
     room_placed: torch.Tensor
     log_temperature: torch.Tensor
     log_action_candidates: torch.Tensor
+    lookahead_door_invalid: torch.Tensor
+    lookahead_connection_invalid: torch.Tensor
     frontier: torch.Tensor
     frontier_occupancy: torch.Tensor
     frontier_neighbor: torch.Tensor
@@ -154,6 +156,8 @@ class SparseFeatures:
     room_placed: torch.Tensor
     log_temperature: torch.Tensor
     log_action_candidates: torch.Tensor
+    lookahead_door_invalid: torch.Tensor
+    lookahead_connection_invalid: torch.Tensor
     frontier: torch.Tensor
     frontier_occupancy: torch.Tensor
     frontier_neighbor: torch.Tensor
@@ -171,6 +175,8 @@ class SparseFeatures:
             self.room_placed.flatten(0, 1),
             self.log_temperature.flatten(0, 1),
             self.log_action_candidates.flatten(0, 1),
+            self.lookahead_door_invalid.flatten(0, 1),
+            self.lookahead_connection_invalid.flatten(0, 1),
             self.frontier,
             self.frontier_occupancy,
             self.frontier_neighbor,
@@ -351,6 +357,23 @@ class EnvironmentGroup:
             connection_invalid=torch.from_numpy(connection_invalid).to(device),
         )
 
+    def get_outcomes_after_candidates(
+        self,
+        actions: Actions,
+        device: torch.device,
+        environment_start: int = 0,
+    ) -> Outcomes:
+        door_invalid, connection_invalid = self.env.get_outcomes_after_candidates(
+            actions.room_idx.contiguous().cpu().numpy(),
+            actions.room_x.contiguous().cpu().numpy(),
+            actions.room_y.contiguous().cpu().numpy(),
+            environment_start,
+        )
+        return Outcomes(
+            door_invalid=torch.from_numpy(door_invalid).to(device),
+            connection_invalid=torch.from_numpy(connection_invalid).to(device),
+        )
+
     def get_door_match_counts(self, device: torch.device) -> DoorMatchCounts:
         horizontal, vertical = self.env.get_door_match_counts()
         return DoorMatchCounts(
@@ -375,6 +398,8 @@ class EnvironmentGroup:
         include_temperature: bool,
         log_action_candidates: torch.Tensor,
         include_action_candidates: bool,
+        lookahead_outcomes: Outcomes,
+        include_lookahead_outcomes: bool,
     ) -> Features:
         tensors = [torch.from_numpy(value).to(device) for value in values]
         log_temperature = log_temperature.to(device)
@@ -386,10 +411,23 @@ class EnvironmentGroup:
                 *log_action_candidates.shape,
                 0,
             ])
+        lookahead_door_invalid = lookahead_outcomes.door_invalid.to(device)
+        lookahead_connection_invalid = lookahead_outcomes.connection_invalid.to(device)
+        if not include_lookahead_outcomes:
+            lookahead_door_invalid = lookahead_door_invalid.new_empty([
+                *lookahead_door_invalid.shape[:-1],
+                0,
+            ])
+            lookahead_connection_invalid = lookahead_connection_invalid.new_empty([
+                *lookahead_connection_invalid.shape[:-1],
+                0,
+            ])
         return Features(
             *tensors[:4],
             log_temperature,
             log_action_candidates,
+            lookahead_door_invalid,
+            lookahead_connection_invalid,
             *tensors[4:],
         )
 
@@ -400,6 +438,8 @@ class EnvironmentGroup:
         include_temperature: bool,
         log_action_candidates: torch.Tensor,
         include_action_candidates: bool,
+        lookahead_outcomes: Outcomes,
+        include_lookahead_outcomes: bool,
         environment_start: int = 0,
         environment_count: Optional[int] = None,
     ) -> Features:
@@ -410,6 +450,8 @@ class EnvironmentGroup:
             include_temperature,
             log_action_candidates,
             include_action_candidates,
+            lookahead_outcomes,
+            include_lookahead_outcomes,
         )
 
     def get_features_after_candidates(
@@ -420,6 +462,8 @@ class EnvironmentGroup:
         include_temperature: bool,
         log_action_candidates: torch.Tensor,
         include_action_candidates: bool,
+        lookahead_outcomes: Outcomes,
+        include_lookahead_outcomes: bool,
         environment_start: int = 0,
     ) -> Features:
         values = self.env.get_features_after_candidates(
@@ -435,6 +479,8 @@ class EnvironmentGroup:
             include_temperature,
             log_action_candidates,
             include_action_candidates,
+            lookahead_outcomes,
+            include_lookahead_outcomes,
         )
 
     def get_sparse_features_after_candidates(
@@ -445,6 +491,8 @@ class EnvironmentGroup:
         include_temperature: bool,
         log_action_candidates: torch.Tensor,
         include_action_candidates: bool,
+        lookahead_outcomes: Outcomes,
+        include_lookahead_outcomes: bool,
         environment_start: int = 0,
     ) -> SparseFeatures:
         values, frontier_count = self.env.get_sparse_features_after_candidates(
@@ -463,6 +511,18 @@ class EnvironmentGroup:
             log_action_candidates.to(device) if include_action_candidates else log_action_candidates.new_empty([
                 log_action_candidates.shape[0],
                 log_action_candidates.shape[1],
+                0,
+            ]).to(device),
+            lookahead_outcomes.door_invalid.to(device)
+            if include_lookahead_outcomes
+            else lookahead_outcomes.door_invalid.new_empty([
+                *lookahead_outcomes.door_invalid.shape[:-1],
+                0,
+            ]).to(device),
+            lookahead_outcomes.connection_invalid.to(device)
+            if include_lookahead_outcomes
+            else lookahead_outcomes.connection_invalid.new_empty([
+                *lookahead_outcomes.connection_invalid.shape[:-1],
                 0,
             ]).to(device),
             *(torch.from_numpy(value).to(device) for value in values[4:]),

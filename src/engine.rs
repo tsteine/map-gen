@@ -226,6 +226,18 @@ enum WorkerCommand {
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
     },
+    GetOutcomesAfterCandidates {
+        environment_start: usize,
+        environment_count: usize,
+        candidate_count: usize,
+        room_idx: InputShard<RoomIdx>,
+        room_x: InputShard<Coord>,
+        room_y: InputShard<Coord>,
+        door_outcome_count: usize,
+        connection_outcome_count: usize,
+        door_valid: OutputShard<i8>,
+        connections_valid: OutputShard<i8>,
+    },
     GetDoorMatchCounts {
         horizontal_counts: OutputShard<u64>,
         vertical_counts: OutputShard<u64>,
@@ -297,6 +309,7 @@ impl WorkerCommand {
             WorkerCommand::GetCandidatesWithOutcomes { .. } => Some(3),
             WorkerCommand::GetActions { .. } => Some(4),
             WorkerCommand::GetOutcomes { .. } => Some(5),
+            WorkerCommand::GetOutcomesAfterCandidates { .. } => Some(5),
             WorkerCommand::GetDoorMatchCounts { .. } => Some(6),
             WorkerCommand::GetDoorMatches { .. } => Some(7),
             WorkerCommand::GetFeatures { .. } => Some(8),
@@ -680,6 +693,80 @@ fn worker_loop(
                     Some(err) => WorkerResponse::Error(err),
                     None => WorkerResponse::Done,
                 }
+            }
+            WorkerCommand::GetOutcomesAfterCandidates {
+                environment_start,
+                environment_count,
+                candidate_count,
+                room_idx,
+                room_x,
+                room_y,
+                door_outcome_count,
+                connection_outcome_count,
+                door_valid,
+                connections_valid,
+            } => {
+                // SAFETY: The main thread guarantees that for the duration of this command,
+                // the input and output slices remain valid and that no other thread mutates
+                // them.
+                let room_idx = unsafe { room_idx.into_slice() };
+                let room_x = unsafe { room_x.into_slice() };
+                let room_y = unsafe { room_y.into_slice() };
+                let door_valid = unsafe { door_valid.into_mut_slice() };
+                let connections_valid = unsafe { connections_valid.into_mut_slice() };
+                debug_assert_eq!(room_idx.len(), environment_count * candidate_count);
+                debug_assert_eq!(room_x.len(), environment_count * candidate_count);
+                debug_assert_eq!(room_y.len(), environment_count * candidate_count);
+                debug_assert_eq!(
+                    door_valid.len(),
+                    environment_count * candidate_count * door_outcome_count
+                );
+                debug_assert_eq!(
+                    connections_valid.len(),
+                    environment_count * candidate_count * connection_outcome_count
+                );
+
+                for (env_idx, env) in environments
+                    .iter_mut()
+                    .skip(environment_start)
+                    .take(environment_count)
+                    .enumerate()
+                {
+                    for candidate_idx in 0..candidate_count {
+                        let input_idx = env_idx * candidate_count + candidate_idx;
+                        let outcomes = env.outcomes_after_candidate(
+                            &common_data,
+                            Action {
+                                room_idx: room_idx[input_idx],
+                                x: room_x[input_idx],
+                                y: room_y[input_idx],
+                            },
+                        );
+                        debug_assert_eq!(outcomes.door_valid.len(), door_outcome_count);
+                        debug_assert_eq!(
+                            outcomes.connections_valid.len(),
+                            connection_outcome_count
+                        );
+                        let door_start = input_idx * door_outcome_count;
+                        for (outcome_idx, outcome) in outcomes.door_valid.iter().enumerate() {
+                            door_valid[door_start + outcome_idx] = match outcome {
+                                DoorValidOutcome::Unknown => -1,
+                                DoorValidOutcome::Valid => 0,
+                                DoorValidOutcome::Invalid => 1,
+                            };
+                        }
+                        let connection_start = input_idx * connection_outcome_count;
+                        for (outcome_idx, outcome) in outcomes.connections_valid.iter().enumerate()
+                        {
+                            connections_valid[connection_start + outcome_idx] = match outcome {
+                                DoorValidOutcome::Unknown => -1,
+                                DoorValidOutcome::Valid => 0,
+                                DoorValidOutcome::Invalid => 1,
+                            };
+                        }
+                    }
+                }
+                WorkerResponse::Done
             }
             WorkerCommand::GetDoorMatchCounts {
                 horizontal_counts,
@@ -2061,6 +2148,102 @@ impl EnvironmentGroup {
                 py,
                 connections_valid,
                 self.num_environments,
+                connection_outcome_count,
+            )?,
+        ))
+    }
+
+    fn get_outcomes_after_candidates<'py>(
+        &mut self,
+        py: Python<'py>,
+        room_idx: PyReadonlyArray2<'py, RoomIdx>,
+        room_x: PyReadonlyArray2<'py, Coord>,
+        room_y: PyReadonlyArray2<'py, Coord>,
+        environment_start: usize,
+    ) -> PyResult<(Bound<'py, PyArray3<i8>>, Bound<'py, PyArray3<i8>>)> {
+        let shape = room_idx.as_array().shape().to_vec();
+        if room_x.as_array().shape() != shape
+            || room_y.as_array().shape() != shape
+            || environment_start + shape[0] > self.num_environments
+        {
+            return Err(PyValueError::new_err(
+                "candidate action arrays must fit within the environment group",
+            ));
+        }
+        let environment_count = shape[0];
+        let candidate_count = shape[1];
+        let room_idx = room_idx
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_idx must be contiguous"))?;
+        let room_x = room_x
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_x must be contiguous"))?;
+        let room_y = room_y
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_y must be contiguous"))?;
+        let (door_outcome_count, connection_outcome_count) = output_sizes(&self.common_data);
+        let door_output_len = environment_count * candidate_count * door_outcome_count;
+        let connection_output_len = environment_count * candidate_count * connection_outcome_count;
+        let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
+        let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
+
+        py.detach(|| {
+            let mut sent_workers = Vec::with_capacity(self.workers.len());
+            let mut first_error = None;
+            for (worker_idx, worker) in self.workers.iter().enumerate() {
+                let start = max(environment_start, worker.start);
+                let end = min(environment_start + environment_count, worker.end());
+                if start >= end {
+                    continue;
+                }
+                let input_start = (start - environment_start) * candidate_count;
+                let environment_count = end - start;
+                let input_len = environment_count * candidate_count;
+                let door_output_start = input_start * door_outcome_count;
+                let door_output_end = door_output_start + input_len * door_outcome_count;
+                let connection_output_start = input_start * connection_outcome_count;
+                let connection_output_end =
+                    connection_output_start + input_len * connection_outcome_count;
+                if let Err(err) = worker.send(WorkerCommand::GetOutcomesAfterCandidates {
+                    environment_start: start - worker.start,
+                    environment_count,
+                    candidate_count,
+                    room_idx: InputShard::from_slice(
+                        &room_idx[input_start..input_start + input_len],
+                    ),
+                    room_x: InputShard::from_slice(&room_x[input_start..input_start + input_len]),
+                    room_y: InputShard::from_slice(&room_y[input_start..input_start + input_len]),
+                    door_outcome_count,
+                    connection_outcome_count,
+                    door_valid: OutputShard::from_slice(
+                        &mut door_valid[door_output_start..door_output_end],
+                    ),
+                    connections_valid: OutputShard::from_slice(
+                        &mut connections_valid[connection_output_start..connection_output_end],
+                    ),
+                }) {
+                    set_first_error(&mut first_error, err);
+                    break;
+                }
+                sent_workers.push(worker_idx);
+            }
+
+            wait_for_done_responses(&self.workers, sent_workers, first_error)
+        })?;
+
+        Ok((
+            pyarray3_from_flat_vec(
+                py,
+                door_valid,
+                environment_count,
+                candidate_count,
+                door_outcome_count,
+            )?,
+            pyarray3_from_flat_vec(
+                py,
+                connections_valid,
+                environment_count,
+                candidate_count,
                 connection_outcome_count,
             )?,
         ))

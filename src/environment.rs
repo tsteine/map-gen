@@ -138,6 +138,10 @@ pub struct FeatureConfig {
     pub inventory: bool,
     pub temperature: bool,
     pub action_candidates: bool,
+    // This is attached by Python from outcome tensors; Rust only needs to accept
+    // the strict feature config field.
+    #[allow(dead_code)]
+    pub lookahead_outcomes: bool,
     pub room_position: bool,
     pub frontier_mask: bool,
     pub frontier_position: bool,
@@ -190,6 +194,7 @@ impl FeatureConfig {
             inventory: true,
             temperature: true,
             action_candidates: true,
+            lookahead_outcomes: true,
             room_position: true,
             frontier_mask: true,
             frontier_position: true,
@@ -210,6 +215,7 @@ impl FeatureConfig {
             inventory: false,
             temperature: false,
             action_candidates: false,
+            lookahead_outcomes: false,
             room_position: false,
             frontier_mask: false,
             frontier_position: false,
@@ -1079,6 +1085,13 @@ impl Environment {
         );
         self.restore_lookahead_candidate(snapshot);
         (outcomes, features)
+    }
+
+    pub fn outcomes_after_candidate(&mut self, common: &CommonData, candidate: Action) -> Outcomes {
+        let snapshot = self.apply_lookahead_candidate(candidate, common);
+        let outcomes = self.outcomes(common);
+        self.restore_lookahead_candidate(snapshot);
+        outcomes
     }
 
     fn features_for_applied_candidate(

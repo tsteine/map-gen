@@ -45,6 +45,7 @@
     "inventory": true,
     "temperature": true,
     "action_candidates": true,
+    "lookahead_outcomes": true,
     "room_position": true,
     "frontier_mask": true,
     "frontier_position": true,

@@ -103,6 +103,8 @@ def extract_candidate_features(
     include_temperature: bool,
     log_action_candidates: torch.Tensor,
     include_action_candidates: bool,
+    lookahead_outcomes: Outcomes,
+    include_lookahead_outcomes: bool,
     sparse_feature_requirements: SparseFeatureRequirements,
     sparse_frontiers: bool = False,
     feature_slot: PinnedSparseFeatureSlot | None = None,
@@ -141,6 +143,8 @@ def extract_candidate_features(
             include_temperature,
             log_action_candidates,
             include_action_candidates,
+            lookahead_outcomes,
+            include_lookahead_outcomes,
             sparse_row_count,
             frontier_count,
         ).flatten_candidates()
@@ -152,6 +156,8 @@ def extract_candidate_features(
             include_temperature,
             log_action_candidates,
             include_action_candidates,
+            lookahead_outcomes,
+            include_lookahead_outcomes,
             0,
         ).flatten_candidates()
     return env.get_features_after_candidates(
@@ -161,6 +167,8 @@ def extract_candidate_features(
         include_temperature,
         log_action_candidates,
         include_action_candidates,
+        lookahead_outcomes,
+        include_lookahead_outcomes,
         0,
     ).flatten_candidates()
 
@@ -198,6 +206,12 @@ def transfer_features_sync(
     log_action_candidates = features.log_action_candidates.to(
         device, non_blocking=non_blocking
     )
+    lookahead_door_invalid = features.lookahead_door_invalid.to(
+        device, non_blocking=non_blocking
+    )
+    lookahead_connection_invalid = features.lookahead_connection_invalid.to(
+        device, non_blocking=non_blocking
+    )
     connection_reachability = features.connection_reachability.to(
         device, non_blocking=non_blocking
     )
@@ -208,6 +222,8 @@ def transfer_features_sync(
         room_placed,
         log_temperature,
         log_action_candidates,
+        lookahead_door_invalid,
+        lookahead_connection_invalid,
         densify_sparse_feature(
             features.frontier, 0, dense_shape, dense_row_idx, device, non_blocking
         ),
@@ -345,6 +361,8 @@ class PinnedSparseFeatureSlot:
         include_temperature: bool,
         log_action_candidates: torch.Tensor,
         include_action_candidates: bool,
+        lookahead_outcomes: Outcomes,
+        include_lookahead_outcomes: bool,
         sparse_row_count: int,
         frontier_count: int,
     ) -> SparseFeatures:
@@ -355,6 +373,15 @@ class PinnedSparseFeatureSlot:
             )
         if not include_action_candidates:
             log_action_candidates = log_action_candidates.new_empty(
+                [environment_count, candidate_count, 0]
+            )
+        lookahead_door_invalid = lookahead_outcomes.door_invalid
+        lookahead_connection_invalid = lookahead_outcomes.connection_invalid
+        if not include_lookahead_outcomes:
+            lookahead_door_invalid = lookahead_door_invalid.new_empty(
+                [environment_count, candidate_count, 0]
+            )
+            lookahead_connection_invalid = lookahead_connection_invalid.new_empty(
                 [environment_count, candidate_count, 0]
             )
         return SparseFeatures(
@@ -368,6 +395,8 @@ class PinnedSparseFeatureSlot:
             ),
             log_temperature,
             log_action_candidates,
+            lookahead_door_invalid,
+            lookahead_connection_invalid,
             self.frontier[:sparse_row_count],
             self.frontier_occupancy[:sparse_row_count],
             self.frontier_neighbor[:sparse_row_count],
@@ -512,6 +541,8 @@ def prepare_candidate_features(
             env.engine.features.temperature,
             candidate_log_action_candidates,
             env.engine.features.action_candidates,
+            candidate_batch.post_candidate_outcomes,
+            env.engine.features.lookahead_outcomes,
             candidate_batch.sparse_feature_requirements,
             sparse_frontiers,
             feature_slot,

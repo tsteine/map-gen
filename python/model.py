@@ -115,6 +115,10 @@ class FrontierModel(torch.nn.Module):
             connection_output_size,
             door_output_size,
         )
+        lookahead_outcome_width = (
+            2 * (door_output_size + connection_output_size)
+            * int(self.features.lookahead_outcomes)
+        )
         self.num_connection_outputs = len(output_metadata.connection)
         self.include_inventory = self.features.inventory
         # self.inventory_embedding = torch.nn.Parameter(
@@ -186,6 +190,12 @@ class FrontierModel(torch.nn.Module):
             torch.nn.GELU(),
             torch.nn.Linear(hidden_width, embedding_width, bias=False),
         ) if global_width > 0 else None
+        self.lookahead_outcome_projection = (
+            torch.nn.Linear(lookahead_outcome_width, embedding_width, bias=False)
+            if lookahead_outcome_width > 0 else None
+        )
+        if self.lookahead_outcome_projection is not None:
+            torch.nn.init.zeros_(self.lookahead_outcome_projection.weight)
         self.connection_reachability_embedding = (
             torch.nn.Linear(self.num_connection_outputs, embedding_width, bias=False)
             if self.features.connection_reachability
@@ -243,6 +253,18 @@ class FrontierModel(torch.nn.Module):
         if torch.is_autocast_enabled(device_type):
             return torch.get_autocast_dtype(device_type)
         return next(self.parameters()).dtype
+
+    def _lookahead_outcome_features(self, features: Features, dtype: torch.dtype) -> torch.Tensor:
+        return torch.cat([
+            torch.stack([
+                (features.lookahead_door_invalid == 0).to(dtype),
+                (features.lookahead_door_invalid == 1).to(dtype),
+            ], dim=-1).flatten(1),
+            torch.stack([
+                (features.lookahead_connection_invalid == 0).to(dtype),
+                (features.lookahead_connection_invalid == 1).to(dtype),
+            ], dim=-1).flatten(1),
+        ], dim=-1)
 
     def _relative_position_features(self, features):
         if self.frontier_relative_pos_embedding_x is None:
@@ -371,6 +393,10 @@ class FrontierModel(torch.nn.Module):
             if self.global_mlp is not None
             else X.new_zeros([X.shape[0], self.embedding_width])
         )
+        if self.lookahead_outcome_projection is not None:
+            global_state = global_state + self.lookahead_outcome_projection(
+                self._lookahead_outcome_features(features, X.dtype)
+            )
         if self.features.room_position:
             room_x = (features.room_x.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
             room_y = (features.room_y.to(torch.int64) + COORD_OFFSET).unsqueeze(1)

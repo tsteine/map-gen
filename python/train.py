@@ -575,11 +575,38 @@ class TrainingSession:
         env.clear()
         feature_batches = []
         for step in range(self.episode_length):
-            env.step_known(Actions(
+            next_actions = Actions(
                 train_actions_cpu.room_idx[:, step],
                 train_actions_cpu.room_x[:, step],
                 train_actions_cpu.room_y[:, step],
-            ))
+            )
+            if step % self.config.train.sample_period == offset:
+                lookahead_outcomes = env.get_outcomes_after_candidates(
+                    Actions(
+                        next_actions.room_idx.unsqueeze(1),
+                        next_actions.room_x.unsqueeze(1),
+                        next_actions.room_y.unsqueeze(1),
+                    ),
+                    torch.device("cpu"),
+                    0,
+                )
+                dummy_action = next_actions.room_idx >= self.num_rooms
+                lookahead_outcomes = Outcomes(
+                    torch.where(
+                        dummy_action[:, None, None],
+                        torch.full_like(lookahead_outcomes.door_invalid, -1),
+                        lookahead_outcomes.door_invalid,
+                    ),
+                    torch.where(
+                        dummy_action[:, None, None],
+                        torch.full_like(lookahead_outcomes.connection_invalid, -1),
+                        lookahead_outcomes.connection_invalid,
+                    ),
+                )
+            if self.config.features.lookahead_outcomes:
+                env.step(next_actions)
+            else:
+                env.step_known(next_actions)
             if step % self.config.train.sample_period == offset:
                 feature_batches.append(
                     env.get_features(
@@ -588,6 +615,11 @@ class TrainingSession:
                         self.config.features.temperature,
                         log_action_candidates,
                         self.config.features.action_candidates,
+                        Outcomes(
+                            lookahead_outcomes.door_invalid.squeeze(1),
+                            lookahead_outcomes.connection_invalid.squeeze(1),
+                        ),
+                        self.config.features.lookahead_outcomes,
                         0,
                         train_actions.room_idx.shape[0],
                     )
