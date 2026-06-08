@@ -36,7 +36,7 @@
     "temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
     "reward_door": 1.0,
     "reward_connection": 1.0,
-    "reward_balance": 0.2,
+    "reward_balance": 1.0,
     "frontier_neighbor_algorithm": "nearest-exclusive",
     "frontier_neighbor_count": 1,
     "frontier_window_size": 16,
