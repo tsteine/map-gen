@@ -2,7 +2,7 @@
   "experiment_name": "norfair-testing",
   "room_set": "room_definitions/norfair.json",
   "map_size": [72, 72],
-  "knot_episodes": [0, 50000, 300000, 4000000, 16000000],
+  "knot_episodes": [0, 100000, 500000, 4000000, 16000000],
   "checkpoint_period": 100,
   "model": {
     "compile": true,
@@ -14,7 +14,7 @@
     "num_layers": 4
   },
   "optimizer": {
-    "lr": {"log": [0.0005, 0.0005, 0.0005, 0.0001, 0.0001]},
+    "lr": {"log": [0.0005, 0.0004, 0.0003, 0.0002, 0.0001]},
     "beta1": 0.95,
     "beta2": 0.99
   },
@@ -23,7 +23,7 @@
     "num_layers": 1
   },
   "balance_optimizer": {
-    "lr": {"log": [0.001, 0.0001, 0.00005, 0.00002, 0.00002]},
+    "lr": {"log": [0.001, 0.0003, 0.0001, 0.00005, 0.00002]},
     "beta1": 0.95,
     "beta2": 0.99
   },

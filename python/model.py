@@ -513,7 +513,9 @@ class BalanceModel(torch.nn.Module):
                 torch.nn.GELU(),
             ])
             input_width = hidden_width
-        layers.append(torch.nn.Linear(input_width, self.output_width))
+        output_layer = torch.nn.Linear(input_width, self.output_width)
+        output_layer.weight.data.zero_()
+        layers.append(output_layer)
         self.net = torch.nn.Sequential(*layers)
 
     def forward(self, log_temperature: torch.Tensor) -> BalancePredictions:

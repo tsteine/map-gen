@@ -73,6 +73,13 @@ class MainLossBreakdown:
     balance_contribution: float
 
 
+def compute_door_match_count_ss(counts: torch.Tensor, dim: int) -> torch.Tensor:
+    totals = torch.sum(counts, dim=dim, keepdim=True)
+    if torch.any(totals <= 1):
+        raise RuntimeError("door_match_ss requires at least two samples per row/column")
+    return torch.sum(counts * (counts - 1) / (totals * (totals - 1)))
+
+
 class Prefetcher:
     def __init__(self, max_workers=1):
         if max_workers <= 0:
@@ -989,21 +996,17 @@ class TrainingSession:
         left_door_match_p = (
             horizontal_door_match_counts / torch.sum(horizontal_door_match_counts, dim=1, keepdim=True)
         )
-        right_door_match_p = (
-            horizontal_door_match_counts / torch.sum(horizontal_door_match_counts, dim=0, keepdim=True)
-        )
         up_door_match_p = (
             vertical_door_match_counts / torch.sum(vertical_door_match_counts, dim=1, keepdim=True)
         )
-        down_door_match_p = (
-            vertical_door_match_counts / torch.sum(vertical_door_match_counts, dim=0, keepdim=True)
-        )
         left_topk = torch.topk(left_door_match_p.flatten(), k=3).values
         up_topk = torch.topk(up_door_match_p.flatten(), k=3).values
-        door_match_ss = torch.sum(left_door_match_p.square()) + \
-            torch.sum(right_door_match_p.square()) + \
-            torch.sum(up_door_match_p.square()) + \
-            torch.sum(down_door_match_p.square())
+        door_match_ss = (
+            compute_door_match_count_ss(horizontal_door_match_counts, dim=1)
+            + compute_door_match_count_ss(horizontal_door_match_counts, dim=0)
+            + compute_door_match_count_ss(vertical_door_match_counts, dim=1)
+            + compute_door_match_count_ss(vertical_door_match_counts, dim=0)
+        )
         with torch.no_grad():
             generate_config = create_generate_config(
                 step_config,
