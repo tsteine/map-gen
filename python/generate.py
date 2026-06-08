@@ -72,8 +72,9 @@ def balance_reward(
         match_probability,
         known_match_probability,
     )
-    balance_prob = torch.sigmoid(balance_score)
-    return -balance_prob * match_probability
+    # balance_prob = torch.sigmoid(balance_score)
+    # return -balance_prob * match_probability
+    return -balance_score * match_probability
 
 
 # preds.door_invalid: [batch_size, max_candidates, num_outputs]
