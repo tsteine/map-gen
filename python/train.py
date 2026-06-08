@@ -644,7 +644,7 @@ class TrainingSession:
         replay_door_matches = env.get_door_matches(self.device)
         env.finish()
         replay_episode_data = replay_episode_data.to(self.device)
-        replay_outcomes = env.get_outcomes(self.device)
+        replay_outcomes = env.get_outcomes(self.device, verify_consistency=False)
         return PreparedTrainBatch(
             task.kind,
             replay_episode_data,

@@ -42,6 +42,41 @@ fn profile_end(metric_idx: usize, start: Option<Instant>) {
     }
 }
 
+fn check_outcome_transition_consistency(
+    before: &[DoorValidOutcome],
+    after: &[DoorValidOutcome],
+    outcome_name: &str,
+    stage: &str,
+) -> Result<(), String> {
+    debug_assert_eq!(before.len(), after.len());
+    for (idx, (&before, &after)) in before.iter().zip(after).enumerate() {
+        if before != DoorValidOutcome::Unknown && before != after {
+            return Err(format!(
+                "{outcome_name} outcome changed after becoming known at {stage}: \
+                 index {idx}, before {before:?}, after {after:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn introduces_invalid_outcome(before: &Outcomes, after: &Outcomes) -> bool {
+    before
+        .door_valid
+        .iter()
+        .zip(&after.door_valid)
+        .any(|(&before, &after)| {
+            before == DoorValidOutcome::Unknown && after == DoorValidOutcome::Invalid
+        })
+        || before
+            .connections_valid
+            .iter()
+            .zip(&after.connections_valid)
+            .any(|(&before, &after)| {
+                before == DoorValidOutcome::Unknown && after == DoorValidOutcome::Invalid
+            })
+}
+
 #[derive(Clone, Copy, Debug)]
 struct FrontierEdge {
     endpoints: [usize; 2],
@@ -72,6 +107,7 @@ struct GeometryAction {
     y: Coord,
 }
 
+#[derive(Clone)]
 pub struct Outcomes {
     // For each door, whether it is connected to another door.
     pub door_valid: Vec<DoorValidOutcome>,
@@ -372,6 +408,7 @@ pub struct Environment {
     room_part_component: Vec<usize>,             // maps placed room door groups to SCC components
     scc_dag: SccDag, // DAG of strongly connected components (condensation graph)
     occupancy: Vec<u8>,
+    known_outcomes: Option<Outcomes>,
 }
 
 struct FeatureSnapshot {
@@ -410,6 +447,7 @@ impl Environment {
             room_part_component: vec![NO_COMPONENT; common.room_part.len()],
             scc_dag: SccDag::default(),
             occupancy: vec![0; map_size.0 as usize * map_size.1 as usize],
+            known_outcomes: None,
         }
     }
 
@@ -434,6 +472,7 @@ impl Environment {
         self.room_part_component.fill(NO_COMPONENT);
         self.scc_dag.clear();
         self.occupancy.fill(0);
+        self.known_outcomes = None;
     }
 
     pub fn get_initial_action(&mut self, common: &CommonData) -> Action {
@@ -811,7 +850,7 @@ impl Environment {
         (scc_dag, component_remap)
     }
 
-    pub fn get_candidates(&mut self, common: &CommonData, max_candidates: usize) -> Vec<Action> {
+    fn get_all_candidates(&mut self, common: &CommonData) -> Vec<Action> {
         if self.actions.is_empty() {
             return vec![self.get_initial_action(common)];
         }
@@ -834,22 +873,55 @@ impl Environment {
         for candidate in candidate_geometries {
             self.push_candidate_representatives(common, candidate, &mut candidates);
         }
+        candidates
+    }
+
+    pub fn get_candidates(&mut self, common: &CommonData, max_candidates: usize) -> Vec<Action> {
+        let mut candidates = self.get_all_candidates(common);
         candidates.shuffle(&mut self.rng);
         candidates.truncate(max_candidates);
         candidates
     }
 
-    pub fn get_candidates_with_outcomes(
+    pub fn get_filtered_candidates_with_outcomes(
         &mut self,
         common: &CommonData,
         max_candidates: usize,
-    ) -> (Vec<Action>, Vec<Outcomes>) {
-        let candidates = self.get_candidates(common, max_candidates);
-        let outcomes = candidates
-            .iter()
-            .map(|&candidate| self.outcomes_after_candidate(common, candidate))
-            .collect();
-        (candidates, outcomes)
+    ) -> Result<(Vec<Action>, Vec<Outcomes>), String> {
+        let pre_candidate_outcomes = self.outcomes(common);
+        let candidates = self.get_all_candidates(common);
+        let mut clean = Vec::with_capacity(candidates.len());
+        let mut rejected = Vec::new();
+
+        for candidate in candidates {
+            let post_candidate_outcomes = self.outcomes_after_candidate(common, candidate);
+            check_outcome_transition_consistency(
+                &pre_candidate_outcomes.door_valid,
+                &post_candidate_outcomes.door_valid,
+                "door",
+                "lookahead candidate",
+            )?;
+            check_outcome_transition_consistency(
+                &pre_candidate_outcomes.connections_valid,
+                &post_candidate_outcomes.connections_valid,
+                "connection",
+                "lookahead candidate",
+            )?;
+            if introduces_invalid_outcome(&pre_candidate_outcomes, &post_candidate_outcomes) {
+                rejected.push((candidate, post_candidate_outcomes));
+            } else {
+                clean.push((candidate, post_candidate_outcomes));
+            }
+        }
+
+        let mut candidates_with_outcomes = if clean.is_empty() && !rejected.is_empty() {
+            rejected
+        } else {
+            clean
+        };
+        candidates_with_outcomes.shuffle(&mut self.rng);
+        candidates_with_outcomes.truncate(max_candidates);
+        Ok(candidates_with_outcomes.into_iter().unzip())
     }
 
     pub fn outcomes_after_candidate(&self, common: &CommonData, candidate: Action) -> Outcomes {
@@ -875,6 +947,7 @@ impl Environment {
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
             occupancy: self.occupancy.clone(),
+            known_outcomes: self.known_outcomes.clone(),
         }
     }
 
@@ -1376,6 +1449,64 @@ impl Environment {
             connections_valid,
         }
     }
+
+    pub fn verified_outcomes(
+        &mut self,
+        common: &CommonData,
+        stage: &str,
+    ) -> Result<Outcomes, String> {
+        let outcomes = self.outcomes(common);
+        if let Some(known_outcomes) = &self.known_outcomes {
+            check_outcome_transition_consistency(
+                &known_outcomes.door_valid,
+                &outcomes.door_valid,
+                "door",
+                stage,
+            )?;
+            check_outcome_transition_consistency(
+                &known_outcomes.connections_valid,
+                &outcomes.connections_valid,
+                "connection",
+                stage,
+            )?;
+        }
+        self.known_outcomes = Some(merge_known_outcomes(
+            self.known_outcomes.as_ref(),
+            &outcomes,
+        ));
+        Ok(outcomes)
+    }
+}
+
+fn merge_known_outcomes(known: Option<&Outcomes>, current: &Outcomes) -> Outcomes {
+    let Some(known) = known else {
+        return current.clone();
+    };
+    Outcomes {
+        door_valid: merge_known_outcome_values(&known.door_valid, &current.door_valid),
+        connections_valid: merge_known_outcome_values(
+            &known.connections_valid,
+            &current.connections_valid,
+        ),
+    }
+}
+
+fn merge_known_outcome_values(
+    known: &[DoorValidOutcome],
+    current: &[DoorValidOutcome],
+) -> Vec<DoorValidOutcome> {
+    debug_assert_eq!(known.len(), current.len());
+    known
+        .iter()
+        .zip(current)
+        .map(|(&known, &current)| {
+            if known == DoorValidOutcome::Unknown {
+                current
+            } else {
+                known
+            }
+        })
+        .collect()
 }
 
 fn add_orientation_match_counts(
@@ -1446,6 +1577,55 @@ mod tests {
                 assert!(neighbors[dst].contains(&src));
             }
         }
+    }
+
+    #[test]
+    fn outcome_consistency_rejects_known_to_unknown_and_known_changes() {
+        use DoorValidOutcome::{Invalid, Unknown, Valid};
+
+        assert!(check_outcome_transition_consistency(&[Unknown], &[Valid], "door", "test").is_ok());
+        assert!(check_outcome_transition_consistency(&[Valid], &[Valid], "door", "test").is_ok());
+        assert!(
+            check_outcome_transition_consistency(&[Invalid], &[Invalid], "door", "test").is_ok()
+        );
+        assert!(
+            check_outcome_transition_consistency(&[Valid], &[Unknown], "door", "test").is_err()
+        );
+        assert!(
+            check_outcome_transition_consistency(&[Invalid], &[Unknown], "door", "test").is_err()
+        );
+        assert!(
+            check_outcome_transition_consistency(&[Valid], &[Invalid], "door", "test").is_err()
+        );
+        assert!(
+            check_outcome_transition_consistency(&[Invalid], &[Valid], "door", "test").is_err()
+        );
+    }
+
+    #[test]
+    fn introduces_invalid_outcome_only_detects_unknown_to_invalid() {
+        use DoorValidOutcome::{Invalid, Unknown, Valid};
+
+        assert!(introduces_invalid_outcome(
+            &Outcomes {
+                door_valid: vec![Unknown],
+                connections_valid: vec![Valid],
+            },
+            &Outcomes {
+                door_valid: vec![Invalid],
+                connections_valid: vec![Valid],
+            },
+        ));
+        assert!(!introduces_invalid_outcome(
+            &Outcomes {
+                door_valid: vec![Invalid],
+                connections_valid: vec![Unknown],
+            },
+            &Outcomes {
+                door_valid: vec![Invalid],
+                connections_valid: vec![Valid],
+            },
+        ));
     }
 
     fn sparse_graph(

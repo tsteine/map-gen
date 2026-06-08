@@ -326,8 +326,8 @@ class EnvironmentGroup:
             ),
         )
 
-    def get_outcomes(self, device: torch.device) -> Outcomes:
-        door_invalid, connection_invalid = self.env.get_outcomes()
+    def get_outcomes(self, device: torch.device, verify_consistency: bool) -> Outcomes:
+        door_invalid, connection_invalid = self.env.get_outcomes(verify_consistency)
         return Outcomes(
             door_invalid=torch.from_numpy(door_invalid).to(device),
             connection_invalid=torch.from_numpy(connection_invalid).to(device),

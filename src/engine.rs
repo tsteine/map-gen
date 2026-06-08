@@ -4,6 +4,7 @@
 use crate::common::{Action, CommonData, Coord, Direction, DoorValidOutcome, Room, RoomIdx};
 use crate::environment::{
     Environment, FEATURE_FRONTIER_WIDTH, FeatureConfig, Features, FrontierNeighborAlgorithm,
+    Outcomes,
 };
 use crossbeam_channel as channel;
 use numpy::{
@@ -223,6 +224,7 @@ enum WorkerCommand {
     GetOutcomes {
         door_outcome_count: usize,
         connection_outcome_count: usize,
+        verify_consistency: bool,
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
     },
@@ -312,6 +314,7 @@ impl WorkerCommand {
 // written through shared memory, and other commands return "done" when they finish.
 enum WorkerResponse {
     Done,
+    Error(String),
     FeatureInfo(usize, usize),
 }
 
@@ -349,6 +352,7 @@ impl WorkerHandle {
     fn recv_done(&self) -> PyResult<()> {
         match self.recv()? {
             WorkerResponse::Done => Ok(()),
+            WorkerResponse::Error(err) => Err(PyRuntimeError::new_err(err)),
             WorkerResponse::FeatureInfo(_, _) => Err(PyRuntimeError::new_err(
                 "engine worker thread returned unexpected feature info",
             )),
@@ -505,17 +509,26 @@ fn worker_loop(
                     environments.len() * max_candidates * connection_outcome_count
                 );
 
+                let mut consistency_error = None;
                 for (env_idx, env) in environments.iter_mut().enumerate() {
-                    let (candidates, outcomes) =
-                        env.get_candidates_with_outcomes(&common_data, max_candidates);
-                    let row_start = env_idx * max_candidates;
-                    let dummy_candidate = Action {
-                        room_idx: common_data.room.len() as RoomIdx,
-                        x: 0,
-                        y: 0,
+                    let (candidates, outcomes) = match env
+                        .get_filtered_candidates_with_outcomes(&common_data, max_candidates)
+                    {
+                        Ok(result) => result,
+                        Err(err) => {
+                            consistency_error = Some(err);
+                            break;
+                        }
                     };
+                    let row_start = env_idx * max_candidates;
                     let dummy_outcome = if candidates.len() < max_candidates {
-                        Some(env.outcomes_after_candidate(&common_data, dummy_candidate))
+                        Some(Outcomes {
+                            door_valid: vec![DoorValidOutcome::Unknown; door_outcome_count],
+                            connections_valid: vec![
+                                DoorValidOutcome::Unknown;
+                                connection_outcome_count
+                            ],
+                        })
                     } else {
                         None
                     };
@@ -549,7 +562,10 @@ fn worker_loop(
                         }
                     }
                 }
-                WorkerResponse::Done
+                match consistency_error {
+                    Some(err) => WorkerResponse::Error(err),
+                    None => WorkerResponse::Done,
+                }
             }
             WorkerCommand::GetActions {
                 action_count,
@@ -566,7 +582,7 @@ fn worker_loop(
                 debug_assert_eq!(room_x.len(), environments.len() * action_count);
                 debug_assert_eq!(room_y.len(), environments.len() * action_count);
 
-                for (env_idx, env) in environments.iter().enumerate() {
+                for (env_idx, env) in environments.iter_mut().enumerate() {
                     debug_assert_eq!(env.actions().len(), action_count);
                     let row_start = env_idx * action_count;
                     for (action_idx, action) in env.actions().iter().enumerate() {
@@ -581,6 +597,7 @@ fn worker_loop(
             WorkerCommand::GetOutcomes {
                 door_outcome_count,
                 connection_outcome_count,
+                verify_consistency,
                 door_valid,
                 connections_valid,
             } => {
@@ -594,8 +611,19 @@ fn worker_loop(
                     environments.len() * connection_outcome_count
                 );
 
-                for (env_idx, env) in environments.iter().enumerate() {
-                    let outcomes = env.outcomes(&common_data);
+                let mut consistency_error = None;
+                for (env_idx, env) in environments.iter_mut().enumerate() {
+                    let outcomes = if verify_consistency {
+                        match env.verified_outcomes(&common_data, "get_outcomes") {
+                            Ok(outcomes) => outcomes,
+                            Err(err) => {
+                                consistency_error = Some(err);
+                                break;
+                            }
+                        }
+                    } else {
+                        env.outcomes(&common_data)
+                    };
                     debug_assert_eq!(outcomes.door_valid.len(), door_outcome_count);
                     debug_assert_eq!(outcomes.connections_valid.len(), connection_outcome_count);
                     let door_row_start = env_idx * door_outcome_count;
@@ -615,7 +643,10 @@ fn worker_loop(
                         };
                     }
                 }
-                WorkerResponse::Done
+                match consistency_error {
+                    Some(err) => WorkerResponse::Error(err),
+                    None => WorkerResponse::Done,
+                }
             }
             WorkerCommand::GetDoorMatchCounts {
                 horizontal_counts,
@@ -909,6 +940,9 @@ fn collect_feature_info(
                 &mut first_error,
                 PyRuntimeError::new_err("engine worker thread returned no feature info"),
             ),
+            Ok(WorkerResponse::Error(err)) => {
+                set_first_error(&mut first_error, PyRuntimeError::new_err(err))
+            }
             Err(err) => set_first_error(&mut first_error, err),
         }
     }
@@ -1947,8 +1981,9 @@ impl EnvironmentGroup {
     }
 
     fn get_outcomes<'py>(
-        &self,
+        &mut self,
         py: Python<'py>,
+        verify_consistency: bool,
     ) -> PyResult<(Bound<'py, PyArray2<i8>>, Bound<'py, PyArray2<i8>>)> {
         let (door_outcome_count, connection_outcome_count) = output_sizes(&self.common_data);
         let door_output_len = self.num_environments * door_outcome_count;
@@ -1969,6 +2004,7 @@ impl EnvironmentGroup {
                 if let Err(err) = worker.send(WorkerCommand::GetOutcomes {
                     door_outcome_count,
                     connection_outcome_count,
+                    verify_consistency,
                     door_valid: OutputShard::from_slice(
                         &mut door_valid[door_output_start..door_output_end],
                     ),

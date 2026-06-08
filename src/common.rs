@@ -12,7 +12,7 @@ pub type RoomPartIdx = u16; // flat index of part across all rooms
 pub type DoorKind = i8; // distinguishes different types of "doors", e.g. regular, elevator, and sand.
 pub type DirDoorIdx = u8; // index of a door among all doors with the given direction, across all rooms
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i8)]
 pub enum DoorValidOutcome {
     Unknown = -1,

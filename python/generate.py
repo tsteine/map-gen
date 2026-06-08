@@ -35,9 +35,6 @@ from train_config import Config
 # next step for that group. This keeps expensive CPU extraction overlapped
 # across groups while avoiding CUDA work from multiple Python worker threads.
 
-KNOWN_INVALID_REWARD = -100.0
-
-
 def rand_choice(p):
     cumul_p = torch.cumsum(p, dim=1)
     rnd = torch.rand([p.shape[0], 1], device=p.device)
@@ -48,9 +45,7 @@ def rand_choice(p):
 def outcome_reward(model_logprobs: torch.Tensor, known_invalid: torch.Tensor) -> torch.Tensor:
     if known_invalid.ndim == model_logprobs.ndim - 1:
         known_invalid = known_invalid.unsqueeze(1)
-    known_valid_reward = torch.zeros_like(model_logprobs)
-    known_invalid_reward = torch.full_like(model_logprobs, KNOWN_INVALID_REWARD)
-    known_reward = torch.where(known_invalid == 0, known_valid_reward, known_invalid_reward)
+    known_reward = torch.zeros_like(model_logprobs)
     return torch.where(known_invalid < 0, model_logprobs, known_reward)
 
 
@@ -98,60 +93,6 @@ def compute_expected_reward(
         + config.reward_connection * torch.sum(connection_logprobs, dim=2)
         + config.reward_balance * torch.sum(balance_scores, dim=2)
     )
-
-
-def select_outcomes(outcomes: Outcomes, index: torch.Tensor) -> Outcomes:
-    gather_index = index.view(-1, 1, 1)
-    return Outcomes(
-        door_invalid=torch.gather(
-            outcomes.door_invalid, 1, gather_index.expand(-1, 1, outcomes.door_invalid.shape[2])
-        ).squeeze(1),
-        connection_invalid=torch.gather(
-            outcomes.connection_invalid,
-            1,
-            gather_index.expand(-1, 1, outcomes.connection_invalid.shape[2]),
-        ).squeeze(1),
-    )
-
-
-def merge_verified_outcomes(
-    known_outcomes: Outcomes | None,
-    current_outcomes: Outcomes,
-    stage: str,
-) -> Outcomes:
-    if known_outcomes is None:
-        return current_outcomes
-
-    return Outcomes(
-        door_invalid=merge_known_outcome(
-            known_outcomes.door_invalid, current_outcomes.door_invalid, "door", stage
-        ),
-        connection_invalid=merge_known_outcome(
-            known_outcomes.connection_invalid,
-            current_outcomes.connection_invalid,
-            "connection",
-            stage,
-        ),
-    )
-
-
-def merge_known_outcome(
-    known: torch.Tensor,
-    current: torch.Tensor,
-    outcome_name: str,
-    stage: str,
-) -> torch.Tensor:
-    inconsistent = (known >= 0) & (current >= 0) & (known != current)
-    if torch.any(inconsistent):
-        first_idx = torch.nonzero(inconsistent, as_tuple=False)[0].tolist()
-        invalid_to_valid = torch.sum((known == 1) & (current == 0)).item()
-        valid_to_invalid = torch.sum((known == 0) & (current == 1)).item()
-        raise RuntimeError(
-            f"{outcome_name} outcome changed after becoming known at {stage}: "
-            f"first index {first_idx}, invalid->valid {invalid_to_valid}, "
-            f"valid->invalid {valid_to_invalid}"
-        )
-    return torch.where(known >= 0, known, current)
 
 
 def extract_candidate_features(
@@ -448,16 +389,21 @@ class PinnedSparseFeatureSlot:
 class GenerationGroup:
     env: EnvironmentGroup
     config: GenerateConfig
-    known_outcomes: Outcomes | None
     step: int
     feature_slot: PinnedSparseFeatureSlot | None
 
 
 @dataclass
+class CandidateBatch:
+    candidates: Actions
+    reward_outcomes: Outcomes
+    post_candidate_outcomes: Outcomes | None
+
+
+@dataclass
 class PendingGenerationStep:
     group: GenerationGroup
-    candidates: Actions
-    outcomes: Outcomes
+    candidate_batch: CandidateBatch
     future: Future[Features | SparseFeatures]
 
 
@@ -501,13 +447,16 @@ def create_generation_environment_groups(
 def get_generation_candidates(
     group: GenerationGroup,
     device: torch.device,
-) -> tuple[Actions, Outcomes]:
+) -> CandidateBatch:
     if group.config.lookahead_outcomes:
-        return group.env.get_candidates_with_outcomes(
+        candidates, post_candidate_outcomes = group.env.get_candidates_with_outcomes(
             group.config.max_candidates, device
         )
+        reward_outcomes = group.env.get_outcomes(device, verify_consistency=False)
+        return CandidateBatch(candidates, reward_outcomes, post_candidate_outcomes)
     candidates = group.env.get_candidates(group.config.max_candidates, device)
-    return candidates, group.env.get_outcomes(device)
+    reward_outcomes = group.env.get_outcomes(device, verify_consistency=False)
+    return CandidateBatch(candidates, reward_outcomes, None)
 
 
 def select_candidate_actions(
@@ -557,25 +506,12 @@ def select_candidate_actions(
 def verify_and_step(
     group: GenerationGroup,
     selected_actions: Actions,
-    action_index: torch.Tensor,
-    outcomes: Outcomes,
-    step: int,
     device: torch.device,
     verify_outcome_consistency: bool,
 ) -> None:
-    if verify_outcome_consistency and group.config.lookahead_outcomes:
-        group.known_outcomes = merge_verified_outcomes(
-            group.known_outcomes,
-            select_outcomes(outcomes, action_index),
-            f"lookahead step {step}",
-    )
     group.env.step(selected_actions)
     if verify_outcome_consistency:
-        group.known_outcomes = merge_verified_outcomes(
-            group.known_outcomes,
-            group.env.get_outcomes(device),
-            f"step {step}",
-        )
+        group.env.get_outcomes(device, verify_consistency=True)
 
 
 def start_generation_step(
@@ -587,7 +523,8 @@ def start_generation_step(
     pending: deque[PendingGenerationStep],
 ) -> None:
     while group.step < group.config.episode_length:
-        candidates, outcomes = get_generation_candidates(group, device)
+        candidate_batch = get_generation_candidates(group, device)
+        candidates = candidate_batch.candidates
         if candidates.room_idx.shape[1] != 1:
             candidate_log_temperature = torch.log(group.config.temperature).to(
                 torch.device("cpu")
@@ -601,8 +538,7 @@ def start_generation_step(
             pending.append(
                 PendingGenerationStep(
                     group,
-                    candidates,
-                    outcomes,
+                    candidate_batch,
                     executor.submit(
                         extract_candidate_features,
                         group.env,
@@ -625,9 +561,6 @@ def start_generation_step(
         verify_and_step(
             group,
             candidates.select(action_index),
-            action_index,
-            outcomes,
-            group.step,
             device,
             verify_outcome_consistency,
         )
@@ -685,7 +618,6 @@ def run_generation_groups(
         GenerationGroup(
             env,
             config,
-            None,
             0,
             PinnedSparseFeatureSlot(env, pin_memory=True)
             if device.type == "cuda"
@@ -709,11 +641,12 @@ def run_generation_groups(
             while pending:
                 step = pending.popleft()
                 features = step.future.result()
+                candidates = step.candidate_batch.candidates
                 action_index, selected_actions = select_candidate_actions(
                     step.group,
                     model,
-                    step.candidates,
-                    step.outcomes,
+                    candidates,
+                    step.candidate_batch.reward_outcomes,
                     features,
                     device,
                     gpu_lock,
@@ -723,9 +656,6 @@ def run_generation_groups(
                 verify_and_step(
                     step.group,
                     selected_actions,
-                    action_index,
-                    step.outcomes,
-                    step.group.step,
                     device,
                     verify_outcome_consistency,
                 )
@@ -743,10 +673,10 @@ def run_generation_groups(
         for group in groups:
             group.env.finish()
             actions = group.env.get_actions(device)
-            outcomes = group.env.get_outcomes(device)
+            outcomes = group.env.get_outcomes(
+                device, verify_consistency=verify_outcome_consistency
+            )
             door_match_counts = group.env.get_door_match_counts(device)
-            if verify_outcome_consistency:
-                merge_verified_outcomes(group.known_outcomes, outcomes, "finish")
             results.append((
                 EpisodeData(
                     actions,
