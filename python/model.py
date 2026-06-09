@@ -98,6 +98,7 @@ class FrontierModel(torch.nn.Module):
         map_x,
         map_y,
         embedding_width,
+        global_embedding_width,
         hidden_width,
         door_match_embedding_width,
         num_layers,
@@ -111,6 +112,9 @@ class FrontierModel(torch.nn.Module):
         self.map_x = map_x
         self.map_y = map_y
         self.embedding_width = embedding_width
+        self.global_embedding_width = global_embedding_width
+        if global_embedding_width <= 0:
+            raise ValueError("global_embedding_width must be greater than zero")
         self.left_count, self.right_count, self.up_count, self.down_count = door_counts
         if self.features.lookahead_outcomes and door_match_embedding_width <= 0:
             raise ValueError("door_match_embedding_width must be greater than zero")
@@ -171,12 +175,33 @@ class FrontierModel(torch.nn.Module):
         ])
         self.update_layers = torch.nn.ModuleList([
             torch.nn.Sequential(
-                torch.nn.Linear(embedding_width * 2, hidden_width, bias=False),
+                torch.nn.Linear(
+                    embedding_width * 2 + global_embedding_width,
+                    hidden_width,
+                    bias=False,
+                ),
                 torch.nn.GELU(),
                 torch.nn.Linear(hidden_width, embedding_width, bias=False),
             ) for _ in range(num_layers if use_neighbors else 0)
         ])
         global_width = (
+            output_metadata.num_room_connection_variants * self.features.inventory
+            + embedding_width * (
+                self.features.connection_reachability
+                and self.num_connection_outputs > 0
+            )
+            + int(self.features.temperature)
+            + int(self.features.action_candidates)
+            + (
+                door_match_embedding_width
+                + 2 * connection_output_size
+            ) * int(self.features.lookahead_outcomes)
+        )
+        self.global_mlp = (
+            torch.nn.Linear(global_width, global_embedding_width, bias=False)
+            if global_width > 0 else None
+        )
+        pooled_width = (
             output_metadata.num_room_connection_variants * self.features.inventory
             + embedding_width * (
                 2 * self.features.frontier_mask
@@ -192,11 +217,11 @@ class FrontierModel(torch.nn.Module):
                 + 2 * connection_output_size
             ) * int(self.features.lookahead_outcomes)
         )
-        self.global_mlp = torch.nn.Sequential(
-            torch.nn.Linear(global_width, hidden_width, bias=False),
+        self.pooled_mlp = torch.nn.Sequential(
+            torch.nn.Linear(pooled_width, hidden_width, bias=False),
             torch.nn.GELU(),
             torch.nn.Linear(hidden_width, embedding_width, bias=False),
-        ) if global_width > 0 else None
+        ) if pooled_width > 0 else None
         self.door_match_embedding_width = door_match_embedding_width
         self.left_door_match_embedding = self._door_match_embedding(
             self.left_count,
@@ -398,6 +423,41 @@ class FrontierModel(torch.nn.Module):
         #         features.connection_reachability.to(torch.float32)
         #     ).unsqueeze(1)
         X = X * node_mask.unsqueeze(-1)
+        inventory_features = features.inventory.to(X.dtype) if self.include_inventory else None
+        connection_features = (
+            self.connection_reachability_embedding(
+                features.connection_reachability.to(X.dtype)
+            )
+            if self.connection_reachability_embedding is not None else None
+        )
+        temperature_features = (
+            features.log_temperature.to(X.dtype).unsqueeze(-1)
+            if self.features.temperature else None
+        )
+        action_candidate_features = (
+            features.log_action_candidates.to(X.dtype).unsqueeze(-1)
+            if self.features.action_candidates else None
+        )
+        lookahead_features = (
+            self._lookahead_outcome_features(features, X.dtype)
+            if self.features.lookahead_outcomes else None
+        )
+        global_inputs = []
+        if inventory_features is not None:
+            global_inputs.append(inventory_features)
+        if connection_features is not None:
+            global_inputs.append(connection_features)
+        if temperature_features is not None:
+            global_inputs.append(temperature_features)
+        if action_candidate_features is not None:
+            global_inputs.append(action_candidate_features)
+        if lookahead_features is not None:
+            global_inputs.append(lookahead_features)
+        global_state = (
+            self.global_mlp(torch.cat(global_inputs, dim=-1))
+            if self.global_mlp is not None
+            else X.new_zeros([X.shape[0], self.global_embedding_width])
+        )
         if node.shape[1] == 0:
             mean_pool = max_pool = X.new_zeros([X.shape[0], X.shape[2]])
         else:
@@ -406,6 +466,7 @@ class FrontierModel(torch.nn.Module):
             relative_position = self._relative_position_features(features)
             neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
             pair_mask = (features.frontier_neighbor >= 0).unsqueeze(-1)
+            global_broadcast = global_state.unsqueeze(1).expand(-1, node.shape[1], -1)
             for source_layer, pair_layer, output_layer, update_layer in zip(
                 self.source_message_layers,
                 self.pair_message_layers,
@@ -428,32 +489,30 @@ class FrontierModel(torch.nn.Module):
                 # messages: [b, f, k, e]
                 messages = messages.sum(2) / pair_mask.sum(2).clamp_min(1)
                 # messages [b, f, e]
-                X = X + update_layer(torch.cat([X, messages], dim=-1))
+                X = X + update_layer(torch.cat([X, messages, global_broadcast], dim=-1))
                 X = X * node_mask.unsqueeze(-1)
             count = node_mask.sum(1, keepdim=True).clamp_min(1)
             mean_pool = X.sum(1) / count
             max_pool = torch.where(node_mask.unsqueeze(-1), X, -torch.inf).max(1).values
             max_pool = torch.where(torch.isfinite(max_pool), max_pool, 0)
-        # mean_pool, max_pool, global_state: [b, e]
-        global_inputs = []
-        if self.include_inventory:
-            # global_inputs.append(torch.matmul(features.inventory.to(torch.float32), self.inventory_embedding))
-            global_inputs.append(features.inventory.to(X.dtype))
+        # mean_pool, max_pool, pooled_state: [b, e]
+        pooled_inputs = []
+        if inventory_features is not None:
+            # pooled_inputs.append(torch.matmul(features.inventory.to(torch.float32), self.inventory_embedding))
+            pooled_inputs.append(inventory_features)
         if self.features.frontier_mask:
-            global_inputs.extend([mean_pool, max_pool])
-        if self.connection_reachability_embedding is not None:
-            global_inputs.append(self.connection_reachability_embedding(
-                features.connection_reachability.to(X.dtype)
-            ))
-        if self.features.temperature:
-            global_inputs.append(features.log_temperature.to(X.dtype).unsqueeze(-1))
-        if self.features.action_candidates:
-            global_inputs.append(features.log_action_candidates.to(X.dtype).unsqueeze(-1))
-        if self.features.lookahead_outcomes:
-            global_inputs.append(self._lookahead_outcome_features(features, X.dtype))
-        global_state = (
-            self.global_mlp(torch.cat(global_inputs, dim=-1))
-            if self.global_mlp is not None
+            pooled_inputs.extend([mean_pool, max_pool])
+        if connection_features is not None:
+            pooled_inputs.append(connection_features)
+        if temperature_features is not None:
+            pooled_inputs.append(temperature_features)
+        if action_candidate_features is not None:
+            pooled_inputs.append(action_candidate_features)
+        if lookahead_features is not None:
+            pooled_inputs.append(lookahead_features)
+        pooled_state = (
+            self.pooled_mlp(torch.cat(pooled_inputs, dim=-1))
+            if self.pooled_mlp is not None
             else X.new_zeros([X.shape[0], self.embedding_width])
         )
         if self.features.room_position:
@@ -465,7 +524,7 @@ class FrontierModel(torch.nn.Module):
             room_y = room_x
             room_placed = torch.zeros([X.shape[0], 1, self.num_rooms], dtype=torch.bool, device=X.device)
         # X: [b, 1, e]
-        X = global_state.unsqueeze(1)
+        X = pooled_state.unsqueeze(1)
         door = self.door_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
         connection = self.connection_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
         balance_score = self.balance_score_output(

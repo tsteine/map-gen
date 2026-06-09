@@ -189,6 +189,7 @@ def frontier_model_kwargs(
         "map_x": config.map_size[0],
         "map_y": config.map_size[1],
         "embedding_width": config.model.embedding_width,
+        "global_embedding_width": config.model.global_embedding_width,
         "hidden_width": config.model.hidden_width,
         "door_match_embedding_width": config.model.door_match_embedding_width,
         "num_layers": config.model.num_layers,

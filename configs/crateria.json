@@ -9,6 +9,7 @@
     "autocast": true,
     "generation_autocast": true,
     "embedding_width": 256,
+    "global_embedding_width": 256,
     "hidden_width": 256,
     "door_match_embedding_width": 64,
     "num_layers": 2
