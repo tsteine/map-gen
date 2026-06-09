@@ -629,7 +629,7 @@ class TrainingSession:
                 train_actions_cpu.room_y[:, step],
             )
             sample_step = step % self.config.train.sample_period == offset
-            if self.config.features.lookahead_outcomes or sample_step:
+            if sample_step:
                 next_lookahead_outcomes = env.get_outcomes_after_candidates(
                     Actions(
                         next_actions.room_idx.unsqueeze(1),
@@ -661,7 +661,7 @@ class TrainingSession:
                 env.step(next_actions)
             else:
                 env.step_known(next_actions)
-            if step % self.config.train.sample_period == offset:
+            if sample_step:
                 proposal_frontier_idx = None
                 proposal_door_variant_idx = None
                 proposal_selected_candidate = None
