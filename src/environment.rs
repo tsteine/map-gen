@@ -41,6 +41,10 @@ impl CandidateUpdate {
     fn updates_occupancy(self) -> bool {
         !matches!(self, Self::Lookahead)
     }
+
+    fn stores_full_candidate_lists(self) -> bool {
+        matches!(self, Self::Build)
+    }
 }
 
 fn profile_start() -> Option<Instant> {
@@ -788,6 +792,9 @@ impl Environment {
                             door_kind: opp_door.kind,
                         };
                         candidates.push(candidate);
+                        if !candidate_update.stores_full_candidate_lists() {
+                            break 'door;
+                        }
                     }
                     profile_end(PROFILE_STEP_BUILD_NEW_FRONTIER_CANDIDATES, profile);
                 }
@@ -807,7 +814,7 @@ impl Environment {
             let profile = profile_start();
             let geometry_unused_count = &self.geometry_unused_count;
             for frontier in self.frontier.values_mut() {
-                frontier.candidates.retain(|cand| {
+                let keep_candidate = |cand: &GeometryAction| {
                     geometry_unused_count[cand.geometry_idx as usize] > 0
                         && !common.has_geometry_intersection(
                             action_geometry_idx,
@@ -817,7 +824,18 @@ impl Environment {
                             cand.x,
                             cand.y,
                         )
-                });
+                };
+                if candidate_update.stores_full_candidate_lists() {
+                    frontier.candidates.retain(keep_candidate);
+                } else if let Some(candidate_idx) =
+                    frontier.candidates.iter().position(keep_candidate)
+                {
+                    let candidate = frontier.candidates[candidate_idx];
+                    frontier.candidates.clear();
+                    frontier.candidates.push(candidate);
+                } else {
+                    frontier.candidates.clear();
+                }
             }
             profile_end(PROFILE_STEP_FILTER_EXISTING_FRONTIERS, profile);
         }
