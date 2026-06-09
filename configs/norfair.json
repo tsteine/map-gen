@@ -34,7 +34,7 @@
     "num_devices": 2,
     "pipeline_groups": 2,
     "recommended_candidates": {"log": [1, 4, 8, 16, 16]},
-    "exploration_candidates": {"log": [1, 1, 1, 1, 1]},
+    "exploration_candidates": 0,
     "temperature": {"log": [10.0, 1.0, 0.03, 0.03, 0.03]},
     "proposal_temperature": {"log": [10.0, 1.0, 0.03, 0.03, 0.03]},
     "reward_door": 1.0,
@@ -74,7 +74,7 @@
     "door_weight": 1.0,
     "connection_weight": 1.0,
     "balance_weight": 1.0,
-    "proposal_weight": 0.1,
+    "proposal_weight": 0.02,
     "pipeline_groups": 4,
     "gradient_accumulation_steps": 1
   }

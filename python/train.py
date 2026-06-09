@@ -69,17 +69,15 @@ class PreparedTrainBatch:
     outcomes: Outcomes
     door_matches: DoorMatches
     prefix_count: int
-    feature_batches: list[Features]
-    proposal_data: ProposalData | None
-    proposal_batches: list["ProposalTrainBatch"]
+    feature_batches: list["FeatureTrainBatch"]
 
 
 @dataclass
-class ProposalTrainBatch:
+class FeatureTrainBatch:
     features: Features
-    frontier_idx: torch.Tensor
-    door_variant_idx: torch.Tensor
-    selected_candidate: torch.Tensor
+    proposal_frontier_idx: torch.Tensor | None
+    proposal_door_variant_idx: torch.Tensor | None
+    proposal_selected_candidate: torch.Tensor | None
 
 
 @dataclass
@@ -611,7 +609,7 @@ class TrainingSession:
         train_episode_data: EpisodeData,
         proposal_data: ProposalData | None,
         env,
-    ) -> tuple[int, list[Features], list[ProposalTrainBatch]]:
+    ) -> tuple[int, list[FeatureTrainBatch]]:
         offset = torch.randint(0, self.config.train.sample_period, [1]).item()
         train_actions = train_episode_data.actions
         train_actions_cpu = train_actions.to(torch.device("cpu"))
@@ -624,12 +622,6 @@ class TrainingSession:
         )
         env.clear()
         feature_batches = []
-        proposal_batches = []
-        previous_lookahead_outcomes = Outcomes(
-            torch.empty([train_actions.room_idx.shape[0], 0], dtype=torch.int8),
-            torch.empty([train_actions.room_idx.shape[0], 0], dtype=torch.int8),
-            torch.empty([train_actions.room_idx.shape[0], 0], dtype=torch.int16),
-        )
         for step in range(self.episode_length):
             next_actions = Actions(
                 train_actions_cpu.room_idx[:, step],
@@ -637,27 +629,6 @@ class TrainingSession:
                 train_actions_cpu.room_y[:, step],
             )
             sample_step = step % self.config.train.sample_period == offset
-            if sample_step and proposal_data is not None and step > 0:
-                proposal_batches.append(
-                    ProposalTrainBatch(
-                        env.get_features(
-                            torch.device("cpu"),
-                            log_temperature,
-                            self.config.features.temperature,
-                            log_recommended_candidates,
-                            self.config.features.recommended_candidates,
-                            log_exploration_candidates,
-                            self.config.features.exploration_candidates,
-                            previous_lookahead_outcomes,
-                            self.config.features.lookahead_outcomes,
-                            0,
-                            train_actions.room_idx.shape[0],
-                        ),
-                        proposal_data.frontier_idx[:, step],
-                        proposal_data.door_variant_idx[:, step],
-                        proposal_data.selected_candidate[:, step],
-                    )
-                )
             if self.config.features.lookahead_outcomes or sample_step:
                 next_lookahead_outcomes = env.get_outcomes_after_candidates(
                     Actions(
@@ -691,32 +662,38 @@ class TrainingSession:
             else:
                 env.step_known(next_actions)
             if step % self.config.train.sample_period == offset:
+                proposal_frontier_idx = None
+                proposal_door_variant_idx = None
+                proposal_selected_candidate = None
+                if proposal_data is not None and step + 1 < self.episode_length:
+                    proposal_frontier_idx = proposal_data.frontier_idx[:, step + 1]
+                    proposal_door_variant_idx = proposal_data.door_variant_idx[:, step + 1]
+                    proposal_selected_candidate = proposal_data.selected_candidate[:, step + 1]
                 feature_batches.append(
-                    env.get_features(
-                        torch.device("cpu"),
-                        log_temperature,
-                        self.config.features.temperature,
-                        log_recommended_candidates,
-                        self.config.features.recommended_candidates,
-                        log_exploration_candidates,
-                        self.config.features.exploration_candidates,
-                        Outcomes(
-                            next_lookahead_outcomes.door_invalid.squeeze(1),
-                            next_lookahead_outcomes.connection_invalid.squeeze(1),
-                            next_lookahead_outcomes.door_match.squeeze(1),
+                    FeatureTrainBatch(
+                        env.get_features(
+                            torch.device("cpu"),
+                            log_temperature,
+                            self.config.features.temperature,
+                            log_recommended_candidates,
+                            self.config.features.recommended_candidates,
+                            log_exploration_candidates,
+                            self.config.features.exploration_candidates,
+                            Outcomes(
+                                next_lookahead_outcomes.door_invalid.squeeze(1),
+                                next_lookahead_outcomes.connection_invalid.squeeze(1),
+                                next_lookahead_outcomes.door_match.squeeze(1),
+                            ),
+                            self.config.features.lookahead_outcomes,
+                            0,
+                            train_actions.room_idx.shape[0],
                         ),
-                        self.config.features.lookahead_outcomes,
-                        0,
-                        train_actions.room_idx.shape[0],
+                        proposal_frontier_idx,
+                        proposal_door_variant_idx,
+                        proposal_selected_candidate,
                     )
                 )
-            if self.config.features.lookahead_outcomes:
-                previous_lookahead_outcomes = Outcomes(
-                    next_lookahead_outcomes.door_invalid.squeeze(1),
-                    next_lookahead_outcomes.connection_invalid.squeeze(1),
-                    next_lookahead_outcomes.door_match.squeeze(1),
-                )
-        return len(feature_batches), feature_batches, proposal_batches
+        return len(feature_batches), feature_batches
 
     def prepare_feature_batch(
         self,
@@ -726,7 +703,7 @@ class TrainingSession:
         proposal_data: ProposalData | None,
         env,
     ) -> PreparedTrainBatch:
-        prefix_count, feature_batches, proposal_batches = self.prepare_feature_batches(
+        prefix_count, feature_batches = self.prepare_feature_batches(
             train_episode_data,
             proposal_data,
             env,
@@ -739,8 +716,6 @@ class TrainingSession:
             door_matches,
             prefix_count=prefix_count,
             feature_batches=feature_batches,
-            proposal_data=proposal_data,
-            proposal_batches=proposal_batches,
         )
 
     def prepare_train_batch_task(
@@ -775,7 +750,7 @@ class TrainingSession:
             self.config.train.episodes_per_file,
             self.config.train.hist_c,
         )
-        prefix_count, feature_batches, proposal_batches = self.prepare_feature_batches(
+        prefix_count, feature_batches = self.prepare_feature_batches(
             replay_episode_data,
             None,
             env,
@@ -791,8 +766,6 @@ class TrainingSession:
             replay_door_matches,
             prefix_count=prefix_count,
             feature_batches=feature_batches,
-            proposal_data=None,
-            proposal_batches=proposal_batches,
         )
 
     def train_batch_backward(
@@ -823,19 +796,14 @@ class TrainingSession:
 
     def proposal_batch_loss(
         self,
-        proposal_batch: ProposalTrainBatch,
+        proposal_score: torch.Tensor,
+        frontier_idx: torch.Tensor,
+        door_variant_idx: torch.Tensor,
+        selected_candidate: torch.Tensor,
     ) -> torch.Tensor:
-        features = proposal_batch.features.to(self.device)
-        frontier_idx = proposal_batch.frontier_idx.to(self.device, dtype=torch.int64)
-        door_variant_idx = proposal_batch.door_variant_idx.to(self.device, dtype=torch.int64)
-        selected_candidate = proposal_batch.selected_candidate.to(self.device, dtype=torch.int64)
-        with torch.amp.autocast(
-            "cuda",
-            dtype=torch.bfloat16,
-            enabled=self.device.type == "cuda" and self.config.model.autocast,
-        ):
-            preds = self.main_model(features)
-        proposal_score = preds.proposal_score
+        frontier_idx = frontier_idx.to(self.device, dtype=torch.int64)
+        door_variant_idx = door_variant_idx.to(self.device, dtype=torch.int64)
+        selected_candidate = selected_candidate.to(self.device, dtype=torch.int64)
         candidate_count = frontier_idx.shape[1]
         valid = (frontier_idx >= 0) & (door_variant_idx >= 0)
         safe_frontier_idx = frontier_idx.clamp_min(0)
@@ -900,8 +868,8 @@ class TrainingSession:
         total_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         prefix_weight = 1.0 / prepared_batch.prefix_count
 
-        for features in prepared_batch.feature_batches:
-            features = features.to(self.device)
+        for feature_batch in prepared_batch.feature_batches:
+            features = feature_batch.features.to(self.device)
             with torch.amp.autocast(
                 "cuda",
                 dtype=torch.bfloat16,
@@ -916,7 +884,7 @@ class TrainingSession:
                 repeated_balance_score_mask,
                 self.loss_config,
             )
-            (prefix_loss.total * prefix_weight * loss_scale).backward()
+            backward_loss = prefix_loss.total * prefix_weight
             total_loss.total += prefix_loss.total.item() * prefix_weight
             total_loss.door += prefix_loss.door.item() * prefix_weight
             total_loss.connection += prefix_loss.connection.item() * prefix_weight
@@ -928,23 +896,28 @@ class TrainingSession:
             total_loss.balance_contribution += (
                 prefix_loss.balance_contribution.item() * prefix_weight
             )
-        proposal_loss = 0.0
-        proposal_contribution = 0.0
-        if prepared_batch.kind == "fresh" and prepared_batch.proposal_batches:
-            proposal_weight = 1.0 / len(prepared_batch.proposal_batches)
-            for proposal_batch in prepared_batch.proposal_batches:
-                batch_proposal_loss = self.proposal_batch_loss(proposal_batch)
+            if (
+                prepared_batch.kind == "fresh"
+                and feature_batch.proposal_frontier_idx is not None
+                and feature_batch.proposal_door_variant_idx is not None
+                and feature_batch.proposal_selected_candidate is not None
+            ):
+                batch_proposal_loss = self.proposal_batch_loss(
+                    preds.proposal_score,
+                    feature_batch.proposal_frontier_idx,
+                    feature_batch.proposal_door_variant_idx,
+                    feature_batch.proposal_selected_candidate,
+                )
                 weighted_proposal_loss = (
                     self.config.train.proposal_weight
                     * batch_proposal_loss
-                    * proposal_weight
+                    * prefix_weight
                 )
-                (weighted_proposal_loss * loss_scale).backward()
-                proposal_loss += batch_proposal_loss.item() * proposal_weight
-                proposal_contribution += weighted_proposal_loss.item()
-        total_loss.total += proposal_contribution
-        total_loss.proposal += proposal_loss
-        total_loss.proposal_contribution += proposal_contribution
+                backward_loss = backward_loss + weighted_proposal_loss
+                total_loss.total += weighted_proposal_loss.item()
+                total_loss.proposal += batch_proposal_loss.item() * prefix_weight
+                total_loss.proposal_contribution += weighted_proposal_loss.item()
+            (backward_loss * loss_scale).backward()
         return total_loss
 
     def train_optimizer_step(self) -> None:
@@ -973,11 +946,11 @@ class TrainingSession:
             name: as_checkpoint_tensor(value)
             for name, value in self.ema_model.state_dict().items()
         }
+        generation_config = instantiate_scheduleable_config(
+            self.config,
+            self.num_episodes,
+        )
         for iteration in range(self.config.generation.num_iterations):
-            generation_config = instantiate_scheduleable_config(
-                self.config,
-                self.num_episodes + iteration * self.config.generation.num_environments,
-            )
             futures = [
                 executor.submit(
                     run_generation_process_task,
@@ -1265,7 +1238,7 @@ class TrainingSession:
             "main_bal %.4f %.1f%%, prop %.4f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
             "conn %.2f (min %s), ss %.4f, bal_loss %.4f, "
-            "bal_ss %.4f, frac %.4f",
+            "bal_ss %.4f, cand %d, frac %.4f",
             round_idx,
             loss.total,
             loss.door,
@@ -1286,6 +1259,7 @@ class TrainingSession:
             scalar(door_match_ss),
             balance_loss,
             scalar(balance_door_match_ss),
+            step_config.generation.recommended_candidates + step_config.generation.exploration_candidates,
             schedule_progress,
         )
         # logging.info(
