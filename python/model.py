@@ -288,6 +288,7 @@ class FrontierModel(torch.nn.Module):
             output_metadata.num_door_variants,
             bias=False,
         )
+        self.proposal_output.weight.data.zero_()
 
     def _door_match_embedding(
         self,
