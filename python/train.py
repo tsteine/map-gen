@@ -439,14 +439,25 @@ def run_generation_process_task(
         )
         for env in state.envs
     ]
-    episode_data, outcomes, door_match_counts, proposal_data = run_generation_groups(
+    (
+        episode_data,
+        outcomes,
+        door_match_counts,
+        proposal_data,
+        python_profile_report,
+    ) = run_generation_groups(
         state.envs,
         state.model,
         gen_configs,
         state.device,
         verify_outcome_consistency=verify_outcome_consistency,
+        profile=state.profile,
     )
-    profile_report = map_gen.profile_report() if state.profile else []
+    profile_report = (
+        map_gen.profile_report() + python_profile_report
+        if state.profile
+        else []
+    )
     return (
         episode_data.to(torch.device("cpu")),
         outcomes.to(torch.device("cpu")),
@@ -1391,6 +1402,7 @@ class TrainingSession:
             return
 
         for section_name, prefix in [
+            ("Python generation spans", "python."),
             ("worker commands", "worker."),
             ("environment step spans", "env."),
         ]:

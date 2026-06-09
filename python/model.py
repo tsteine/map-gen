@@ -26,6 +26,8 @@ class Predictions:
     balance_score: torch.Tensor
     # Frontier-local proposal logits for door variants:
     proposal_score: torch.Tensor
+    # Optional frontier-local state before global pooling:
+    proposal_state: torch.Tensor
 
 
 @dataclass
@@ -48,6 +50,7 @@ def get_predictions(raw_preds, output_sizes):
         connection_invalid=preds[1],
         balance_score=preds[2],
         proposal_score=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
+        proposal_state=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
     )
 
 
@@ -386,7 +389,12 @@ class FrontierModel(torch.nn.Module):
             COORD_OFFSET,
         )
 
-    def forward(self, features: Features, include_proposal: bool):
+    def forward(
+        self,
+        features: Features,
+        include_proposal: bool,
+        return_proposal_state: bool = False,
+    ):
         # Shapes below use: b=batch, f=frontiers, k=neighbors, e=embedding width,
         # h=message hidden width.
         # node: [b, f, 5]
@@ -517,6 +525,7 @@ class FrontierModel(torch.nn.Module):
             if include_proposal
             else X.new_empty([X.shape[0], X.shape[1], 0])
         )
+        proposal_state = X if return_proposal_state else X.new_empty([X.shape[0], X.shape[1], 0])
         # mean_pool, max_pool, pooled_state: [b, e]
         pooled_inputs = []
         if inventory_features is not None:
@@ -565,6 +574,7 @@ class FrontierModel(torch.nn.Module):
             preds.connection_invalid,
             preds.balance_score,
             proposal_score,
+            proposal_state,
         )
 
 

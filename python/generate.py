@@ -20,9 +20,12 @@ from dataclasses import dataclass
 import logging
 import math
 import threading
+import time
 import torch
 
 from train_config import Config
+
+type ProfileReport = list[tuple[str, int, int]]
 
 
 # We make use of a somewhat complicated way of pipelining the generation process,
@@ -42,6 +45,69 @@ def rand_choice(p):
     rnd = torch.rand([p.shape[0], 1], device=p.device)
     choice = torch.clamp(torch.searchsorted(cumul_p, rnd), max=p.shape[1] - 1).view(-1)
     return choice
+
+
+class GenerationProfiler:
+    def __init__(self, enabled: bool):
+        self.enabled = enabled
+        self.counts: dict[str, int] = {}
+        self.nanos: dict[str, int] = {}
+
+    def add(self, name: str, start: int) -> None:
+        if not self.enabled:
+            return
+        self.counts[name] = self.counts.get(name, 0) + 1
+        self.nanos[name] = self.nanos.get(name, 0) + time.perf_counter_ns() - start
+
+    def report(self) -> ProfileReport:
+        return [
+            (name, self.counts[name], self.nanos[name])
+            for name in sorted(self.counts)
+        ]
+
+
+def profile_start(enabled: bool) -> int:
+    return time.perf_counter_ns() if enabled else 0
+
+
+def sync_profile_device(device: torch.device, enabled: bool) -> None:
+    if enabled and device.type == "cuda":
+        torch.cuda.current_stream(device).synchronize()
+
+
+@dataclass
+class CachedProposalScores:
+    tensor: torch.Tensor
+    ready_event: torch.cuda.Event | None
+
+    def resolve(self) -> torch.Tensor:
+        if self.ready_event is not None:
+            self.ready_event.synchronize()
+            self.ready_event = None
+        return self.tensor
+
+
+def cache_proposal_scores_tensor(
+    scores: torch.Tensor,
+    copy_stream: torch.cuda.Stream | None,
+) -> CachedProposalScores:
+    scores = scores.to(torch.float32)
+    if scores.device.type != "cuda":
+        return CachedProposalScores(scores.to(torch.device("cpu")), None)
+    if copy_stream is None:
+        raise ValueError("CUDA proposal score caching requires a copy stream")
+    cpu_scores = torch.empty(
+        scores.shape,
+        dtype=scores.dtype,
+        device=torch.device("cpu"),
+        pin_memory=True,
+    )
+    copy_stream.wait_stream(torch.cuda.current_stream(scores.device))
+    with torch.cuda.device(scores.device), torch.cuda.stream(copy_stream):
+        cpu_scores.copy_(scores, non_blocking=True)
+        ready_event = torch.cuda.Event()
+        ready_event.record(copy_stream)
+    return CachedProposalScores(cpu_scores, ready_event)
 
 
 def outcome_reward(model_logprobs: torch.Tensor, known_invalid: torch.Tensor) -> torch.Tensor:
@@ -446,7 +512,7 @@ class GenerationGroup:
     step: int
     feature_slot: PinnedSparseFeatureSlot | None
     previous_lookahead_outcomes: Outcomes | None
-    previous_proposal_scores: torch.Tensor | None
+    previous_proposal_scores: CachedProposalScores | None
 
 
 @dataclass
@@ -526,9 +592,10 @@ def create_generation_environment_groups(
 
 def get_generation_candidate_batch(
     group: GenerationGroup,
-    proposal_scores: torch.Tensor | None,
+    proposal_scores: CachedProposalScores | None,
     device: torch.device,
 ) -> CandidateBatch:
+    resolved_proposal_scores = None if proposal_scores is None else proposal_scores.resolve()
     (
         candidates,
         proposal_frontier_idx,
@@ -540,7 +607,7 @@ def get_generation_candidate_batch(
         group.config.recommended_candidates,
         group.config.exploration_candidates,
         group.config.proposal_temperature,
-        proposal_scores,
+        resolved_proposal_scores,
         device,
     )
     return CandidateBatch(
@@ -676,7 +743,7 @@ def prepare_candidate_features(
 
 def prepare_lookahead_generation_step(
     group: GenerationGroup,
-    proposal_scores: torch.Tensor | None,
+    proposal_scores: CachedProposalScores | None,
     sparse_frontiers: bool,
 ) -> PreparedGenerationStep:
     candidate_batch = get_generation_candidate_batch(
@@ -702,28 +769,50 @@ def select_candidate_actions(
     device: torch.device,
     gpu_lock: threading.Lock,
     transfer_stream: torch.cuda.Stream | None,
+    proposal_copy_stream: torch.cuda.Stream | None,
     num_rooms: int,
-) -> tuple[torch.Tensor, Actions, torch.Tensor, torch.Tensor | None]:
+    profiler: GenerationProfiler,
+) -> tuple[torch.Tensor, Actions, torch.Tensor, CachedProposalScores | None]:
     environment_count, candidate_count = candidates.room_idx.shape
+    profile = profiler.enabled
     with gpu_lock:
+        sync_profile_device(device, profile)
+        profile_time = profile_start(profile)
         env_features = transfer_features(features, device, transfer_stream)
+        sync_profile_device(device, profile)
+        profiler.add("python.score.transfer_features", profile_time)
+
+        profile_time = profile_start(profile)
         with torch.amp.autocast(
             "cuda",
             dtype=torch.bfloat16,
             enabled=device.type == "cuda" and group.config.autocast,
         ):
             include_proposal = group.config.recommended_candidates > 0
-            preds = model(env_features, include_proposal=include_proposal)
+            preds = model(
+                env_features,
+                include_proposal=include_proposal,
+                return_proposal_state=False,
+            )
+        sync_profile_device(device, profile)
+        profiler.add("python.score.model_forward", profile_time)
+
+        profile_time = profile_start(profile)
         expected_reward = compute_expected_reward(
             Predictions(
                 preds.door_invalid.view(environment_count, candidate_count, -1),
                 preds.connection_invalid.view(environment_count, candidate_count, -1),
                 preds.balance_score.view(environment_count, candidate_count, -1),
                 preds.proposal_score,
+                preds.proposal_state,
             ),
             outcomes,
             group.config,
         )
+        sync_profile_device(device, profile)
+        profiler.add("python.score.reward", profile_time)
+
+        profile_time = profile_start(profile)
         # Replace dummy candidates to have -inf reward, so they are never selected unless there are no other candidates.
         expected_reward = torch.where(
             candidates.room_idx == num_rooms,
@@ -734,9 +823,13 @@ def select_candidate_actions(
         probs = torch.softmax(candidate_logits, dim=1)
         action_index = rand_choice(probs)
         selected_actions = candidates.select(action_index)
+        sync_profile_device(device, profile)
+        profiler.add("python.score.sample", profile_time)
+
+        profile_time = profile_start(profile)
         selected_proposal_scores = None
         if include_proposal:
-            proposal_score = preds.proposal_score.to(torch.float32).view(
+            proposal_score = preds.proposal_score.view(
                 environment_count,
                 candidate_count,
                 preds.proposal_score.shape[1],
@@ -745,7 +838,12 @@ def select_candidate_actions(
             selected_proposal_scores = proposal_score[
                 torch.arange(environment_count, device=device),
                 action_index,
-            ].to(torch.device("cpu"))
+            ]
+            selected_proposal_scores = cache_proposal_scores_tensor(
+                selected_proposal_scores,
+                proposal_copy_stream,
+            )
+        profiler.add("python.score.cache_proposal", profile_time)
     return action_index, selected_actions, candidate_logits, selected_proposal_scores
 
 
@@ -756,7 +854,8 @@ def compute_proposal_scores(
     device: torch.device,
     gpu_lock: threading.Lock,
     transfer_stream: torch.cuda.Stream | None,
-) -> torch.Tensor:
+    proposal_copy_stream: torch.cuda.Stream | None,
+) -> CachedProposalScores:
     with gpu_lock:
         env_features = transfer_features(features, device, transfer_stream)
         with torch.amp.autocast(
@@ -765,7 +864,7 @@ def compute_proposal_scores(
             enabled=device.type == "cuda" and group.config.autocast,
         ):
             preds = model(env_features, include_proposal=True)
-        return preds.proposal_score.to(torch.float32).to(torch.device("cpu"))
+        return cache_proposal_scores_tensor(preds.proposal_score, proposal_copy_stream)
 
 
 def verify_and_step(
@@ -823,7 +922,7 @@ def start_generation_step(
 
 def start_candidate_step(
     group: GenerationGroup,
-    proposal_scores: torch.Tensor | None,
+    proposal_scores: CachedProposalScores | None,
     sparse_frontiers: bool,
     executor: ThreadPoolExecutor,
     pending_candidates: deque[PendingCandidateStep],
@@ -890,10 +989,13 @@ def run_generation_groups(
     configs: list[GenerateConfig],
     device: torch.device,
     verify_outcome_consistency: bool = False,
-) -> tuple[EpisodeData, Outcomes, DoorMatchCounts, ProposalData]:
+    profile: bool = False,
+) -> tuple[EpisodeData, Outcomes, DoorMatchCounts, ProposalData, ProfileReport]:
     if not envs or len(envs) != len(configs):
         raise ValueError("generation groups require one config per environment group")
+    profiler = GenerationProfiler(profile)
     transfer_stream = torch.cuda.Stream(device=device) if device.type == "cuda" else None
+    proposal_copy_stream = torch.cuda.Stream(device=device) if device.type == "cuda" else None
     gpu_lock = threading.Lock()
     num_rooms = len(envs[0].engine.rooms)
     sparse_frontiers = device.type == "cuda"
@@ -934,7 +1036,9 @@ def run_generation_groups(
                 if not pending_candidates:
                     while pending_proposals:
                         proposal_step = pending_proposals.popleft()
+                        profile_time = profile_start(profile)
                         proposal_features = proposal_step.future.result()
+                        profiler.add("python.wait_proposal_features", profile_time)
                         proposal_scores = (
                             None
                             if proposal_features is None
@@ -945,6 +1049,7 @@ def run_generation_groups(
                                 device,
                                 gpu_lock,
                                 transfer_stream,
+                                proposal_copy_stream,
                             )
                         )
                         start_candidate_step(
@@ -957,8 +1062,12 @@ def run_generation_groups(
                     continue
 
                 step = pending_candidates.popleft()
+                profile_time = profile_start(profile)
                 prepared_step = step.future.result()
+                profiler.add("python.wait_candidate_features", profile_time)
+                profile_time = profile_start(profile)
                 candidate_batch = prepared_step.candidate_batch.to(device)
+                profiler.add("python.transfer_candidate_batch", profile_time)
                 candidates = candidate_batch.candidates
                 if prepared_step.features is None:
                     action_index = torch.zeros(
@@ -988,9 +1097,12 @@ def run_generation_groups(
                         device,
                         gpu_lock,
                         transfer_stream,
+                        proposal_copy_stream,
                         num_rooms,
+                        profiler,
                     )
                 group_index = group_index_by_id[id(step.group)]
+                profile_time = profile_start(profile)
                 max_candidates = step.group.config.max_candidates
                 frontier_idx = torch.full(
                     [candidates.room_idx.shape[0], max_candidates],
@@ -1021,17 +1133,22 @@ def run_generation_groups(
                 group_proposal_door_variant_idx[group_index].append(door_variant_idx)
                 group_selected_candidate[group_index].append(action_index)
                 group_proposal_target_logits[group_index].append(target_logits)
+                profiler.add("python.record_proposal_data", profile_time)
+                profile_time = profile_start(profile)
                 step.group.previous_lookahead_outcomes = select_outcomes(
                     candidate_batch.post_candidate_outcomes,
                     action_index,
                 ).to(torch.device("cpu"))
                 step.group.previous_proposal_scores = selected_proposal_scores
+                profiler.add("python.cache_next_proposal", profile_time)
+                profile_time = profile_start(profile)
                 verify_and_step(
                     step.group,
                     selected_actions,
                     device,
                     verify_outcome_consistency,
                 )
+                profiler.add("python.step_environment", profile_time)
                 step.group.step += 1
                 if step.group.step < step.group.config.episode_length:
                     start_generation_step(
@@ -1043,6 +1160,7 @@ def run_generation_groups(
                     )
         results = []
         for group_index, group in enumerate(groups):
+            profile_time = profile_start(profile)
             group.env.finish()
             actions = group.env.get_actions(device)
             outcomes = group.env.get_outcomes(
@@ -1073,4 +1191,11 @@ def run_generation_groups(
                     torch.stack(group_proposal_target_logits[group_index], dim=1),
                 ),
             ))
-    return merge_generation_results(results)
+            profiler.add("python.finish_group", profile_time)
+    (
+        episode_data,
+        outcomes,
+        door_match_counts,
+        proposal_data,
+    ) = merge_generation_results(results)
+    return episode_data, outcomes, door_match_counts, proposal_data, profiler.report()
