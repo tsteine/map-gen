@@ -94,11 +94,77 @@ class MainLossBreakdown:
     proposal_contribution: float
 
 
+@dataclass
+class CandidateDiagnostics:
+    target_entropy: torch.Tensor
+    uniform_kl: torch.Tensor
+    selected_probability: torch.Tensor
+
+
 def compute_door_match_count_ss(counts: torch.Tensor, dim: int) -> torch.Tensor:
     totals = torch.sum(counts, dim=dim, keepdim=True)
     if torch.any(totals <= 1):
         raise RuntimeError("door_match_ss requires at least two samples per row/column")
     return torch.sum(counts * (counts - 1) / (totals * (totals - 1)))
+
+
+def compute_candidate_diagnostics(proposal_data: ProposalData) -> CandidateDiagnostics:
+    target_logits = proposal_data.target_logits.to(torch.float32)
+    valid = (
+        (proposal_data.frontier_idx >= 0)
+        & (proposal_data.door_variant_idx >= 0)
+        & torch.isfinite(target_logits)
+    )
+    candidate_count = target_logits.shape[-1]
+    flat_logits = target_logits.reshape(-1, candidate_count)
+    flat_valid = valid.reshape(-1, candidate_count)
+    row_valid = torch.any(flat_valid, dim=1)
+    if not torch.any(row_valid):
+        zero = torch.sum(target_logits) * 0.0
+        return CandidateDiagnostics(zero, zero, zero)
+
+    row_logits = torch.where(
+        flat_valid[row_valid],
+        flat_logits[row_valid],
+        torch.full_like(flat_logits[row_valid], float("-inf")),
+    )
+    row_mask = flat_valid[row_valid]
+    target_log_probs = torch.nn.functional.log_softmax(row_logits, dim=1)
+    safe_target_log_probs = torch.where(
+        row_mask,
+        target_log_probs,
+        torch.zeros_like(target_log_probs),
+    )
+    target_probs = torch.where(
+        row_mask,
+        torch.exp(target_log_probs),
+        torch.zeros_like(target_log_probs),
+    )
+    entropy_per_row = torch.sum(-target_probs * safe_target_log_probs, dim=1)
+    target_entropy = torch.mean(entropy_per_row)
+    valid_counts = torch.sum(row_mask, dim=1).to(torch.float32)
+    uniform_kl = torch.mean(torch.log(valid_counts) - entropy_per_row)
+
+    selected_candidate = proposal_data.selected_candidate.reshape(-1)[row_valid].to(torch.int64)
+    selected_in_range = (
+        (selected_candidate >= 0)
+        & (selected_candidate < candidate_count)
+    )
+    safe_selected_candidate = selected_candidate.clamp_min(0).clamp_max(candidate_count - 1)
+    selected_valid = selected_in_range & torch.gather(
+        row_mask,
+        1,
+        safe_selected_candidate.unsqueeze(1),
+    ).squeeze(1)
+    if torch.any(selected_valid):
+        selected_probability = torch.mean(torch.gather(
+            target_probs[selected_valid],
+            1,
+            selected_candidate[selected_valid].unsqueeze(1),
+        ).squeeze(1))
+    else:
+        selected_probability = torch.sum(target_logits) * 0.0
+    return CandidateDiagnostics(target_entropy, uniform_kl, selected_probability)
 
 
 class Prefetcher:
@@ -855,9 +921,17 @@ class TrainingSession:
             proposal_log_probs,
             torch.zeros_like(proposal_log_probs),
         )
-        target_probs = torch.exp(safe_target_log_probs)
+        target_probs = torch.where(
+            row_mask,
+            torch.exp(target_log_probs),
+            torch.zeros_like(target_log_probs),
+        )
         kl_terms = target_probs * (safe_target_log_probs - safe_proposal_log_probs)
-        return torch.sum(torch.where(row_mask, kl_terms, torch.zeros_like(kl_terms))) / row_mask.shape[0]
+        proposal_loss = (
+            torch.sum(torch.where(row_mask, kl_terms, torch.zeros_like(kl_terms)))
+            / row_mask.shape[0]
+        )
+        return proposal_loss
 
     def train_feature_batch_backward(
         self,
@@ -886,7 +960,9 @@ class TrainingSession:
             dtype=torch.bool,
             device=self.device,
         )
-        total_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        total_loss = MainLossBreakdown(
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        )
         prefix_weight = 1.0 / prepared_batch.prefix_count
 
         for feature_batch in prepared_batch.feature_batches:
@@ -1163,6 +1239,7 @@ class TrainingSession:
         outcomes: Outcomes,
         door_match_counts: DoorMatchCounts,
         loss: MainLossBreakdown,
+        candidate_diagnostics: CandidateDiagnostics,
         balance_loss: float,
         round_idx: int,
         step_config: Config,
@@ -1225,6 +1302,9 @@ class TrainingSession:
             "main_balance_loss_pct": main_balance_loss_pct,
             "proposal_loss": loss.proposal,
             "proposal_loss_pct": proposal_loss_pct,
+            "candidate_target_entropy": candidate_diagnostics.target_entropy,
+            "candidate_uniform_kl": candidate_diagnostics.uniform_kl,
+            "candidate_selected_probability": candidate_diagnostics.selected_probability,
             "balance_loss": balance_loss,
             "success_rate": success_rate,
             "success_door": success_door,
@@ -1264,8 +1344,9 @@ class TrainingSession:
             "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, "
             "main_bal %.4f %.1f%%, prop %.4f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
-            "conn %.2f (min %s), ss %.4f, bal_loss %.4f, "
-            "bal_ss %.4f, cand %d, frac %.4f",
+            "conn %.2f (min %s), ss %.4f, ent %.4f, u_kl %.4f, "
+            "p %.4f, "
+            "cand %d, frac %.4f",
             round_idx,
             loss.total,
             loss.door,
@@ -1284,8 +1365,9 @@ class TrainingSession:
             scalar(avg_conn),
             scalar(min_conn),
             scalar(door_match_ss),
-            balance_loss,
-            scalar(balance_door_match_ss),
+            scalar(candidate_diagnostics.target_entropy),
+            scalar(candidate_diagnostics.uniform_kl),
+            scalar(candidate_diagnostics.selected_probability),
             step_config.generation.recommended_candidates + step_config.generation.exploration_candidates,
             schedule_progress,
         )
@@ -1345,6 +1427,7 @@ class TrainingSession:
                     proposal_data,
                     generation_profile,
                 ) = self.generate_round()
+                candidate_diagnostics = compute_candidate_diagnostics(proposal_data)
                 self.num_episodes += self.episodes_per_round
                 step_config = instantiate_scheduleable_config(self.config, self.num_episodes)
                 avg_loss, avg_balance_loss = self.train_round(
@@ -1360,6 +1443,7 @@ class TrainingSession:
                     gen_outcomes,
                     door_match_counts,
                     avg_loss,
+                    candidate_diagnostics,
                     avg_balance_loss,
                     round_idx,
                     step_config,
