@@ -93,6 +93,7 @@ class TrainConfig(StrictBaseModel):
     ema_decay: float
     pipeline_groups: int
     gradient_accumulation_steps: int
+    shuffle_buffer_batches: int
 
 
 class Config(StrictBaseModel):
@@ -216,6 +217,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("train.pipeline_groups must be greater than zero")
     if config.train.gradient_accumulation_steps <= 0:
         raise ValueError("train.gradient_accumulation_steps must be greater than zero")
+    if config.train.shuffle_buffer_batches <= 0:
+        raise ValueError("train.shuffle_buffer_batches must be greater than zero")
     if config.train.proposal_weight < 0:
         raise ValueError("train.proposal_weight must be greater than or equal to zero")
     if config.train.avg_frontiers_weight < 0:

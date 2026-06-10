@@ -1,46 +1,46 @@
 {
-  "experiment_name": "zebes-initial-testing",
+  "experiment_name": "zebes-testing",
   "room_set": "room_definitions/zebes.json",
   "map_size": [72, 72],
-  "knot_episodes": [0, 100000, 600000, 4000000],
+  "knot_episodes": [0, 200000, 1000000, 4000000, 16000000],
   "checkpoint_period": 100,
   "model": {
     "compile": true,
     "autocast": true,
     "generation_autocast": true,
-    "embedding_width": 256,
-    "global_embedding_width": 256,
-    "hidden_width": 256,
+    "embedding_width": 512,
+    "global_embedding_width": 512,
+    "hidden_width": 512,
     "door_match_embedding_width": 64,
-    "num_layers": 2
+    "num_layers": 4
   },
   "optimizer": {
-    "lr": {"log": [0.001, 0.001, 0.001, 0.0001]},
+    "lr": {"log": [0.0005, 0.0004, 0.0003, 0.0002, 0.0001]},
     "beta1": 0.95,
     "beta2": 0.99
   },
   "balance_model": {
     "hidden_width": 64,
-    "num_layers": 2
+    "num_layers": 1
   },
   "balance_optimizer": {
-    "lr": {"log": [0.001, 0.001, 0.001, 0.0001]},
+    "lr": {"log": [0.001, 0.0003, 0.0001, 0.00005, 0.00002]},
     "beta1": 0.95,
     "beta2": 0.99
   },
   "generation": {
-    "num_environments": 4096,
-    "num_iterations": 2,
+    "num_environments": 2048,
+    "num_iterations": 4,
     "num_devices": 2,
     "pipeline_groups": 2,
-    "recommended_candidates": {"log": [1, 4, 8, 32]},
-    "exploration_candidates": {"log": [1, 1, 1, 1]},
-    "temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
-    "proposal_temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
+    "recommended_candidates": 4,
+    "exploration_candidates": 0,
+    "temperature": {"log": [10.0, 1.0, 0.03, 0.03, 0.03]},
+    "proposal_temperature": {"log": [30.0, 3.0, 0.1, 0.1, 0.1]},
     "reward_door": 1.0,
     "reward_connection": 1.0,
-    "reward_balance": 1.0,
-    "reward_frontier": 0.0,
+    "reward_balance": 0.2,
+    "reward_frontier": 0.3,
     "frontier_neighbor_algorithm": "nearest-exclusive",
     "frontier_neighbor_count": 1,
     "frontier_window_size": 16,
@@ -65,7 +65,7 @@
     "frontier_connection_reachability": true
   },
   "train": {
-    "batch_size": 512,
+    "batch_size": 256,
     "fresh_pass_factor": 2.0,
     "replay_pass_factor": 2.0,
     "sample_period": 16,
@@ -75,9 +75,10 @@
     "door_weight": 1.0,
     "connection_weight": 1.0,
     "balance_weight": 1.0,
-    "avg_frontiers_weight": 0.01,
-    "proposal_weight": 0.1,
+    "avg_frontiers_weight": 0.1,
+    "proposal_weight": 0.005,
     "pipeline_groups": 4,
-    "gradient_accumulation_steps": 1
+    "gradient_accumulation_steps": 1,
+    "shuffle_buffer_batches": 16
   }
 }

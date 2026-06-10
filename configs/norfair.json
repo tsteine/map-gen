@@ -39,7 +39,7 @@
     "proposal_temperature": {"log": [30.0, 3.0, 0.1, 0.1, 0.1]},
     "reward_door": 1.0,
     "reward_connection": 1.0,
-    "reward_balance": 0.1,
+    "reward_balance": 0.2,
     "reward_frontier": 0.3,
     "frontier_neighbor_algorithm": "nearest-exclusive",
     "frontier_neighbor_count": 1,
@@ -78,6 +78,7 @@
     "avg_frontiers_weight": 0.1,
     "proposal_weight": 0.005,
     "pipeline_groups": 4,
-    "gradient_accumulation_steps": 1
+    "gradient_accumulation_steps": 1,
+    "shuffle_buffer_batches": 1
   }
 }

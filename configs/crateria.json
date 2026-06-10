@@ -78,6 +78,7 @@
     "avg_frontiers_weight": 0.01,
     "proposal_weight": 0.1,
     "pipeline_groups": 4,
-    "gradient_accumulation_steps": 1
+    "gradient_accumulation_steps": 1,
+    "shuffle_buffer_batches": 16
   }
 }
