@@ -24,6 +24,8 @@ class Predictions:
     connection_invalid: torch.Tensor
     # Predicted balance-model log-odds for the matched target door:
     balance_score: torch.Tensor
+    # Predicted average live frontier count across the full episode:
+    avg_frontiers: torch.Tensor
     # Frontier-local proposal logits for door variants:
     proposal_score: torch.Tensor
     # Optional frontier-local state before global pooling:
@@ -49,6 +51,7 @@ def get_predictions(raw_preds, output_sizes):
         door_invalid=preds[0],
         connection_invalid=preds[1],
         balance_score=preds[2],
+        avg_frontiers=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1]]),
         proposal_score=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_state=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
     )
@@ -286,6 +289,7 @@ class FrontierModel(torch.nn.Module):
             output_metadata.connection, output_metadata.num_connection_variants, embedding_width)
         self.balance_score_output = FactorizedOutcomeHead(
             output_metadata.door, output_metadata.num_door_variants, embedding_width)
+        self.avg_frontiers_output = torch.nn.Linear(embedding_width, 1)
         self.proposal_output = torch.nn.Linear(
             embedding_width,
             output_metadata.num_door_variants,
@@ -568,11 +572,13 @@ class FrontierModel(torch.nn.Module):
             self.pos_embedding_x,
             self.pos_embedding_y,
         )
+        avg_frontiers = self.avg_frontiers_output(X).squeeze(-1)
         preds = get_predictions(torch.cat([door, connection, balance_score], dim=-1), self.output_sizes)
         return Predictions(
             preds.door_invalid,
             preds.connection_invalid,
             preds.balance_score,
+            avg_frontiers,
             proposal_score,
             proposal_state,
         )

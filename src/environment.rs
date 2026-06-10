@@ -76,7 +76,7 @@ fn check_outcome_transition_consistency(
 }
 
 #[cfg(test)]
-fn introduces_invalid_outcome(before: &Outcomes, after: &Outcomes) -> bool {
+fn introduces_invalid_outcome(before: &PreliminaryOutcomes, after: &PreliminaryOutcomes) -> bool {
     before
         .door_valid
         .iter()
@@ -94,7 +94,7 @@ fn introduces_invalid_outcome(before: &Outcomes, after: &Outcomes) -> bool {
 }
 
 enum CandidateOutcome {
-    Clean(Outcomes, Vec<i16>, Features),
+    Clean(PreliminaryOutcomes, Vec<i16>, Features),
     Rejected,
 }
 
@@ -140,7 +140,7 @@ pub struct CandidateAction {
 }
 
 #[derive(Clone)]
-pub struct Outcomes {
+pub struct PreliminaryOutcomes {
     // For each door, whether it is connected to another door.
     pub door_valid: Vec<DoorValidOutcome>,
     // For each connection, whether its destination can reach its source.
@@ -450,7 +450,7 @@ pub struct Environment {
     room_part_component: Vec<usize>,             // maps placed room door groups to SCC components
     scc_dag: SccDag, // DAG of strongly connected components (condensation graph)
     occupancy: Vec<u8>,
-    known_outcomes: Option<Outcomes>,
+    known_outcomes: Option<PreliminaryOutcomes>,
 }
 
 struct FeatureSnapshot {
@@ -1078,11 +1078,11 @@ impl Environment {
         frontier_window_size: usize,
     ) -> Result<
         (
-            Outcomes,
+            PreliminaryOutcomes,
             Vec<Action>,
             Vec<FrontierIdx>,
             Vec<DoorVariantIdx>,
-            Vec<Outcomes>,
+            Vec<PreliminaryOutcomes>,
             Vec<Vec<i16>>,
             Vec<Features>,
         ),
@@ -1213,7 +1213,7 @@ impl Environment {
     fn evaluate_candidate_outcome(
         &mut self,
         common: &CommonData,
-        pre_candidate_outcomes: &Outcomes,
+        pre_candidate_outcomes: &PreliminaryOutcomes,
         candidate: Action,
         config: &FeatureConfig,
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
@@ -1270,7 +1270,7 @@ impl Environment {
             frontier_neighbor_count,
             frontier_window_size,
         );
-        let outcomes = Outcomes {
+        let outcomes = PreliminaryOutcomes {
             door_valid: door_valid.clone(),
             connections_valid: connections_valid.clone(),
         };
@@ -1287,7 +1287,7 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-    ) -> (Outcomes, Vec<i16>, Features) {
+    ) -> (PreliminaryOutcomes, Vec<i16>, Features) {
         let snapshot = self.apply_lookahead_candidate(candidate, common);
         let outcomes = self.outcomes(common);
         let door_match = self.door_match_feature(common, &outcomes);
@@ -1307,7 +1307,7 @@ impl Environment {
         &mut self,
         common: &CommonData,
         candidate: Action,
-    ) -> (Outcomes, Vec<i16>) {
+    ) -> (PreliminaryOutcomes, Vec<i16>) {
         let snapshot = self.apply_lookahead_candidate(candidate, common);
         let outcomes = self.outcomes(common);
         let door_match = self.door_match_feature(common, &outcomes);
@@ -1315,7 +1315,7 @@ impl Environment {
         (outcomes, door_match)
     }
 
-    fn door_match_feature(&self, common: &CommonData, outcomes: &Outcomes) -> Vec<i16> {
+    fn door_match_feature(&self, common: &CommonData, outcomes: &PreliminaryOutcomes) -> Vec<i16> {
         let mut result = Vec::with_capacity(outcomes.door_valid.len());
         let mut outcome_idx = 0;
         for dir in 0..NUM_DIRS {
@@ -1876,7 +1876,7 @@ impl Environment {
         write_direction_door_matches(&self.door_matches[Direction::Down as usize], down);
     }
 
-    pub fn outcomes(&self, common: &CommonData) -> Outcomes {
+    pub fn outcomes(&self, common: &CommonData) -> PreliminaryOutcomes {
         let mut door_valid = vec![];
         for dir in 0..NUM_DIRS {
             for i in 0..common.room_dir_door[dir].len() {
@@ -1898,7 +1898,7 @@ impl Environment {
             ));
         }
 
-        Outcomes {
+        PreliminaryOutcomes {
             door_valid,
             connections_valid,
         }
@@ -1967,7 +1967,7 @@ impl Environment {
         &mut self,
         common: &CommonData,
         stage: &str,
-    ) -> Result<Outcomes, String> {
+    ) -> Result<PreliminaryOutcomes, String> {
         let outcomes = self.outcomes(common);
         if let Some(known_outcomes) = &self.known_outcomes {
             check_outcome_transition_consistency(
@@ -1991,11 +1991,14 @@ impl Environment {
     }
 }
 
-fn merge_known_outcomes(known: Option<&Outcomes>, current: &Outcomes) -> Outcomes {
+fn merge_known_outcomes(
+    known: Option<&PreliminaryOutcomes>,
+    current: &PreliminaryOutcomes,
+) -> PreliminaryOutcomes {
     let Some(known) = known else {
         return current.clone();
     };
-    Outcomes {
+    PreliminaryOutcomes {
         door_valid: merge_known_outcome_values(&known.door_valid, &current.door_valid),
         connections_valid: merge_known_outcome_values(
             &known.connections_valid,
@@ -2180,21 +2183,21 @@ mod tests {
         use DoorValidOutcome::{Invalid, Unknown, Valid};
 
         assert!(introduces_invalid_outcome(
-            &Outcomes {
+            &PreliminaryOutcomes {
                 door_valid: vec![Unknown],
                 connections_valid: vec![Valid],
             },
-            &Outcomes {
+            &PreliminaryOutcomes {
                 door_valid: vec![Invalid],
                 connections_valid: vec![Valid],
             },
         ));
         assert!(!introduces_invalid_outcome(
-            &Outcomes {
+            &PreliminaryOutcomes {
                 door_valid: vec![Invalid],
                 connections_valid: vec![Unknown],
             },
-            &Outcomes {
+            &PreliminaryOutcomes {
                 door_valid: vec![Invalid],
                 connections_valid: vec![Valid],
             },

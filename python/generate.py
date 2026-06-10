@@ -8,7 +8,7 @@ from env import (
     EpisodeData,
     EpisodeOutcomes,
     GenerateConfig,
-    Outcomes,
+    PreliminaryOutcomes,
     ProposalData,
     SparseFeatureRequirements,
     SparseFeatures,
@@ -173,7 +173,7 @@ def extract_candidate_features(
     include_recommended_candidates: bool,
     log_exploration_candidates: torch.Tensor,
     include_exploration_candidates: bool,
-    lookahead_outcomes: Outcomes,
+    lookahead_outcomes: PreliminaryOutcomes,
     include_lookahead_outcomes: bool,
     sparse_feature_requirements: SparseFeatureRequirements,
     sparse_frontiers: bool = False,
@@ -447,7 +447,7 @@ class PinnedSparseFeatureSlot:
         include_recommended_candidates: bool,
         log_exploration_candidates: torch.Tensor,
         include_exploration_candidates: bool,
-        lookahead_outcomes: Outcomes,
+        lookahead_outcomes: PreliminaryOutcomes,
         include_lookahead_outcomes: bool,
         sparse_row_count: int,
         frontier_count: int,
@@ -512,7 +512,7 @@ class GenerationGroup:
     config: GenerateConfig
     step: int
     feature_slot: PinnedSparseFeatureSlot | None
-    previous_lookahead_outcomes: Outcomes | None
+    previous_lookahead_outcomes: PreliminaryOutcomes | None
     previous_proposal_scores: CachedProposalScores | None
 
 
@@ -522,8 +522,8 @@ class CandidateBatch:
     frontier_count: torch.Tensor
     proposal_frontier_idx: torch.Tensor
     proposal_door_variant_idx: torch.Tensor
-    reward_outcomes: Outcomes
-    post_candidate_outcomes: Outcomes
+    reward_outcomes: PreliminaryOutcomes
+    post_candidate_outcomes: PreliminaryOutcomes
     sparse_feature_requirements: SparseFeatureRequirements
 
     def to(self, device: torch.device) -> "CandidateBatch":
@@ -670,12 +670,12 @@ def state_log_inputs(
     return log_temperature, log_recommended_candidates, log_exploration_candidates
 
 
-def select_outcomes(outcomes: Outcomes, index: torch.Tensor) -> Outcomes:
+def select_outcomes(outcomes: PreliminaryOutcomes, index: torch.Tensor) -> PreliminaryOutcomes:
     def gather(values: torch.Tensor) -> torch.Tensor:
         gather_index = index.view(-1, 1, 1).expand(-1, 1, values.shape[2])
         return torch.gather(values, 1, gather_index).squeeze(1)
 
-    return Outcomes(
+    return PreliminaryOutcomes(
         gather(outcomes.door_invalid),
         gather(outcomes.connection_invalid),
         gather(outcomes.door_match),
@@ -769,7 +769,7 @@ def select_candidate_actions(
     group: GenerationGroup,
     model,
     candidates: Actions,
-    outcomes: Outcomes,
+    outcomes: PreliminaryOutcomes,
     features: Features | SparseFeatures,
     device: torch.device,
     gpu_lock: threading.Lock,
@@ -805,11 +805,16 @@ def select_candidate_actions(
         profile_time = profile_start(profile)
         expected_reward = compute_expected_reward(
             Predictions(
-                preds.door_invalid.view(environment_count, candidate_count, -1),
-                preds.connection_invalid.view(environment_count, candidate_count, -1),
-                preds.balance_score.view(environment_count, candidate_count, -1),
-                preds.proposal_score,
-                preds.proposal_state,
+                door_invalid=preds.door_invalid.view(environment_count, candidate_count, -1),
+                connection_invalid=preds.connection_invalid.view(
+                    environment_count,
+                    candidate_count,
+                    -1,
+                ),
+                balance_score=preds.balance_score.view(environment_count, candidate_count, -1),
+                avg_frontiers=preds.avg_frontiers.view(environment_count, candidate_count),
+                proposal_score=preds.proposal_score,
+                proposal_state=preds.proposal_state,
             ),
             outcomes,
             group.config,
@@ -965,7 +970,7 @@ def merge_generation_results(
             ]),
         ),
         EpisodeOutcomes(
-            validity=Outcomes(
+            validity=PreliminaryOutcomes(
                 *(
                     torch.cat([
                         getattr(episode_outcomes.validity, name)

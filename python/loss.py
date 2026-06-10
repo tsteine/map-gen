@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import torch
 
-from env import DoorMatches, Outcomes
+from env import DoorMatches, PreliminaryOutcomes
 from model import BalancePredictions, Predictions
 
 BALANCE_TARGET_LOG_ODDS_LIMIT = 20.0
@@ -13,6 +13,7 @@ class LossConfig:
     door_weight: float
     connection_weight: float
     balance_weight: float
+    avg_frontiers_weight: float
 
 
 @dataclass
@@ -21,9 +22,11 @@ class LossBreakdown:
     door: torch.Tensor
     connection: torch.Tensor
     balance: torch.Tensor
+    avg_frontiers: torch.Tensor
     door_contribution: torch.Tensor
     connection_contribution: torch.Tensor
     balance_contribution: torch.Tensor
+    avg_frontiers_contribution: torch.Tensor
 
 
 def masked_binary_cross_entropy_loss(preds: torch.Tensor, outcomes: torch.Tensor, mask: torch.Tensor, weight: float) -> torch.Tensor:
@@ -60,10 +63,12 @@ def masked_bernoulli_kl_loss(
 
 def compute_loss_breakdown(
     preds: Predictions,
-    outcomes: Outcomes,
+    outcomes: PreliminaryOutcomes,
     mask: torch.Tensor,
     balance_score_target_logits: torch.Tensor,
     balance_score_mask: torch.Tensor,
+    avg_frontiers_target: torch.Tensor,
+    avg_frontiers_mask: torch.Tensor,
     config: LossConfig,
 ) -> LossBreakdown:
     door_loss, door_wt = masked_binary_cross_entropy_loss(
@@ -76,19 +81,35 @@ def compute_loss_breakdown(
         mask & balance_score_mask,
         config.balance_weight,
     )
-    total_weight = door_wt + conn_wt + balance_wt + 1e-15
+    avg_frontiers_mask = avg_frontiers_mask.to(torch.float32)
+    avg_frontiers_error = (
+        preds.avg_frontiers.to(torch.float32) - avg_frontiers_target.to(torch.float32)
+    )
+    avg_frontiers_loss = config.avg_frontiers_weight * torch.sum(
+        avg_frontiers_error.square() * avg_frontiers_mask
+    )
+    avg_frontiers_wt = config.avg_frontiers_weight * torch.sum(avg_frontiers_mask)
+    total_weight = door_wt + conn_wt + balance_wt + avg_frontiers_wt + 1e-15
     door_contribution = door_loss / total_weight
     connection_contribution = conn_loss / total_weight
     balance_contribution = balance_loss / total_weight
-    mean_loss = door_contribution + connection_contribution + balance_contribution
+    avg_frontiers_contribution = avg_frontiers_loss / total_weight
+    mean_loss = (
+        door_contribution
+        + connection_contribution
+        + balance_contribution
+        + avg_frontiers_contribution
+    )
     return LossBreakdown(
         total=mean_loss,
         door=door_loss / (door_wt + 1e-15),
         connection=conn_loss / (conn_wt + 1e-15),
         balance=balance_loss / (balance_wt + 1e-15),
+        avg_frontiers=avg_frontiers_loss / (avg_frontiers_wt + 1e-15),
         door_contribution=door_contribution,
         connection_contribution=connection_contribution,
         balance_contribution=balance_contribution,
+        avg_frontiers_contribution=avg_frontiers_contribution,
     )
 
 

@@ -74,6 +74,7 @@
     "door_weight": 1.0,
     "connection_weight": 1.0,
     "balance_weight": 1.0,
+    "avg_frontiers_weight": 0.01,
     "proposal_weight": 0.1,
     "pipeline_groups": 4,
     "gradient_accumulation_steps": 1

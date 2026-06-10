@@ -108,7 +108,7 @@ class ProposalData:
 #    [batch, time, output]  during training,
 #    [batch, candidate, output]  during generation
 @dataclass
-class Outcomes:
+class PreliminaryOutcomes:
     # -1 = unknown, 0 = valid (door is connected), 1 = invalid (door is not connected)
     door_invalid: torch.Tensor
     # -1 = unknown, 0 = valid (connection has return path), 1 = invalid (connection does not have return path)
@@ -118,8 +118,8 @@ class Outcomes:
     # door count sentinel.
     door_match: torch.Tensor
 
-    def to(self, device: torch.device) -> "Outcomes":
-        return Outcomes(
+    def to(self, device: torch.device) -> "PreliminaryOutcomes":
+        return PreliminaryOutcomes(
             self.door_invalid.to(device),
             self.connection_invalid.to(device),
             self.door_match.to(device),
@@ -128,7 +128,7 @@ class Outcomes:
 
 @dataclass
 class EpisodeOutcomes:
-    validity: Outcomes
+    validity: PreliminaryOutcomes
     avg_frontiers: torch.Tensor
 
     def to(self, device: torch.device) -> "EpisodeOutcomes":
@@ -380,8 +380,8 @@ class EnvironmentGroup:
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
-        Outcomes,
-        Outcomes,
+        PreliminaryOutcomes,
+        PreliminaryOutcomes,
         SparseFeatureRequirements,
     ]:
         result = self.env.get_candidates_with_outcomes(
@@ -399,7 +399,7 @@ class EnvironmentGroup:
             torch.from_numpy(result.frontier_count).to(device),
             torch.from_numpy(result.proposal_frontier_idx).to(device),
             torch.from_numpy(result.proposal_door_variant_idx).to(device),
-            Outcomes(
+            PreliminaryOutcomes(
                 door_invalid=torch.from_numpy(result.pre_door_valid).to(device),
                 connection_invalid=torch.from_numpy(result.pre_connections_valid).to(device),
                 door_match=torch.empty(
@@ -408,7 +408,7 @@ class EnvironmentGroup:
                     device=device,
                 ),
             ),
-            Outcomes(
+            PreliminaryOutcomes(
                 door_invalid=torch.from_numpy(result.door_valid).to(device),
                 connection_invalid=torch.from_numpy(result.connections_valid).to(device),
                 door_match=torch.from_numpy(result.door_match).to(device),
@@ -420,9 +420,9 @@ class EnvironmentGroup:
             ),
         )
 
-    def get_outcomes(self, device: torch.device, verify_consistency: bool) -> Outcomes:
+    def get_outcomes(self, device: torch.device, verify_consistency: bool) -> PreliminaryOutcomes:
         door_invalid, connection_invalid = self.env.get_outcomes(verify_consistency)
-        return Outcomes(
+        return PreliminaryOutcomes(
             door_invalid=torch.from_numpy(door_invalid).to(device),
             connection_invalid=torch.from_numpy(connection_invalid).to(device),
             door_match=torch.empty(
@@ -437,14 +437,14 @@ class EnvironmentGroup:
         actions: Actions,
         device: torch.device,
         environment_start: int = 0,
-    ) -> Outcomes:
+    ) -> PreliminaryOutcomes:
         door_invalid, connection_invalid, door_match = self.env.get_outcomes_after_candidates(
             actions.room_idx.contiguous().cpu().numpy(),
             actions.room_x.contiguous().cpu().numpy(),
             actions.room_y.contiguous().cpu().numpy(),
             environment_start,
         )
-        return Outcomes(
+        return PreliminaryOutcomes(
             door_invalid=torch.from_numpy(door_invalid).to(device),
             connection_invalid=torch.from_numpy(connection_invalid).to(device),
             door_match=torch.from_numpy(door_match).to(device),
@@ -476,7 +476,7 @@ class EnvironmentGroup:
         include_recommended_candidates: bool,
         log_exploration_candidates: torch.Tensor,
         include_exploration_candidates: bool,
-        lookahead_outcomes: Outcomes,
+        lookahead_outcomes: PreliminaryOutcomes,
         include_lookahead_outcomes: bool,
     ) -> Features:
         tensors = [torch.from_numpy(value).to(device) for value in values]
@@ -531,7 +531,7 @@ class EnvironmentGroup:
         include_recommended_candidates: bool,
         log_exploration_candidates: torch.Tensor,
         include_exploration_candidates: bool,
-        lookahead_outcomes: Outcomes,
+        lookahead_outcomes: PreliminaryOutcomes,
         include_lookahead_outcomes: bool,
         environment_start: int = 0,
         environment_count: Optional[int] = None,
@@ -559,7 +559,7 @@ class EnvironmentGroup:
         include_recommended_candidates: bool,
         log_exploration_candidates: torch.Tensor,
         include_exploration_candidates: bool,
-        lookahead_outcomes: Outcomes,
+        lookahead_outcomes: PreliminaryOutcomes,
         include_lookahead_outcomes: bool,
         environment_start: int = 0,
     ) -> Features:
@@ -592,7 +592,7 @@ class EnvironmentGroup:
         include_recommended_candidates: bool,
         log_exploration_candidates: torch.Tensor,
         include_exploration_candidates: bool,
-        lookahead_outcomes: Outcomes,
+        lookahead_outcomes: PreliminaryOutcomes,
         include_lookahead_outcomes: bool,
         environment_start: int = 0,
     ) -> SparseFeatures:

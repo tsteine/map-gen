@@ -7,7 +7,7 @@ use crate::common::{
 };
 use crate::environment::{
     Environment, FEATURE_FRONTIER_WIDTH, FeatureConfig, Features, FrontierNeighborAlgorithm,
-    Outcomes,
+    PreliminaryOutcomes,
 };
 use crossbeam_channel as channel;
 use numpy::{
@@ -608,7 +608,7 @@ fn worker_loop(
                     }
                     let row_start = env_idx * max_candidates;
                     let dummy_outcome = if candidates.len() < max_candidates {
-                        Some(Outcomes {
+                        Some(PreliminaryOutcomes {
                             door_valid: vec![DoorValidOutcome::Unknown; door_outcome_count],
                             connections_valid: vec![
                                 DoorValidOutcome::Unknown;

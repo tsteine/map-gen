@@ -27,7 +27,7 @@ from env import (
     EpisodeData,
     EpisodeOutcomes,
     GenerateConfig,
-    Outcomes,
+    PreliminaryOutcomes,
     Features,
     ProposalData,
 )
@@ -67,7 +67,8 @@ class TrainBatchTask:
 class PreparedTrainBatch:
     kind: Literal["fresh", "replay"]
     episode_data: EpisodeData
-    outcomes: Outcomes
+    outcomes: PreliminaryOutcomes
+    avg_frontiers: torch.Tensor
     door_matches: DoorMatches
     prefix_count: int
     feature_batches: list["FeatureTrainBatch"]
@@ -88,10 +89,12 @@ class MainLossBreakdown:
     door: float
     connection: float
     balance: float
+    avg_frontiers: float
     proposal: float
     door_contribution: float
     connection_contribution: float
     balance_contribution: float
+    avg_frontiers_contribution: float
     proposal_contribution: float
 
 
@@ -100,6 +103,22 @@ class CandidateDiagnostics:
     target_entropy: torch.Tensor
     uniform_kl: torch.Tensor
     selected_probability: torch.Tensor
+
+
+def empty_main_loss_breakdown() -> MainLossBreakdown:
+    return MainLossBreakdown(
+        total=0.0,
+        door=0.0,
+        connection=0.0,
+        balance=0.0,
+        avg_frontiers=0.0,
+        proposal=0.0,
+        door_contribution=0.0,
+        connection_contribution=0.0,
+        balance_contribution=0.0,
+        avg_frontiers_contribution=0.0,
+        proposal_contribution=0.0,
+    )
 
 
 def compute_door_match_count_ss(counts: torch.Tensor, dim: int) -> torch.Tensor:
@@ -640,13 +659,13 @@ class TrainingSession:
     def select_batch(
         self,
         episode_data: EpisodeData,
-        outcomes: Outcomes,
+        outcomes: PreliminaryOutcomes,
         start: int,
-    ) -> tuple[EpisodeData, Outcomes]:
+    ) -> tuple[EpisodeData, PreliminaryOutcomes]:
         end = start + self.config.train.batch_size
         return (
             episode_data.slice(start, end),
-            Outcomes(
+            PreliminaryOutcomes(
                 door_invalid=outcomes.door_invalid[start:end],
                 connection_invalid=outcomes.connection_invalid[start:end],
                 door_match=outcomes.door_match[start:end],
@@ -719,7 +738,7 @@ class TrainingSession:
                     0,
                 )
                 dummy_action = next_actions.room_idx >= self.num_rooms
-                next_lookahead_outcomes = Outcomes(
+                next_lookahead_outcomes = PreliminaryOutcomes(
                     torch.where(
                         dummy_action[:, None, None],
                         torch.full_like(next_lookahead_outcomes.door_invalid, -1),
@@ -760,7 +779,7 @@ class TrainingSession:
                             self.config.features.recommended_candidates,
                             log_exploration_candidates,
                             self.config.features.exploration_candidates,
-                            Outcomes(
+                            PreliminaryOutcomes(
                                 next_lookahead_outcomes.door_invalid.squeeze(1),
                                 next_lookahead_outcomes.connection_invalid.squeeze(1),
                                 next_lookahead_outcomes.door_match.squeeze(1),
@@ -781,7 +800,8 @@ class TrainingSession:
         self,
         kind: Literal["fresh", "replay"],
         train_episode_data: EpisodeData,
-        train_outcomes: Outcomes,
+        train_outcomes: PreliminaryOutcomes,
+        avg_frontiers: torch.Tensor,
         proposal_data: ProposalData | None,
         env,
     ) -> PreparedTrainBatch:
@@ -795,6 +815,7 @@ class TrainingSession:
             kind,
             train_episode_data,
             train_outcomes,
+            avg_frontiers,
             door_matches,
             prefix_count=prefix_count,
             feature_batches=feature_batches,
@@ -804,7 +825,7 @@ class TrainingSession:
         self,
         task: TrainBatchTask,
         fresh_episode_data: EpisodeData,
-        fresh_outcomes: Outcomes,
+        fresh_outcomes: EpisodeOutcomes,
         fresh_proposal_data: ProposalData,
     ) -> PreparedTrainBatch:
         env = self.train_batch_envs[task.env_index]
@@ -812,9 +833,12 @@ class TrainingSession:
             assert task.start is not None
             train_episode_data, train_outcomes = self.select_batch(
                 fresh_episode_data,
-                fresh_outcomes,
+                fresh_outcomes.validity,
                 task.start,
             )
+            avg_frontiers = fresh_outcomes.avg_frontiers[
+                task.start:task.start + self.config.train.batch_size
+            ]
             train_proposal_data = fresh_proposal_data.slice(
                 task.start,
                 task.start + self.config.train.batch_size,
@@ -823,6 +847,7 @@ class TrainingSession:
                 task.kind,
                 train_episode_data,
                 train_outcomes,
+                avg_frontiers,
                 train_proposal_data,
                 env,
             )
@@ -845,6 +870,7 @@ class TrainingSession:
             task.kind,
             replay_episode_data,
             replay_outcomes,
+            replay_outcomes.door_invalid.new_empty([0], dtype=torch.float32),
             replay_door_matches,
             prefix_count=prefix_count,
             feature_batches=feature_batches,
@@ -954,7 +980,7 @@ class TrainingSession:
             raise RuntimeError("feature training batch has no sampled prefixes")
 
         train_outcomes = prepared_batch.outcomes
-        repeated_outcomes = Outcomes(
+        repeated_outcomes = PreliminaryOutcomes(
             door_invalid=train_outcomes.door_invalid.unsqueeze(1),
             connection_invalid=train_outcomes.connection_invalid.unsqueeze(1),
             door_match=train_outcomes.door_match.unsqueeze(1),
@@ -967,14 +993,31 @@ class TrainingSession:
             )
         repeated_balance_score_target_logits = balance_score_target_logits.unsqueeze(1)
         repeated_balance_score_mask = balance_score_mask.unsqueeze(1)
+        batch_size = prepared_batch.episode_data.actions.room_idx.shape[0]
+        if prepared_batch.kind == "fresh":
+            avg_frontiers_target = prepared_batch.avg_frontiers.to(self.device).unsqueeze(1)
+            avg_frontiers_mask = torch.ones(
+                [batch_size, 1],
+                dtype=torch.bool,
+                device=self.device,
+            )
+        else:
+            avg_frontiers_target = torch.zeros(
+                [batch_size, 1],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            avg_frontiers_mask = torch.zeros(
+                [batch_size, 1],
+                dtype=torch.bool,
+                device=self.device,
+            )
         mask = torch.ones(
-            [prepared_batch.episode_data.actions.room_idx.shape[0], 1, 1],
+            [batch_size, 1, 1],
             dtype=torch.bool,
             device=self.device,
         )
-        total_loss = MainLossBreakdown(
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-        )
+        total_loss = empty_main_loss_breakdown()
         prefix_weight = 1.0 / prepared_batch.prefix_count
 
         for feature_batch in prepared_batch.feature_batches:
@@ -998,6 +1041,8 @@ class TrainingSession:
                 mask,
                 repeated_balance_score_target_logits,
                 repeated_balance_score_mask,
+                avg_frontiers_target,
+                avg_frontiers_mask,
                 self.loss_config,
             )
             backward_loss = prefix_loss.total * prefix_weight
@@ -1005,12 +1050,16 @@ class TrainingSession:
             total_loss.door += prefix_loss.door.item() * prefix_weight
             total_loss.connection += prefix_loss.connection.item() * prefix_weight
             total_loss.balance += prefix_loss.balance.item() * prefix_weight
+            total_loss.avg_frontiers += prefix_loss.avg_frontiers.item() * prefix_weight
             total_loss.door_contribution += prefix_loss.door_contribution.item() * prefix_weight
             total_loss.connection_contribution += (
                 prefix_loss.connection_contribution.item() * prefix_weight
             )
             total_loss.balance_contribution += (
                 prefix_loss.balance_contribution.item() * prefix_weight
+            )
+            total_loss.avg_frontiers_contribution += (
+                prefix_loss.avg_frontiers_contribution.item() * prefix_weight
             )
             if include_proposal:
                 batch_proposal_loss = self.proposal_batch_loss(
@@ -1112,7 +1161,7 @@ class TrainingSession:
                 ]),
             ),
             EpisodeOutcomes(
-                validity=Outcomes(
+                validity=PreliminaryOutcomes(
                     door_invalid=torch.cat([
                         outcomes.validity.door_invalid for outcomes in outcome_iterations
                     ]),
@@ -1161,14 +1210,14 @@ class TrainingSession:
     def train_round(
         self,
         episode_data: EpisodeData,
-        gen_outcomes: Outcomes,
+        episode_outcomes: EpisodeOutcomes,
         proposal_data: ProposalData,
         step_config: Config,
     ) -> tuple[MainLossBreakdown, float]:
         self.main_optimizer.param_groups[0]["lr"] = step_config.optimizer.lr
         self.balance_optimizer.param_groups[0]["lr"] = step_config.balance_optimizer.lr
 
-        total_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        total_loss = empty_main_loss_breakdown()
         total_balance_loss = 0.0
         train_batch_count = 0
 
@@ -1176,7 +1225,7 @@ class TrainingSession:
             return self.prepare_train_batch_task(
                 task,
                 episode_data,
-                gen_outcomes,
+                episode_outcomes,
                 proposal_data,
             )
 
@@ -1184,7 +1233,7 @@ class TrainingSession:
             self.main_model.zero_grad()
             self.balance_model.zero_grad()
             loss_scale = 1.0 / len(prepared_batches)
-            group_loss = MainLossBreakdown(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            group_loss = empty_main_loss_breakdown()
             group_balance_loss = 0.0
             for prepared_batch in prepared_batches:
                 batch_loss, batch_balance_loss = self.train_batch_backward(
@@ -1195,10 +1244,12 @@ class TrainingSession:
                 group_loss.door += batch_loss.door
                 group_loss.connection += batch_loss.connection
                 group_loss.balance += batch_loss.balance
+                group_loss.avg_frontiers += batch_loss.avg_frontiers
                 group_loss.proposal += batch_loss.proposal
                 group_loss.door_contribution += batch_loss.door_contribution
                 group_loss.connection_contribution += batch_loss.connection_contribution
                 group_loss.balance_contribution += batch_loss.balance_contribution
+                group_loss.avg_frontiers_contribution += batch_loss.avg_frontiers_contribution
                 group_loss.proposal_contribution += batch_loss.proposal_contribution
                 group_balance_loss += batch_balance_loss
             self.train_optimizer_step()
@@ -1216,10 +1267,12 @@ class TrainingSession:
                 total_loss.door += group_loss.door
                 total_loss.connection += group_loss.connection
                 total_loss.balance += group_loss.balance
+                total_loss.avg_frontiers += group_loss.avg_frontiers
                 total_loss.proposal += group_loss.proposal
                 total_loss.door_contribution += group_loss.door_contribution
                 total_loss.connection_contribution += group_loss.connection_contribution
                 total_loss.balance_contribution += group_loss.balance_contribution
+                total_loss.avg_frontiers_contribution += group_loss.avg_frontiers_contribution
                 total_loss.proposal_contribution += group_loss.proposal_contribution
                 total_balance_loss += group_balance_loss
                 train_batch_count += group_count
@@ -1230,27 +1283,35 @@ class TrainingSession:
             total_loss.door += group_loss.door
             total_loss.connection += group_loss.connection
             total_loss.balance += group_loss.balance
+            total_loss.avg_frontiers += group_loss.avg_frontiers
             total_loss.proposal += group_loss.proposal
             total_loss.door_contribution += group_loss.door_contribution
             total_loss.connection_contribution += group_loss.connection_contribution
             total_loss.balance_contribution += group_loss.balance_contribution
+            total_loss.avg_frontiers_contribution += group_loss.avg_frontiers_contribution
             total_loss.proposal_contribution += group_loss.proposal_contribution
             total_balance_loss += group_balance_loss
             train_batch_count += group_count
 
         if train_batch_count == 0:
-            return MainLossBreakdown(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0), 0.0
+            return empty_main_loss_breakdown(), 0.0
         return (
             MainLossBreakdown(
-                total_loss.total / train_batch_count,
-                total_loss.door / train_batch_count,
-                total_loss.connection / train_batch_count,
-                total_loss.balance / train_batch_count,
-                total_loss.proposal / train_batch_count,
-                total_loss.door_contribution / train_batch_count,
-                total_loss.connection_contribution / train_batch_count,
-                total_loss.balance_contribution / train_batch_count,
-                total_loss.proposal_contribution / train_batch_count,
+                total=total_loss.total / train_batch_count,
+                door=total_loss.door / train_batch_count,
+                connection=total_loss.connection / train_batch_count,
+                balance=total_loss.balance / train_batch_count,
+                avg_frontiers=total_loss.avg_frontiers / train_batch_count,
+                proposal=total_loss.proposal / train_batch_count,
+                door_contribution=total_loss.door_contribution / train_batch_count,
+                connection_contribution=(
+                    total_loss.connection_contribution / train_batch_count
+                ),
+                balance_contribution=total_loss.balance_contribution / train_batch_count,
+                avg_frontiers_contribution=(
+                    total_loss.avg_frontiers_contribution / train_batch_count
+                ),
+                proposal_contribution=total_loss.proposal_contribution / train_batch_count,
             ),
             total_balance_loss / train_batch_count,
         )
@@ -1313,6 +1374,7 @@ class TrainingSession:
         door_loss_pct = 100.0 * loss.door_contribution / loss_denominator
         connection_loss_pct = 100.0 * loss.connection_contribution / loss_denominator
         main_balance_loss_pct = 100.0 * loss.balance_contribution / loss_denominator
+        avg_frontiers_loss_pct = 100.0 * loss.avg_frontiers_contribution / loss_denominator
         proposal_loss_pct = 100.0 * loss.proposal_contribution / loss_denominator
 
         metrics = {
@@ -1323,6 +1385,8 @@ class TrainingSession:
             "connection_loss_pct": connection_loss_pct,
             "main_balance_loss": loss.balance,
             "main_balance_loss_pct": main_balance_loss_pct,
+            "avg_frontiers_loss": loss.avg_frontiers,
+            "avg_frontiers_loss_pct": avg_frontiers_loss_pct,
             "proposal_loss": loss.proposal,
             "proposal_loss_pct": proposal_loss_pct,
             "candidate_target_entropy": candidate_diagnostics.target_entropy,
@@ -1348,6 +1412,7 @@ class TrainingSession:
             "reward_door": step_config.generation.reward_door,
             "reward_connection": step_config.generation.reward_connection,
             "reward_balance": step_config.generation.reward_balance,
+            "avg_frontiers_weight": step_config.train.avg_frontiers_weight,
             "door_match_left_top1": left_topk[0],
             "door_match_left_top2": left_topk[1],
             "door_match_left_top3": left_topk[2],
@@ -1366,9 +1431,9 @@ class TrainingSession:
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
             "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, "
-            "main_bal %.4f %.1f%%, prop %.4f %.1f%%), "
+            "main_bal %.4f %.1f%%, avg_front %.4f %.1f%%, prop %.4f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
-            "conn %.2f (min %s), front %.2f, ss %.4f, u_kl %.4f, "
+            "conn %.2f (min %s), front %.2f, ss %.4f, "
             "p %.4f, "
             "cand %d, frac %.4f",
             round_idx,
@@ -1379,6 +1444,8 @@ class TrainingSession:
             connection_loss_pct,
             loss.balance,
             main_balance_loss_pct,
+            loss.avg_frontiers,
+            avg_frontiers_loss_pct,
             loss.proposal,
             proposal_loss_pct,
             scalar(success_rate),
@@ -1390,7 +1457,6 @@ class TrainingSession:
             scalar(min_conn),
             scalar(avg_frontiers),
             scalar(door_match_ss),
-            scalar(candidate_diagnostics.uniform_kl),
             scalar(candidate_diagnostics.selected_probability),
             step_config.generation.recommended_candidates + step_config.generation.exploration_candidates,
             schedule_progress,
@@ -1457,7 +1523,7 @@ class TrainingSession:
                 step_config = instantiate_scheduleable_config(self.config, self.num_episodes)
                 avg_loss, avg_balance_loss = self.train_round(
                     episode_data,
-                    episode_outcomes.validity,
+                    episode_outcomes,
                     proposal_data,
                     step_config,
                 )
@@ -1756,6 +1822,7 @@ def build_session(args: Args) -> TrainingSession:
             door_weight=config.train.door_weight,
             connection_weight=config.train.connection_weight,
             balance_weight=config.train.balance_weight,
+            avg_frontiers_weight=config.train.avg_frontiers_weight,
         ),
         experience=ExperienceStorage(
             len(rooms),

@@ -87,6 +87,7 @@ class TrainConfig(StrictBaseModel):
     door_weight: float
     connection_weight: float
     balance_weight: float
+    avg_frontiers_weight: float
     proposal_weight: float
     ema_decay: float
     pipeline_groups: int
@@ -216,6 +217,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("train.gradient_accumulation_steps must be greater than zero")
     if config.train.proposal_weight < 0:
         raise ValueError("train.proposal_weight must be greater than or equal to zero")
+    if config.train.avg_frontiers_weight < 0:
+        raise ValueError("train.avg_frontiers_weight must be greater than or equal to zero")
     if (
         config.generation.num_threads is not None
         and config.generation.num_threads % config.train.pipeline_groups != 0
