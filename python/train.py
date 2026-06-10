@@ -385,6 +385,7 @@ def create_generate_config(
         reward_door=config.generation.reward_door,
         reward_connection=config.generation.reward_connection,
         reward_balance=config.generation.reward_balance,
+        reward_frontier=config.generation.reward_frontier,
         autocast=config.model.generation_autocast,
     )
 
@@ -1400,6 +1401,7 @@ class TrainingSession:
             "reward_door": step_config.generation.reward_door,
             "reward_connection": step_config.generation.reward_connection,
             "reward_balance": step_config.generation.reward_balance,
+            "reward_frontier": step_config.generation.reward_frontier,
             "avg_frontiers_weight": step_config.train.avg_frontiers_weight,
             "door_match_left_top1": left_topk[0],
             "door_match_left_top2": left_topk[1],

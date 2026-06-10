@@ -52,6 +52,7 @@ class GenerationConfig(StrictBaseModel):
     reward_door: ScheduleableFloat
     reward_connection: ScheduleableFloat
     reward_balance: ScheduleableFloat
+    reward_frontier: ScheduleableFloat
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
     frontier_neighbor_count: int
     frontier_window_size: int

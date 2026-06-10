@@ -40,6 +40,7 @@
     "reward_door": 1.0,
     "reward_connection": 1.0,
     "reward_balance": 1.0,
+    "reward_frontier": 0.0,
     "frontier_neighbor_algorithm": "nearest-exclusive",
     "frontier_neighbor_count": 1,
     "frontier_window_size": 16,

@@ -161,6 +161,7 @@ def compute_expected_reward(
         config.reward_door * torch.sum(door_logprobs, dim=2)
         + config.reward_connection * torch.sum(connection_logprobs, dim=2)
         + config.reward_balance * torch.sum(balance_scores, dim=2)
+        - config.reward_frontier * preds.avg_frontiers.to(torch.float32)
     )
 
 
