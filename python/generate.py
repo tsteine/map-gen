@@ -519,7 +519,6 @@ class GenerationGroup:
 @dataclass
 class CandidateBatch:
     candidates: Actions
-    frontier_count: torch.Tensor
     proposal_frontier_idx: torch.Tensor
     proposal_door_variant_idx: torch.Tensor
     reward_outcomes: PreliminaryOutcomes
@@ -529,7 +528,6 @@ class CandidateBatch:
     def to(self, device: torch.device) -> "CandidateBatch":
         return CandidateBatch(
             self.candidates.to(device),
-            self.frontier_count.to(device),
             self.proposal_frontier_idx.to(device),
             self.proposal_door_variant_idx.to(device),
             self.reward_outcomes.to(device),
@@ -601,7 +599,6 @@ def get_generation_candidate_batch(
     resolved_proposal_scores = None if proposal_scores is None else proposal_scores.resolve()
     (
         candidates,
-        frontier_count,
         proposal_frontier_idx,
         proposal_door_variant_idx,
         reward_outcomes,
@@ -616,7 +613,6 @@ def get_generation_candidate_batch(
     )
     return CandidateBatch(
         candidates,
-        frontier_count,
         proposal_frontier_idx,
         proposal_door_variant_idx,
         reward_outcomes,
@@ -1036,7 +1032,6 @@ def run_generation_groups(
         pending_proposals: deque[PendingProposalStep] = deque()
         pending_candidates: deque[PendingCandidateStep] = deque()
         group_proposal_frontier_idx = [[] for _ in groups]
-        group_frontier_count = [[] for _ in groups]
         group_proposal_door_variant_idx = [[] for _ in groups]
         group_selected_candidate = [[] for _ in groups]
         group_proposal_target_logits = [[] for _ in groups]
@@ -1122,7 +1117,6 @@ def run_generation_groups(
                         profiler,
                     )
                 group_index = group_index_by_id[id(step.group)]
-                group_frontier_count[group_index].append(candidate_batch.frontier_count)
                 profile_time = profile_start(profile)
                 max_candidates = step.group.config.max_candidates
                 frontier_idx = torch.full(
@@ -1184,12 +1178,9 @@ def run_generation_groups(
             profile_time = profile_start(profile)
             group.env.finish()
             actions = group.env.get_actions(device)
-            outcomes = group.env.get_outcomes(
+            episode_outcomes = group.env.get_outcomes(
                 device, verify_consistency=verify_outcome_consistency
             )
-            avg_frontiers = torch.stack(group_frontier_count[group_index], dim=1).to(
-                torch.float32
-            ).mean(dim=1)
             door_match_counts = group.env.get_door_match_counts(device)
             results.append((
                 EpisodeData(
@@ -1206,7 +1197,7 @@ def run_generation_groups(
                         dtype=torch.float32,
                     ),
                 ),
-                EpisodeOutcomes(outcomes, avg_frontiers),
+                episode_outcomes,
                 door_match_counts,
                 ProposalData(
                     torch.stack(group_proposal_frontier_idx[group_index], dim=1),

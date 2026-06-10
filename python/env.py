@@ -379,7 +379,6 @@ class EnvironmentGroup:
         Actions,
         torch.Tensor,
         torch.Tensor,
-        torch.Tensor,
         PreliminaryOutcomes,
         PreliminaryOutcomes,
         SparseFeatureRequirements,
@@ -396,7 +395,6 @@ class EnvironmentGroup:
                 room_x=torch.from_numpy(result.room_x).to(device),
                 room_y=torch.from_numpy(result.room_y).to(device),
             ),
-            torch.from_numpy(result.frontier_count).to(device),
             torch.from_numpy(result.proposal_frontier_idx).to(device),
             torch.from_numpy(result.proposal_door_variant_idx).to(device),
             PreliminaryOutcomes(
@@ -420,16 +418,19 @@ class EnvironmentGroup:
             ),
         )
 
-    def get_outcomes(self, device: torch.device, verify_consistency: bool) -> PreliminaryOutcomes:
-        door_invalid, connection_invalid = self.env.get_outcomes(verify_consistency)
-        return PreliminaryOutcomes(
-            door_invalid=torch.from_numpy(door_invalid).to(device),
-            connection_invalid=torch.from_numpy(connection_invalid).to(device),
-            door_match=torch.empty(
-                [door_invalid.shape[0], 0],
-                dtype=torch.int16,
-                device=device,
+    def get_outcomes(self, device: torch.device, verify_consistency: bool) -> EpisodeOutcomes:
+        result = self.env.get_outcomes(verify_consistency)
+        return EpisodeOutcomes(
+            validity=PreliminaryOutcomes(
+                door_invalid=torch.from_numpy(result.door_valid).to(device),
+                connection_invalid=torch.from_numpy(result.connections_valid).to(device),
+                door_match=torch.empty(
+                    [result.door_valid.shape[0], 0],
+                    dtype=torch.int16,
+                    device=device,
+                ),
             ),
+            avg_frontiers=torch.from_numpy(result.avg_frontiers).to(device),
         )
 
     def get_outcomes_after_candidates(

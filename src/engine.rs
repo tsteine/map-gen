@@ -214,7 +214,6 @@ enum WorkerCommand {
         room_idx: OutputShard<RoomIdx>,
         room_x: OutputShard<Coord>,
         room_y: OutputShard<Coord>,
-        frontier_count: OutputShard<u16>,
         proposal_frontier_idx: OutputShard<FrontierIdx>,
         proposal_door_variant_idx: OutputShard<DoorVariantIdx>,
         door_outcome_count: usize,
@@ -237,6 +236,7 @@ enum WorkerCommand {
         verify_consistency: bool,
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
+        avg_frontiers: OutputShard<f32>,
     },
     GetOutcomesAfterCandidates {
         environment_start: usize,
@@ -493,7 +493,6 @@ fn worker_loop(
                 room_idx,
                 room_x,
                 room_y,
-                frontier_count,
                 proposal_frontier_idx,
                 proposal_door_variant_idx,
                 door_outcome_count,
@@ -509,7 +508,6 @@ fn worker_loop(
                 let room_idx = unsafe { room_idx.into_mut_slice() };
                 let room_x = unsafe { room_x.into_mut_slice() };
                 let room_y = unsafe { room_y.into_mut_slice() };
-                let current_frontier_count = unsafe { frontier_count.into_mut_slice() };
                 let proposal_temperature = unsafe { proposal_temperature.into_slice() };
                 let proposal_scores = proposal_scores.map(|scores| unsafe { scores.into_slice() });
                 let proposal_frontier_idx = unsafe { proposal_frontier_idx.into_mut_slice() };
@@ -524,7 +522,6 @@ fn worker_loop(
                 debug_assert_eq!(room_idx.len(), environments.len() * max_candidates);
                 debug_assert_eq!(room_x.len(), environments.len() * max_candidates);
                 debug_assert_eq!(room_y.len(), environments.len() * max_candidates);
-                debug_assert_eq!(current_frontier_count.len(), environments.len());
                 debug_assert_eq!(proposal_temperature.len(), environments.len());
                 debug_assert_eq!(
                     proposal_frontier_idx.len(),
@@ -558,8 +555,6 @@ fn worker_loop(
                 let mut consistency_error = None;
                 pending_features.clear();
                 for (env_idx, env) in environments.iter_mut().enumerate() {
-                    current_frontier_count[env_idx] = u16::try_from(env.frontier_count())
-                        .expect("frontier count must fit in u16");
                     let proposal_score_start =
                         env_idx * proposal_frontier_count * proposal_door_variant_count;
                     let proposal_score_end = proposal_score_start
@@ -734,16 +729,19 @@ fn worker_loop(
                 verify_consistency,
                 door_valid,
                 connections_valid,
+                avg_frontiers,
             } => {
                 // SAFETY: The main thread guarantees that for the duration of this command,
                 // the output slices remain valid and that no other thread accesses them.
                 let door_valid = unsafe { door_valid.into_mut_slice() };
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
+                let avg_frontiers = unsafe { avg_frontiers.into_mut_slice() };
                 debug_assert_eq!(door_valid.len(), environments.len() * door_outcome_count);
                 debug_assert_eq!(
                     connections_valid.len(),
                     environments.len() * connection_outcome_count
                 );
+                debug_assert_eq!(avg_frontiers.len(), environments.len());
 
                 let mut consistency_error = None;
                 for (env_idx, env) in environments.iter_mut().enumerate() {
@@ -758,8 +756,16 @@ fn worker_loop(
                     } else {
                         env.outcomes(&common_data)
                     };
+                    let avg_frontier_count = match env.avg_frontiers() {
+                        Ok(value) => value,
+                        Err(err) => {
+                            consistency_error = Some(err);
+                            break;
+                        }
+                    };
                     debug_assert_eq!(outcomes.door_valid.len(), door_outcome_count);
                     debug_assert_eq!(outcomes.connections_valid.len(), connection_outcome_count);
+                    avg_frontiers[env_idx] = avg_frontier_count;
                     let door_row_start = env_idx * door_outcome_count;
                     for (outcome_idx, outcome) in outcomes.door_valid.iter().enumerate() {
                         door_valid[door_row_start + outcome_idx] = match outcome {
@@ -1220,7 +1226,6 @@ pub struct CandidatesWithOutcomes {
     room_idx: Py<PyArray2<RoomIdx>>,
     room_x: Py<PyArray2<Coord>>,
     room_y: Py<PyArray2<Coord>>,
-    frontier_count: Py<PyArray1<u16>>,
     proposal_frontier_idx: Py<PyArray2<FrontierIdx>>,
     proposal_door_variant_idx: Py<PyArray2<DoorVariantIdx>>,
     pre_door_valid: Py<PyArray2<i8>>,
@@ -1234,6 +1239,31 @@ pub struct CandidatesWithOutcomes {
     sparse_row_count: usize,
     #[pyo3(get)]
     worker_sparse_row_counts: Vec<usize>,
+}
+
+#[pyclass(module = "map_gen")]
+pub struct EpisodeOutcomes {
+    door_valid: Py<PyArray2<i8>>,
+    connections_valid: Py<PyArray2<i8>>,
+    avg_frontiers: Py<PyArray1<f32>>,
+}
+
+#[pymethods]
+impl EpisodeOutcomes {
+    #[getter]
+    fn door_valid(&self, py: Python<'_>) -> Py<PyArray2<i8>> {
+        self.door_valid.clone_ref(py)
+    }
+
+    #[getter]
+    fn connections_valid(&self, py: Python<'_>) -> Py<PyArray2<i8>> {
+        self.connections_valid.clone_ref(py)
+    }
+
+    #[getter]
+    fn avg_frontiers(&self, py: Python<'_>) -> Py<PyArray1<f32>> {
+        self.avg_frontiers.clone_ref(py)
+    }
 }
 
 #[pymethods]
@@ -1251,11 +1281,6 @@ impl CandidatesWithOutcomes {
     #[getter]
     fn room_y(&self, py: Python<'_>) -> Py<PyArray2<Coord>> {
         self.room_y.clone_ref(py)
-    }
-
-    #[getter]
-    fn frontier_count(&self, py: Python<'_>) -> Py<PyArray1<u16>> {
-        self.frontier_count.clone_ref(py)
     }
 
     #[getter]
@@ -2211,7 +2236,6 @@ impl EnvironmentGroup {
         let mut room_idx = vec![dummy_candidate.room_idx; output_len];
         let mut room_x = vec![dummy_candidate.x; output_len];
         let mut room_y = vec![dummy_candidate.y; output_len];
-        let mut current_frontier_count = vec![0; self.num_environments];
         let mut proposal_frontier_idx = vec![-1; output_len];
         let mut proposal_door_variant_idx = vec![-1; output_len];
         let mut pre_door_valid = vec![DoorValidOutcome::Unknown as i8; pre_door_output_len];
@@ -2228,8 +2252,6 @@ impl EnvironmentGroup {
                 for (worker_idx, worker) in self.workers.iter().enumerate() {
                     let output_start = worker.start * max_candidates;
                     let output_end = output_start + worker.len * max_candidates;
-                    let frontier_count_start = worker.start;
-                    let frontier_count_end = worker.end();
                     let pre_door_output_start = worker.start * door_outcome_count;
                     let pre_door_output_end =
                         pre_door_output_start + worker.len * door_outcome_count;
@@ -2263,9 +2285,6 @@ impl EnvironmentGroup {
                         room_idx: OutputShard::from_slice(&mut room_idx[output_start..output_end]),
                         room_x: OutputShard::from_slice(&mut room_x[output_start..output_end]),
                         room_y: OutputShard::from_slice(&mut room_y[output_start..output_end]),
-                        frontier_count: OutputShard::from_slice(
-                            &mut current_frontier_count[frontier_count_start..frontier_count_end],
-                        ),
                         proposal_frontier_idx: OutputShard::from_slice(
                             &mut proposal_frontier_idx[output_start..output_end],
                         ),
@@ -2318,7 +2337,6 @@ impl EnvironmentGroup {
                 .unbind(),
             room_y: pyarray2_from_flat_vec(py, room_y, self.num_environments, max_candidates)?
                 .unbind(),
-            frontier_count: current_frontier_count.into_pyarray(py).unbind(),
             proposal_frontier_idx: pyarray2_from_flat_vec(
                 py,
                 proposal_frontier_idx,
@@ -2381,12 +2399,13 @@ impl EnvironmentGroup {
         &mut self,
         py: Python<'py>,
         verify_consistency: bool,
-    ) -> PyResult<(Bound<'py, PyArray2<i8>>, Bound<'py, PyArray2<i8>>)> {
+    ) -> PyResult<EpisodeOutcomes> {
         let (door_outcome_count, connection_outcome_count) = output_sizes(&self.common_data);
         let door_output_len = self.num_environments * door_outcome_count;
         let connection_output_len = self.num_environments * connection_outcome_count;
         let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
         let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
+        let mut avg_frontiers = vec![0.0; self.num_environments];
 
         py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
@@ -2397,6 +2416,8 @@ impl EnvironmentGroup {
                 let connection_output_start = worker.start * connection_outcome_count;
                 let connection_output_end =
                     connection_output_start + worker.len * connection_outcome_count;
+                let avg_frontiers_start = worker.start;
+                let avg_frontiers_end = worker.end();
 
                 if let Err(err) = worker.send(WorkerCommand::GetOutcomes {
                     door_outcome_count,
@@ -2408,6 +2429,9 @@ impl EnvironmentGroup {
                     connections_valid: OutputShard::from_slice(
                         &mut connections_valid[connection_output_start..connection_output_end],
                     ),
+                    avg_frontiers: OutputShard::from_slice(
+                        &mut avg_frontiers[avg_frontiers_start..avg_frontiers_end],
+                    ),
                 }) {
                     set_first_error(&mut first_error, err);
                     break;
@@ -2418,15 +2442,23 @@ impl EnvironmentGroup {
             wait_for_done_responses(&self.workers, sent_workers, first_error)
         })?;
 
-        Ok((
-            pyarray2_from_flat_vec(py, door_valid, self.num_environments, door_outcome_count)?,
-            pyarray2_from_flat_vec(
+        Ok(EpisodeOutcomes {
+            door_valid: pyarray2_from_flat_vec(
+                py,
+                door_valid,
+                self.num_environments,
+                door_outcome_count,
+            )?
+            .unbind(),
+            connections_valid: pyarray2_from_flat_vec(
                 py,
                 connections_valid,
                 self.num_environments,
                 connection_outcome_count,
-            )?,
-        ))
+            )?
+            .unbind(),
+            avg_frontiers: avg_frontiers.into_pyarray(py).unbind(),
+        })
     }
 
     fn get_outcomes_after_candidates<'py>(

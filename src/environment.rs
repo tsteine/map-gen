@@ -451,6 +451,8 @@ pub struct Environment {
     scc_dag: SccDag, // DAG of strongly connected components (condensation graph)
     occupancy: Vec<u8>,
     known_outcomes: Option<PreliminaryOutcomes>,
+    frontier_count_sum: u64,
+    frontier_count_steps: u32,
 }
 
 struct FeatureSnapshot {
@@ -507,6 +509,8 @@ impl Environment {
             scc_dag: SccDag::default(),
             occupancy: vec![0; map_size.0 as usize * map_size.1 as usize],
             known_outcomes: None,
+            frontier_count_sum: 0,
+            frontier_count_steps: 0,
         }
     }
 
@@ -532,6 +536,8 @@ impl Environment {
         self.scc_dag.clear();
         self.occupancy.fill(0);
         self.known_outcomes = None;
+        self.frontier_count_sum = 0;
+        self.frontier_count_steps = 0;
     }
 
     pub fn get_initial_action(&mut self, common: &CommonData) -> Action {
@@ -606,11 +612,25 @@ impl Environment {
     }
 
     pub fn step(&mut self, action: Action, common: &CommonData) {
+        self.record_frontier_count();
         self.step_impl(action, common, CandidateUpdate::Build);
     }
 
     pub fn step_known(&mut self, action: Action, common: &CommonData) {
+        self.record_frontier_count();
         self.step_impl(action, common, CandidateUpdate::Skip);
+    }
+
+    fn record_frontier_count(&mut self) {
+        self.frontier_count_sum += self.frontier.len() as u64;
+        self.frontier_count_steps += 1;
+    }
+
+    pub fn avg_frontiers(&self) -> Result<f32, String> {
+        if self.frontier_count_steps == 0 {
+            return Err("avg_frontiers requires at least one recorded step".to_string());
+        }
+        Ok(self.frontier_count_sum as f32 / self.frontier_count_steps as f32)
     }
 
     fn step_for_lookahead(&mut self, action: Action, common: &CommonData) {
@@ -1526,10 +1546,6 @@ impl Environment {
             }
         }
         frontier_count
-    }
-
-    pub fn frontier_count(&self) -> usize {
-        self.frontier.len()
     }
 
     pub fn max_frontiers(common: &CommonData) -> usize {

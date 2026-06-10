@@ -869,8 +869,8 @@ class TrainingSession:
         return PreparedTrainBatch(
             task.kind,
             replay_episode_data,
-            replay_outcomes,
-            replay_outcomes.door_invalid.new_empty([0], dtype=torch.float32),
+            replay_outcomes.validity,
+            replay_outcomes.avg_frontiers,
             replay_door_matches,
             prefix_count=prefix_count,
             feature_batches=feature_batches,
@@ -994,24 +994,12 @@ class TrainingSession:
         repeated_balance_score_target_logits = balance_score_target_logits.unsqueeze(1)
         repeated_balance_score_mask = balance_score_mask.unsqueeze(1)
         batch_size = prepared_batch.episode_data.actions.room_idx.shape[0]
-        if prepared_batch.kind == "fresh":
-            avg_frontiers_target = prepared_batch.avg_frontiers.to(self.device).unsqueeze(1)
-            avg_frontiers_mask = torch.ones(
-                [batch_size, 1],
-                dtype=torch.bool,
-                device=self.device,
-            )
-        else:
-            avg_frontiers_target = torch.zeros(
-                [batch_size, 1],
-                dtype=torch.float32,
-                device=self.device,
-            )
-            avg_frontiers_mask = torch.zeros(
-                [batch_size, 1],
-                dtype=torch.bool,
-                device=self.device,
-            )
+        avg_frontiers_target = prepared_batch.avg_frontiers.to(self.device).unsqueeze(1)
+        avg_frontiers_mask = torch.ones(
+            [batch_size, 1],
+            dtype=torch.bool,
+            device=self.device,
+        )
         mask = torch.ones(
             [batch_size, 1, 1],
             dtype=torch.bool,
@@ -1431,7 +1419,7 @@ class TrainingSession:
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
             "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, "
-            "main_bal %.4f %.1f%%, avg_front %.4f %.1f%%, prop %.4f %.1f%%), "
+            "bal %.4f %.1f%%, front %.4f %.1f%%, prop %.4f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
             "conn %.2f (min %s), front %.2f, ss %.4f, "
             "p %.4f, "
