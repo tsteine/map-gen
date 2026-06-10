@@ -1528,6 +1528,10 @@ impl Environment {
         frontier_count
     }
 
+    pub fn frontier_count(&self) -> usize {
+        self.frontier.len()
+    }
+
     pub fn max_frontiers(common: &CommonData) -> usize {
         common
             .room

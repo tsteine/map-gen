@@ -25,6 +25,7 @@ from env import (
     DoorMatches,
     Engine,
     EpisodeData,
+    EpisodeOutcomes,
     GenerateConfig,
     Outcomes,
     Features,
@@ -422,7 +423,7 @@ def run_generation_process_task(
     model_state: dict[str, torch.Tensor],
     generation_config_json: str,
     verify_outcome_consistency: bool,
-) -> tuple[EpisodeData, Outcomes, DoorMatchCounts, ProposalData, RustProfileReport]:
+) -> tuple[EpisodeData, EpisodeOutcomes, DoorMatchCounts, ProposalData, RustProfileReport]:
     if GENERATION_PROCESS_STATE is None:
         raise RuntimeError("generation process was not initialized")
     state = GENERATION_PROCESS_STATE
@@ -1046,7 +1047,7 @@ class TrainingSession:
 
     def generate_round(
         self,
-    ) -> tuple[EpisodeData, Outcomes, DoorMatchCounts, ProposalData, RustProfileReport]:
+    ) -> tuple[EpisodeData, EpisodeOutcomes, DoorMatchCounts, ProposalData, RustProfileReport]:
         episode_data_iterations = []
         outcome_iterations = []
         door_match_count_iterations = []
@@ -1110,12 +1111,21 @@ class TrainingSession:
                     for episode_data in episode_data_iterations
                 ]),
             ),
-            Outcomes(
-                door_invalid=torch.cat([outcomes.door_invalid for outcomes in outcome_iterations]),
-                connection_invalid=torch.cat(
-                    [outcomes.connection_invalid for outcomes in outcome_iterations]
+            EpisodeOutcomes(
+                validity=Outcomes(
+                    door_invalid=torch.cat([
+                        outcomes.validity.door_invalid for outcomes in outcome_iterations
+                    ]),
+                    connection_invalid=torch.cat(
+                        [outcomes.validity.connection_invalid for outcomes in outcome_iterations]
+                    ),
+                    door_match=torch.cat([
+                        outcomes.validity.door_match for outcomes in outcome_iterations
+                    ]),
                 ),
-                door_match=torch.cat([outcomes.door_match for outcomes in outcome_iterations]),
+                avg_frontiers=torch.cat([
+                    outcomes.avg_frontiers for outcomes in outcome_iterations
+                ]),
             ),
             DoorMatchCounts(
                 horizontal=torch.sum(
@@ -1247,7 +1257,7 @@ class TrainingSession:
 
     def log_outcomes(
         self,
-        outcomes: Outcomes,
+        episode_outcomes: EpisodeOutcomes,
         door_match_counts: DoorMatchCounts,
         loss: MainLossBreakdown,
         candidate_diagnostics: CandidateDiagnostics,
@@ -1255,6 +1265,7 @@ class TrainingSession:
         round_idx: int,
         step_config: Config,
     ) -> None:
+        outcomes = episode_outcomes.validity
         door_invalid = torch.sum(outcomes.door_invalid != 0, dim=1)
         avg_door = torch.mean(door_invalid.to(torch.float32))
         min_door = torch.min(door_invalid)
@@ -1266,6 +1277,7 @@ class TrainingSession:
         total_invalid = door_invalid + conn_invalid
         avg_invalid = torch.mean(total_invalid.to(torch.float32))
         min_invalid = torch.min(total_invalid)
+        avg_frontiers = torch.mean(episode_outcomes.avg_frontiers.to(torch.float32))
 
         success = total_invalid == 0
         success_rate = torch.mean(success.to(torch.float32))
@@ -1321,6 +1333,7 @@ class TrainingSession:
             "success_door": success_door,
             "success_conn": success_conn,
             "avg_invalid": avg_invalid,
+            "avg_frontiers": avg_frontiers,
             "avg_door": avg_door,
             "avg_conn": avg_conn,
             "min_invalid": min_invalid,
@@ -1355,7 +1368,7 @@ class TrainingSession:
             "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, "
             "main_bal %.4f %.1f%%, prop %.4f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
-            "conn %.2f (min %s), ss %.4f, ent %.4f, u_kl %.4f, "
+            "conn %.2f (min %s), front %.2f, ss %.4f, u_kl %.4f, "
             "p %.4f, "
             "cand %d, frac %.4f",
             round_idx,
@@ -1375,8 +1388,8 @@ class TrainingSession:
             scalar(min_door),
             scalar(avg_conn),
             scalar(min_conn),
+            scalar(avg_frontiers),
             scalar(door_match_ss),
-            scalar(candidate_diagnostics.target_entropy),
             scalar(candidate_diagnostics.uniform_kl),
             scalar(candidate_diagnostics.selected_probability),
             step_config.generation.recommended_candidates + step_config.generation.exploration_candidates,
@@ -1434,7 +1447,7 @@ class TrainingSession:
                     map_gen.reset_profile()
                 (
                     episode_data,
-                    gen_outcomes,
+                    episode_outcomes,
                     door_match_counts,
                     proposal_data,
                     generation_profile,
@@ -1444,7 +1457,7 @@ class TrainingSession:
                 step_config = instantiate_scheduleable_config(self.config, self.num_episodes)
                 avg_loss, avg_balance_loss = self.train_round(
                     episode_data,
-                    gen_outcomes,
+                    episode_outcomes.validity,
                     proposal_data,
                     step_config,
                 )
@@ -1452,7 +1465,7 @@ class TrainingSession:
                 self.experience.store(episode_data)
 
                 self.log_outcomes(
-                    gen_outcomes,
+                    episode_outcomes,
                     door_match_counts,
                     avg_loss,
                     candidate_diagnostics,

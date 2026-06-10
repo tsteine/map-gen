@@ -127,6 +127,18 @@ class Outcomes:
 
 
 @dataclass
+class EpisodeOutcomes:
+    validity: Outcomes
+    avg_frontiers: torch.Tensor
+
+    def to(self, device: torch.device) -> "EpisodeOutcomes":
+        return EpisodeOutcomes(
+            self.validity.to(device),
+            self.avg_frontiers.to(device),
+        )
+
+
+@dataclass
 class SparseFeatureRequirements:
     frontier_count: int
     sparse_row_count: int
@@ -363,55 +375,48 @@ class EnvironmentGroup:
         proposal_temperature: torch.Tensor,
         proposal_scores: torch.Tensor | None,
         device: torch.device,
-    ) -> tuple[Actions, Outcomes, Outcomes, SparseFeatureRequirements]:
-        (
-            room_idx,
-            room_x,
-            room_y,
-            proposal_indices,
-            pre_door_invalid,
-            pre_connection_invalid,
-            door_invalid,
-            connection_invalid,
-            door_match,
-            frontier_count,
-            sparse_row_count,
-            worker_sparse_row_counts,
-        ) = (
-            self.env.get_candidates_with_outcomes(
-                recommended_candidates,
-                exploration_candidates,
-                proposal_temperature.contiguous().cpu().numpy(),
-                None if proposal_scores is None else proposal_scores.contiguous().cpu().numpy(),
-            )
+    ) -> tuple[
+        Actions,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        Outcomes,
+        Outcomes,
+        SparseFeatureRequirements,
+    ]:
+        result = self.env.get_candidates_with_outcomes(
+            recommended_candidates,
+            exploration_candidates,
+            proposal_temperature.contiguous().cpu().numpy(),
+            None if proposal_scores is None else proposal_scores.contiguous().cpu().numpy(),
         )
-        proposal_frontier_idx, proposal_door_variant_idx = proposal_indices
         return (
             Actions(
-                room_idx=torch.from_numpy(room_idx).to(device),
-                room_x=torch.from_numpy(room_x).to(device),
-                room_y=torch.from_numpy(room_y).to(device),
+                room_idx=torch.from_numpy(result.room_idx).to(device),
+                room_x=torch.from_numpy(result.room_x).to(device),
+                room_y=torch.from_numpy(result.room_y).to(device),
             ),
-            torch.from_numpy(proposal_frontier_idx).to(device),
-            torch.from_numpy(proposal_door_variant_idx).to(device),
+            torch.from_numpy(result.frontier_count).to(device),
+            torch.from_numpy(result.proposal_frontier_idx).to(device),
+            torch.from_numpy(result.proposal_door_variant_idx).to(device),
             Outcomes(
-                door_invalid=torch.from_numpy(pre_door_invalid).to(device),
-                connection_invalid=torch.from_numpy(pre_connection_invalid).to(device),
+                door_invalid=torch.from_numpy(result.pre_door_valid).to(device),
+                connection_invalid=torch.from_numpy(result.pre_connections_valid).to(device),
                 door_match=torch.empty(
-                    [pre_door_invalid.shape[0], 0],
+                    [result.pre_door_valid.shape[0], 0],
                     dtype=torch.int16,
                     device=device,
                 ),
             ),
             Outcomes(
-                door_invalid=torch.from_numpy(door_invalid).to(device),
-                connection_invalid=torch.from_numpy(connection_invalid).to(device),
-                door_match=torch.from_numpy(door_match).to(device),
+                door_invalid=torch.from_numpy(result.door_valid).to(device),
+                connection_invalid=torch.from_numpy(result.connections_valid).to(device),
+                door_match=torch.from_numpy(result.door_match).to(device),
             ),
             SparseFeatureRequirements(
-                frontier_count,
-                sparse_row_count,
-                worker_sparse_row_counts,
+                result.feature_frontier_count,
+                result.sparse_row_count,
+                result.worker_sparse_row_counts,
             ),
         )
 

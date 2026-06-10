@@ -16,5 +16,8 @@
 - Maintain clean, readable code. When there is an opportunity to improve code
   quality by refactoring, suggest this, even if not required for the current
   task.
+- For PyO3 bindings, prefer returning named `#[pyclass]` result objects when a
+  function needs to return many values. Avoid creating complex or deeply nested
+  tuple return types just to stay within PyO3 tuple arity limits.
 - Avoid defining functions inside of other function definitions.
 - Do not bother removing or clearing `python/__pycache__`.
