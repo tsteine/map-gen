@@ -800,9 +800,9 @@ class TrainingSession:
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
             "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, "
-            "bal %.4f %.1f%%, front %.4f %.1f%%, prop %.4f %.1f%%), "
+            "bal %.4f %.1f%%, front %.2f %.1f%%, prop %.4f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
-            "conn %.2f (min %s), front %.2f, ss %.4f, "
+            "conn %.2f (min %s), front %.2f, ss %.3f, "
             "p %.4f, "
             "cand %d, frac %.4f",
             round_idx,

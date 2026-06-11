@@ -2,20 +2,20 @@
   "experiment_name": "zebes-testing",
   "room_set": "room_definitions/zebes.json",
   "map_size": [72, 72],
-  "knot_episodes": [0, 200000, 1000000, 4000000, 16000000],
+  "knot_episodes": [0, 200000, 1200000, 8000000, 16000000],
   "checkpoint_period": 100,
   "model": {
     "compile": true,
     "autocast": true,
     "generation_autocast": true,
-    "embedding_width": 512,
-    "global_embedding_width": 512,
-    "hidden_width": 512,
+    "embedding_width": 256,
+    "global_embedding_width": 256,
+    "hidden_width": 256,
     "door_match_embedding_width": 64,
-    "num_layers": 4
+    "num_layers": 2
   },
   "optimizer": {
-    "lr": {"log": [0.0005, 0.0004, 0.0003, 0.0002, 0.0001]},
+    "lr": {"log": [0.001, 0.001, 0.001, 0.0001, 0.0001]},
     "beta1": 0.95,
     "beta2": 0.99
   },
@@ -29,8 +29,8 @@
     "beta2": 0.99
   },
   "generation": {
-    "num_environments": 2048,
-    "num_iterations": 4,
+    "num_environments": 4096,
+    "num_iterations": 2,
     "num_devices": 2,
     "pipeline_groups": 2,
     "recommended_candidates": 4,
@@ -39,8 +39,8 @@
     "proposal_temperature": {"log": [30.0, 3.0, 0.1, 0.1, 0.1]},
     "reward_door": 1.0,
     "reward_connection": 1.0,
-    "reward_balance": 0.2,
-    "reward_frontier": 0.3,
+    "reward_balance": 0.0,
+    "reward_frontier": 0.0,
     "frontier_neighbor_algorithm": "nearest-exclusive",
     "frontier_neighbor_count": 1,
     "frontier_window_size": 16,
@@ -65,7 +65,7 @@
     "frontier_connection_reachability": true
   },
   "train": {
-    "batch_size": 256,
+    "batch_size": 512,
     "fresh_pass_factor": 2.0,
     "replay_pass_factor": 2.0,
     "sample_period": 16,

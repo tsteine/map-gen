@@ -1,11 +1,11 @@
 - The config JSON and model checkpoint formats are still under development. It
-  is ok to make backward-incompatible changes to them. Every field should have
-  a simple, consistent meaning. If a config or checkpoint field is missing it
+  is ok to make backward-incompatible changes to them. Every field should have a
+  simple, consistent meaning. If a config or checkpoint field is missing it
   should give an error: do not try to set up default values or fallback
-  behaviors if a field is missing.
-  This also applies to Python constructor/function parameters that are derived
-  from config fields: keep them required instead of adding default values such
-  as `None`, numeric fallbacks, or `x or default` handling.
+  behaviors if a field is missing. This also applies to Python
+  constructor/function parameters that are derived from config fields: keep them
+  required instead of adding default values such as `None`, numeric fallbacks,
+  or `x or default` handling.
 - More generally, avoid adding optional/default function parameters as a way to
   preserve old call sites, enable temporary A/B behavior, or hide missing
   required dependencies. If behavior needs to vary, make the choice explicit at
@@ -20,4 +20,6 @@
   function needs to return many values. Avoid creating complex or deeply nested
   tuple return types just to stay within PyO3 tuple arity limits.
 - Avoid defining functions inside of other function definitions.
+- The training script `train.py` may be run on a different machine, so do not
+  make assumptions based on the local development environment.
 - Do not bother removing or clearing `python/__pycache__`.
