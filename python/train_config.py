@@ -101,6 +101,7 @@ class Config(StrictBaseModel):
     map_size: tuple[int, int]
     knot_episodes: list[int]
     checkpoint_period: int
+    visualize: int
     model: ModelConfig
     optimizer: OptimizerConfig
     balance_model: BalanceModelConfig
@@ -163,6 +164,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("last knot_episodes value must be greater than zero")
     if config.checkpoint_period <= 0:
         raise ValueError("checkpoint_period must be greater than zero")
+    if config.visualize < 0:
+        raise ValueError("visualize must be greater than or equal to zero")
     if config.model.global_embedding_width <= 0:
         raise ValueError("model.global_embedding_width must be greater than zero")
     if config.generation.num_iterations <= 0:

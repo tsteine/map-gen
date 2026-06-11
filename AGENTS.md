@@ -22,4 +22,5 @@
 - Avoid defining functions inside of other function definitions.
 - The training script `train.py` may be run on a different machine, so do not
   make assumptions based on the local development environment.
+- Activate the "map-gen" conda environment before running Python.
 - Do not bother removing or clearing `python/__pycache__`.

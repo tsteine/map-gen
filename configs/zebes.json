@@ -4,6 +4,7 @@
   "map_size": [72, 72],
   "knot_episodes": [0, 200000, 1200000, 8000000, 16000000],
   "checkpoint_period": 100,
+  "visualize": 0,
   "model": {
     "compile": true,
     "autocast": true,

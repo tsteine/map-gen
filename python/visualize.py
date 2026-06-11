@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 
@@ -456,3 +457,70 @@ def display_map(
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     return ax
+
+
+def save_episode_frames(
+    rooms: Sequence[dict],
+    actions: Any,
+    output_dir: Path,
+    map_size: Tuple[int, int],
+    environment_index: int,
+) -> List[Path]:
+    """Save one PNG after each placement in a generated episode."""
+    from PIL import Image, ImageDraw
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    scale = 12
+    margin = 36
+    width, height = map_size
+    canvas_size = (width * scale + 2 * margin, height * scale + 2 * margin)
+    geometries = _room_geometries(rooms)
+    room_polygons: List[Tuple[Tuple[int, int], ...]] = []
+    room_colors: List[str] = []
+    wall_segments: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
+    saved_paths = []
+    placements = _normalize_actions(actions, environment_index)
+    for step_idx, action in enumerate(placements):
+        room_idx, room_x, room_y = action
+        if not 0 <= room_idx < len(rooms):
+            continue
+
+        geometry = geometries[room_idx]
+        polygons, colors, segments = _placement_elements(
+            geometry,
+            room_x,
+            room_y,
+            _COLORS[step_idx % len(_COLORS)],
+        )
+        room_polygons.extend(polygons)
+        room_colors.extend(colors)
+        wall_segments.extend(segments)
+
+        image = Image.new("RGB", canvas_size, "white")
+        draw = ImageDraw.Draw(image)
+        for grid_x in range(width + 1):
+            pixel_x = margin + grid_x * scale
+            draw.line([(pixel_x, margin), (pixel_x, margin + height * scale)], fill="#dddddd")
+        for grid_y in range(height + 1):
+            pixel_y = margin + grid_y * scale
+            draw.line([(margin, pixel_y), (margin + width * scale, pixel_y)], fill="#dddddd")
+
+        for polygon, color in zip(room_polygons, room_colors):
+            draw.polygon(
+                [(margin + x * scale, margin + y * scale) for x, y in polygon],
+                fill=color,
+            )
+        for (x1, y1), (x2, y2) in wall_segments:
+            draw.line(
+                [
+                    (margin + x1 * scale, margin + y1 * scale),
+                    (margin + x2 * scale, margin + y2 * scale),
+                ],
+                fill="black",
+                width=2,
+            )
+        frame_path = output_dir / f"step_{step_idx + 1:03d}.png"
+        image.save(frame_path)
+        saved_paths.append(frame_path)
+
+    return saved_paths

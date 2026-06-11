@@ -43,6 +43,7 @@ from loss import (
 )
 from model import BalanceModel, FrontierModel
 from train_config import Config, episodes_per_round, instantiate_scheduleable_config, validate_config
+from visualize import save_episode_frames
 
 
 @dataclass
@@ -692,6 +693,25 @@ class TrainingSession:
             proposal_data,
         )
 
+    def visualize_round(self, episode_data: EpisodeData, round_idx: int) -> None:
+        output_root = Path(self.run_path) / "visualizations" / f"round_{round_idx:04d}"
+        actions = (
+            episode_data.actions.room_idx.cpu(),
+            episode_data.actions.room_x.cpu(),
+            episode_data.actions.room_y.cpu(),
+        )
+        episode_count = min(self.config.visualize, episode_data.actions.room_idx.shape[0])
+        total_frames = 0
+        for episode_idx in range(episode_count):
+            saved_paths = save_episode_frames(
+                self.rooms,
+                actions,
+                output_root / f"episode_{episode_idx:04d}",
+                self.config.map_size,
+                episode_idx,
+            )
+            total_frames += len(saved_paths)
+
     def log_outcomes(
         self,
         episode_outcomes: EpisodeOutcomes,
@@ -911,6 +931,8 @@ class TrainingSession:
                     generation_stats,
                     generation_profile,
                 ) = self.generate_round()
+                if self.config.visualize > 0:
+                    self.visualize_round(episode_data, round_idx)
                 candidate_diagnostics = compute_candidate_diagnostics(proposal_data)
                 self.num_episodes += self.episodes_per_round
                 step_config = instantiate_scheduleable_config(self.config, self.num_episodes)
