@@ -37,6 +37,16 @@ const PROFILE_PROPOSAL_RESTORE: usize = 31;
 const PROFILE_PROPOSAL_FALLBACK_RECOMPUTE: usize = 32;
 const PROFILE_LOOKAHEAD_SNAPSHOT: usize = 33;
 const PROFILE_LOOKAHEAD_STEP: usize = 34;
+const PROFILE_FEATURES_SETUP: usize = 35;
+const PROFILE_FEATURES_SORT_FRONTIERS: usize = 36;
+const PROFILE_FEATURES_FRONTIER_BASE: usize = 37;
+const PROFILE_FEATURES_FRONTIER_OCCUPANCY: usize = 38;
+const PROFILE_FEATURES_CONNECTION_REACHABILITY: usize = 39;
+const PROFILE_FEATURES_FRONTIER_NEIGHBOR: usize = 40;
+const PROFILE_FEATURES_FRONTIER_NEIGHBOR_FLAGS: usize = 41;
+const PROFILE_FEATURES_ROOM_POSITION_CLONE: usize = 42;
+const PROFILE_FEATURES_OUTPUT: usize = 43;
+const PROFILE_FEATURES_APPLY_CANDIDATE: usize = 44;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CandidateUpdate {
@@ -399,6 +409,33 @@ fn frontier_nearest_neighbors(
         rows.push(neighbors[..count].to_vec());
     }
     rows
+}
+
+fn write_single_frontier_nearest_neighbor(
+    locations: &[DoorLocation],
+    include_self: bool,
+    output: &mut [i16],
+) {
+    debug_assert_eq!(locations.len(), output.len());
+    for (src_idx, src) in locations.iter().enumerate() {
+        let mut best_key = (Coord::MAX, usize::MAX, usize::MAX);
+        let mut best_idx = -1;
+        for (dst_idx, dst) in locations.iter().enumerate() {
+            if !include_self && dst_idx == src_idx {
+                continue;
+            }
+            let key = (
+                (src.x() - dst.x()).abs() + (src.y() - dst.y()).abs(),
+                usize::from(dst_idx != src_idx),
+                dst_idx,
+            );
+            if key < best_key {
+                best_key = key;
+                best_idx = dst_idx as i16;
+            }
+        }
+        output[src_idx] = best_idx;
+    }
 }
 
 fn prune_frontier_edges(
@@ -1870,6 +1907,7 @@ impl Environment {
         frontier_window_size: usize,
     ) -> Features {
         assert!(self.frontier.len() <= Self::max_frontiers(common));
+        let profile = profile_start();
         let frontier_count = if config.has_frontier_features() {
             self.frontier.len()
         } else {
@@ -1919,13 +1957,19 @@ impl Environment {
         } else {
             vec![]
         };
+        profile_end(PROFILE_FEATURES_SETUP, profile);
+
+        let profile = profile_start();
         let mut sorted_frontiers = if config.has_frontier_features() {
             self.frontier.iter().collect::<Vec<_>>()
         } else {
             vec![]
         };
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
+        profile_end(PROFILE_FEATURES_SORT_FRONTIERS, profile);
+
         let map_width = self.map_size.0 as usize;
+        let mut profile = profile_start();
         for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
             let row = idx * FEATURE_FRONTIER_WIDTH;
             frontier[row] = i8::from(config.frontier_mask);
@@ -1942,6 +1986,8 @@ impl Environment {
             if !config.frontier_occupancy {
                 continue;
             }
+            profile_end(PROFILE_FEATURES_FRONTIER_BASE, profile);
+            let occupancy_profile = profile_start();
             let window_start_x = location.x() as isize - frontier_window_size as isize / 2;
             let window_start_y = location.y() as isize - frontier_window_size as isize / 2;
             let window_start = idx * packed_frontier_window_size;
@@ -1988,6 +2034,17 @@ impl Environment {
                 }
             }
             if let Some((geometry, offset_x, offset_y)) = extra_occupied {
+                if offset_x + geometry.max_x < window_start_x as Coord
+                    || offset_x + geometry.min_x
+                        >= (window_start_x + frontier_window_size as isize) as Coord
+                    || offset_y + geometry.max_y < window_start_y as Coord
+                    || offset_y + geometry.min_y
+                        >= (window_start_y + frontier_window_size as isize) as Coord
+                {
+                    profile_end(PROFILE_FEATURES_FRONTIER_OCCUPANCY, occupancy_profile);
+                    profile = profile_start();
+                    continue;
+                }
                 for &(dx, dy) in &geometry.occupied_tiles {
                     let window_x = offset_x as isize + dx as isize - window_start_x;
                     let window_y = offset_y as isize + dy as isize - window_start_y;
@@ -2001,7 +2058,12 @@ impl Environment {
                     }
                 }
             }
+            profile_end(PROFILE_FEATURES_FRONTIER_OCCUPANCY, occupancy_profile);
+            profile = profile_start();
         }
+        profile_end(PROFILE_FEATURES_FRONTIER_BASE, profile);
+
+        let profile = profile_start();
         for (connection_idx, connection) in common.room_connection.iter().enumerate() {
             if !self.room_used[connection.room_idx as usize] {
                 continue;
@@ -2029,30 +2091,53 @@ impl Environment {
                 }
             }
         }
+        profile_end(PROFILE_FEATURES_CONNECTION_REACHABILITY, profile);
+
         if config.frontier_neighbor {
+            let profile = profile_start();
             let locations = sorted_frontiers
                 .iter()
                 .map(|(location, _)| **location)
                 .collect::<Vec<_>>();
-            let neighbors = match frontier_neighbor_algorithm {
-                FrontierNeighborAlgorithm::Delaunay => {
-                    frontier_delaunay_neighbors(&locations, frontier_neighbor_count)
+            match frontier_neighbor_algorithm {
+                FrontierNeighborAlgorithm::Nearest if frontier_neighbor_count == 1 => {
+                    write_single_frontier_nearest_neighbor(
+                        &locations,
+                        true,
+                        &mut frontier_neighbor,
+                    );
                 }
-                FrontierNeighborAlgorithm::Nearest => {
-                    frontier_nearest_neighbors(&locations, frontier_neighbor_count, true)
+                FrontierNeighborAlgorithm::NearestExclusive if frontier_neighbor_count == 1 => {
+                    write_single_frontier_nearest_neighbor(
+                        &locations,
+                        false,
+                        &mut frontier_neighbor,
+                    );
                 }
-                FrontierNeighborAlgorithm::NearestExclusive => {
-                    frontier_nearest_neighbors(&locations, frontier_neighbor_count, false)
-                }
-            };
-            for (src_idx, neighbors) in neighbors.iter().enumerate() {
-                for (neighbor_idx, &dst_idx) in neighbors.iter().enumerate() {
-                    frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx] =
-                        dst_idx as i16;
+                _ => {
+                    let neighbors = match frontier_neighbor_algorithm {
+                        FrontierNeighborAlgorithm::Delaunay => {
+                            frontier_delaunay_neighbors(&locations, frontier_neighbor_count)
+                        }
+                        FrontierNeighborAlgorithm::Nearest => {
+                            frontier_nearest_neighbors(&locations, frontier_neighbor_count, true)
+                        }
+                        FrontierNeighborAlgorithm::NearestExclusive => {
+                            frontier_nearest_neighbors(&locations, frontier_neighbor_count, false)
+                        }
+                    };
+                    for (src_idx, neighbors) in neighbors.iter().enumerate() {
+                        for (neighbor_idx, &dst_idx) in neighbors.iter().enumerate() {
+                            frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx] =
+                                dst_idx as i16;
+                        }
+                    }
                 }
             }
+            profile_end(PROFILE_FEATURES_FRONTIER_NEIGHBOR, profile);
         }
         if config.frontier_neighbor_flags {
+            let profile = profile_start();
             for (src_idx, (_, src)) in sorted_frontiers.iter().enumerate() {
                 for neighbor_idx in 0..frontier_neighbor_count {
                     let dst_idx =
@@ -2076,19 +2161,26 @@ impl Environment {
                     frontier_neighbor_pair[pair_idx] = flags;
                 }
             }
+            profile_end(PROFILE_FEATURES_FRONTIER_NEIGHBOR_FLAGS, profile);
         }
-        Features {
+        let profile = profile_start();
+        let room_x = if config.room_position {
+            self.room_x.clone()
+        } else {
+            vec![]
+        };
+        let room_y = if config.room_position {
+            self.room_y.clone()
+        } else {
+            vec![]
+        };
+        profile_end(PROFILE_FEATURES_ROOM_POSITION_CLONE, profile);
+
+        let profile = profile_start();
+        let result = Features {
             inventory,
-            room_x: if config.room_position {
-                self.room_x.clone()
-            } else {
-                vec![]
-            },
-            room_y: if config.room_position {
-                self.room_y.clone()
-            } else {
-                vec![]
-            },
+            room_x,
+            room_y,
             room_placed,
             frontier,
             frontier_occupancy,
@@ -2096,7 +2188,9 @@ impl Environment {
             frontier_neighbor_pair,
             connection_reachability,
             frontier_connection_reachability,
-        }
+        };
+        profile_end(PROFILE_FEATURES_OUTPUT, profile);
+        result
     }
 
     pub fn features_after_candidate(
@@ -2122,7 +2216,9 @@ impl Environment {
             } else {
                 None
             };
+        let profile = profile_start();
         let snapshot = self.apply_feature_candidate(candidate, common);
+        profile_end(PROFILE_FEATURES_APPLY_CANDIDATE, profile);
         let features = self.features_with_occupancy(
             common,
             config,
@@ -2132,7 +2228,9 @@ impl Environment {
             frontier_neighbor_count,
             frontier_window_size,
         );
+        let profile = profile_start();
         self.restore_feature_candidate(candidate, snapshot);
+        profile_end(PROFILE_FEATURES_APPLY_CANDIDATE, profile);
         features
     }
 
@@ -2723,6 +2821,19 @@ mod tests {
         );
         assert_eq!(neighbors[0], vec![2, 3, 1]);
         assert_eq!(neighbors[1], vec![3, 0, 2]);
+
+        let locations = [
+            door_location(0, 0, false),
+            door_location(2, 0, false),
+            door_location(0, 1, false),
+            door_location(1, 0, false),
+        ];
+        let mut single = vec![-1; locations.len()];
+        write_single_frontier_nearest_neighbor(&locations, false, &mut single);
+        assert_eq!(single, vec![2, 3, 0, 0]);
+
+        write_single_frontier_nearest_neighbor(&locations[..1], false, &mut single[..1]);
+        assert_eq!(single[0], -1);
     }
 
     #[test]
