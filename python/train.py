@@ -869,7 +869,9 @@ class TrainingSession:
         for section_name, prefix in [
             ("Python generation spans", "python."),
             ("worker commands", "worker."),
-            ("environment step spans", "env."),
+            ("environment step spans", "env.step."),
+            ("environment proposal spans", "env.proposal."),
+            ("environment lookahead spans", "env.lookahead."),
         ]:
             section_rows = [row for row in rows if row[0].startswith(prefix)]
             if not section_rows:

@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const PROFILE_METRIC_COUNT: usize = 23;
+const PROFILE_METRIC_COUNT: usize = 35;
 const PROFILE_METRIC_NAMES: [&str; PROFILE_METRIC_COUNT] = [
     "worker.clear",
     "worker.finish",
@@ -49,6 +49,18 @@ const PROFILE_METRIC_NAMES: [&str; PROFILE_METRIC_COUNT] = [
     "worker.step_known",
     "worker.get_proposal_candidate_mask",
     "worker.get_candidates_from_proposals",
+    "env.proposal.pre_outcomes",
+    "env.proposal.sort_frontiers",
+    "env.proposal.resolve_action",
+    "env.proposal.apply_lookahead",
+    "env.proposal.door_outcomes",
+    "env.proposal.connection_outcomes",
+    "env.proposal.features",
+    "env.proposal.door_match",
+    "env.proposal.restore",
+    "env.proposal.fallback_recompute",
+    "env.lookahead.snapshot",
+    "env.lookahead.step",
 ];
 
 static PROFILE_ENABLED: AtomicBool = AtomicBool::new(false);

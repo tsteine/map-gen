@@ -25,6 +25,18 @@ const PROFILE_STEP_OCCUPANCY: usize = 16;
 const PROFILE_STEP_MATCH_EXISTING_FRONTIERS: usize = 17;
 const PROFILE_STEP_BUILD_NEW_FRONTIER_CANDIDATES: usize = 18;
 const PROFILE_STEP_FILTER_EXISTING_FRONTIERS: usize = 19;
+const PROFILE_PROPOSAL_PRE_OUTCOMES: usize = 23;
+const PROFILE_PROPOSAL_SORT_FRONTIERS: usize = 24;
+const PROFILE_PROPOSAL_RESOLVE_ACTION: usize = 25;
+const PROFILE_PROPOSAL_APPLY_LOOKAHEAD: usize = 26;
+const PROFILE_PROPOSAL_DOOR_OUTCOMES: usize = 27;
+const PROFILE_PROPOSAL_CONNECTION_OUTCOMES: usize = 28;
+const PROFILE_PROPOSAL_FEATURES: usize = 29;
+const PROFILE_PROPOSAL_DOOR_MATCH: usize = 30;
+const PROFILE_PROPOSAL_RESTORE: usize = 31;
+const PROFILE_PROPOSAL_FALLBACK_RECOMPUTE: usize = 32;
+const PROFILE_LOOKAHEAD_SNAPSHOT: usize = 33;
+const PROFILE_LOOKAHEAD_STEP: usize = 34;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CandidateUpdate {
@@ -1357,8 +1369,14 @@ impl Environment {
         String,
     > {
         debug_assert_eq!(sampled_frontier_idx.len(), sampled_door_variant_idx.len());
+        let profile = profile_start();
         let pre_candidate_outcomes = self.outcomes(common);
+        profile_end(PROFILE_PROPOSAL_PRE_OUTCOMES, profile);
+
+        let profile = profile_start();
         let sorted_frontier_locations = self.sorted_frontier_locations();
+        profile_end(PROFILE_PROPOSAL_SORT_FRONTIERS, profile);
+
         let mut clean = Vec::with_capacity(recommended_candidates);
         let mut rejected = Vec::new();
         let mut evaluated_count = 0;
@@ -1369,14 +1387,17 @@ impl Environment {
             if clean.len() == recommended_candidates {
                 break;
             }
+            let profile = profile_start();
             let Some(action) = self.action_for_proposal_candidate(
                 common,
                 &sorted_frontier_locations,
                 frontier_idx,
                 door_variant_idx,
             ) else {
+                profile_end(PROFILE_PROPOSAL_RESOLVE_ACTION, profile);
                 continue;
             };
+            profile_end(PROFILE_PROPOSAL_RESOLVE_ACTION, profile);
             evaluated_count += 1;
             match self.evaluate_candidate_outcome(
                 common,
@@ -1411,7 +1432,8 @@ impl Environment {
         }
 
         let candidates_with_outcomes = if clean.is_empty() && !rejected.is_empty() {
-            rejected
+            let profile = profile_start();
+            let fallback = rejected
                 .into_iter()
                 .take(recommended_candidates)
                 .map(|candidate| {
@@ -1426,7 +1448,9 @@ impl Environment {
                         );
                     (candidate, post_candidate_outcomes, door_match, features)
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            profile_end(PROFILE_PROPOSAL_FALLBACK_RECOMPUTE, profile);
+            fallback
         } else {
             clean
         };
@@ -1468,7 +1492,11 @@ impl Environment {
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> Result<CandidateOutcome, String> {
+        let profile = profile_start();
         let snapshot = self.apply_lookahead_candidate(candidate, common);
+        profile_end(PROFILE_PROPOSAL_APPLY_LOOKAHEAD, profile);
+
+        let profile = profile_start();
         let mut door_valid = Vec::with_capacity(pre_candidate_outcomes.door_valid.len());
         let mut outcome_idx = 0;
         for dir in 0..NUM_DIRS {
@@ -1477,7 +1505,10 @@ impl Environment {
                 if before == DoorValidOutcome::Unknown {
                     let after = self.door_outcome(common, dir, i);
                     if after == DoorValidOutcome::Invalid {
+                        profile_end(PROFILE_PROPOSAL_DOOR_OUTCOMES, profile);
+                        let profile = profile_start();
                         self.restore_lookahead_candidate(snapshot);
+                        profile_end(PROFILE_PROPOSAL_RESTORE, profile);
                         return Ok(CandidateOutcome::Rejected);
                     }
                     door_valid.push(after);
@@ -1487,7 +1518,9 @@ impl Environment {
                 outcome_idx += 1;
             }
         }
+        profile_end(PROFILE_PROPOSAL_DOOR_OUTCOMES, profile);
 
+        let profile = profile_start();
         let frontier_reachability = if self.finished {
             None
         } else {
@@ -1501,7 +1534,10 @@ impl Environment {
                 let after =
                     self.connection_outcome(common, connection_idx, frontier_reachability.as_ref());
                 if after == DoorValidOutcome::Invalid {
+                    profile_end(PROFILE_PROPOSAL_CONNECTION_OUTCOMES, profile);
+                    let profile = profile_start();
                     self.restore_lookahead_candidate(snapshot);
+                    profile_end(PROFILE_PROPOSAL_RESTORE, profile);
                     return Ok(CandidateOutcome::Rejected);
                 }
                 connections_valid.push(after);
@@ -1509,7 +1545,9 @@ impl Environment {
                 connections_valid.push(before);
             }
         }
+        profile_end(PROFILE_PROPOSAL_CONNECTION_OUTCOMES, profile);
 
+        let profile = profile_start();
         let features = self.features_for_applied_candidate(
             common,
             candidate,
@@ -1518,12 +1556,17 @@ impl Environment {
             frontier_neighbor_count,
             frontier_window_size,
         );
+        profile_end(PROFILE_PROPOSAL_FEATURES, profile);
         let outcomes = PreliminaryOutcomes {
             door_valid: door_valid.clone(),
             connections_valid: connections_valid.clone(),
         };
+        let profile = profile_start();
         let door_match = self.door_match_feature(common, &outcomes);
+        profile_end(PROFILE_PROPOSAL_DOOR_MATCH, profile);
+        let profile = profile_start();
         self.restore_lookahead_candidate(snapshot);
+        profile_end(PROFILE_PROPOSAL_RESTORE, profile);
         Ok(CandidateOutcome::Clean(outcomes, door_match, features))
     }
 
@@ -1536,9 +1579,14 @@ impl Environment {
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> (PreliminaryOutcomes, Vec<i16>, Features) {
+        let profile = profile_start();
         let snapshot = self.apply_lookahead_candidate(candidate, common);
+        profile_end(PROFILE_PROPOSAL_APPLY_LOOKAHEAD, profile);
         let outcomes = self.outcomes(common);
+        let profile = profile_start();
         let door_match = self.door_match_feature(common, &outcomes);
+        profile_end(PROFILE_PROPOSAL_DOOR_MATCH, profile);
+        let profile = profile_start();
         let features = self.features_for_applied_candidate(
             common,
             candidate,
@@ -1547,7 +1595,10 @@ impl Environment {
             frontier_neighbor_count,
             frontier_window_size,
         );
+        profile_end(PROFILE_PROPOSAL_FEATURES, profile);
+        let profile = profile_start();
         self.restore_lookahead_candidate(snapshot);
+        profile_end(PROFILE_PROPOSAL_RESTORE, profile);
         (outcomes, door_match, features)
     }
 
@@ -1626,6 +1677,7 @@ impl Environment {
         candidate: Action,
         common: &CommonData,
     ) -> LookaheadSnapshot {
+        let profile = profile_start();
         let room_idx =
             (candidate.room_idx < common.room.len() as RoomIdx).then_some(candidate.room_idx);
         let geometry_idx = room_idx.map(|room_idx| common.room[room_idx as usize].geometry_idx);
@@ -1671,7 +1723,10 @@ impl Environment {
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
         };
+        profile_end(PROFILE_LOOKAHEAD_SNAPSHOT, profile);
+        let profile = profile_start();
         self.step_for_lookahead(candidate, common);
+        profile_end(PROFILE_LOOKAHEAD_STEP, profile);
         snapshot
     }
 
