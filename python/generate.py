@@ -513,15 +513,6 @@ class ProposalInputs:
     mask: ProposalCandidateMask
 
 
-@dataclass
-class ProposalShortlistDiagnostics:
-    valid_logit_sum: float
-    valid_logit_count: float
-    prefix_logit_sum: float
-    prefix_count: float
-    prefix_rank_sum: float
-
-
 def create_generation_environment_groups(
     config: Config,
     engine: Engine,
@@ -632,7 +623,7 @@ def sample_proposal_shortlist(
     proposal_mask: ProposalCandidateMask,
     config: GenerateConfig,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, ProposalShortlistDiagnostics]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     proposal_frontier_count = proposal_scores.shape[1]
     proposal_door_variant_count = proposal_scores.shape[2]
     valid = unpack_proposal_mask(proposal_mask, device)[
@@ -687,34 +678,9 @@ def sample_proposal_shortlist(
     sampled_door_variant_idx = sampled_flat % door_variant_count
     sampled_frontier_idx = torch.where(sampled_flat >= 0, sampled_frontier_idx, -1)
     sampled_door_variant_idx = torch.where(sampled_flat >= 0, sampled_door_variant_idx, -1)
-    prefix_count = min(config.recommended_candidates, sampled_flat.shape[1])
-    prefix_sampled_flat = sampled_flat[:, :prefix_count].clamp_min(0)
-    prefix_valid = sampled_flat[:, :prefix_count] >= 0
-    prefix_logits = torch.gather(logits, 1, prefix_sampled_flat)
-    valid_counts = flat_valid.sum(dim=1).clamp_min(1).to(torch.float32)
-    lower_rank_count = (
-        flat_valid.unsqueeze(1)
-        & (logits.unsqueeze(1) < prefix_logits.unsqueeze(2))
-    ).sum(dim=2)
-    equal_rank_count = (
-        flat_valid.unsqueeze(1)
-        & (logits.unsqueeze(1) == prefix_logits.unsqueeze(2))
-    ).sum(dim=2)
-    prefix_rank = (
-        lower_rank_count.to(torch.float32)
-        + 0.5 * equal_rank_count.to(torch.float32)
-    ) / valid_counts.unsqueeze(1)
-    diagnostics = ProposalShortlistDiagnostics(
-        valid_logit_sum=float(torch.where(flat_valid, logits, 0).sum().item()),
-        valid_logit_count=float(flat_valid.sum().item()),
-        prefix_logit_sum=float(torch.where(prefix_valid, prefix_logits, 0).sum().item()),
-        prefix_count=float(prefix_valid.sum().item()),
-        prefix_rank_sum=float(torch.where(prefix_valid, prefix_rank, 0).sum().item()),
-    )
     return (
         sampled_frontier_idx.to(torch.int16),
         sampled_door_variant_idx.to(torch.int16),
-        diagnostics,
     )
 
 
@@ -1138,23 +1104,6 @@ def run_generation_groups(
             "proposal_evaluated_candidates": 0.0,
             "proposal_rejected_candidates": 0.0,
             "proposal_exhausted_rows": 0.0,
-            "proposal_concrete_candidates": 0.0,
-            "proposal_concrete_clean_candidates": 0.0,
-            "proposal_concrete_rejected_candidates": 0.0,
-            "proposal_cell_candidates": 0.0,
-            "proposal_cell_clean_candidates": 0.0,
-            "proposal_cell_rejected_candidates": 0.0,
-            "proposal_cell_clean_door_invalid_sum": 0.0,
-            "proposal_comparison_mismatches": 0.0,
-            "proposal_shortlist_valid_logit_sum": 0.0,
-            "proposal_shortlist_valid_logit_count": 0.0,
-            "proposal_shortlist_prefix_logit_sum": 0.0,
-            "proposal_shortlist_prefix_count": 0.0,
-            "proposal_shortlist_prefix_rank_sum": 0.0,
-            "proposal_batch_door_invalid_sum": 0.0,
-            "proposal_batch_candidate_count": 0.0,
-            "proposal_selected_door_invalid_sum": 0.0,
-            "proposal_selected_candidate_count": 0.0,
         }
         with torch.no_grad():
             for group in groups:
@@ -1203,27 +1152,11 @@ def run_generation_groups(
                         (
                             sampled_frontier_idx,
                             sampled_door_variant_idx,
-                            shortlist_diagnostics,
                         ) = sample_proposal_shortlist(
                             proposal_scores,
                             proposal_inputs.mask,
                             proposal_step.group.config,
                             device,
-                        )
-                        stat_totals["proposal_shortlist_valid_logit_sum"] += (
-                            shortlist_diagnostics.valid_logit_sum
-                        )
-                        stat_totals["proposal_shortlist_valid_logit_count"] += (
-                            shortlist_diagnostics.valid_logit_count
-                        )
-                        stat_totals["proposal_shortlist_prefix_logit_sum"] += (
-                            shortlist_diagnostics.prefix_logit_sum
-                        )
-                        stat_totals["proposal_shortlist_prefix_count"] += (
-                            shortlist_diagnostics.prefix_count
-                        )
-                        stat_totals["proposal_shortlist_prefix_rank_sum"] += (
-                            shortlist_diagnostics.prefix_rank_sum
                         )
                         sync_profile_device(device, profile)
                         profiler.add("python.proposal.sample_shortlist", profile_time)
@@ -1296,68 +1229,6 @@ def run_generation_groups(
                             )
                             & step.shortlist_limited.to(device)
                         ).sum().item()
-                    )
-                    stat_totals["proposal_concrete_candidates"] += float(
-                        stats.concrete_candidate_counts.sum().item()
-                    )
-                    stat_totals["proposal_concrete_clean_candidates"] += float(
-                        stats.concrete_clean_counts.sum().item()
-                    )
-                    stat_totals["proposal_concrete_rejected_candidates"] += float(
-                        stats.concrete_rejected_counts.sum().item()
-                    )
-                    stat_totals["proposal_cell_candidates"] += float(
-                        stats.proposal_cell_counts.sum().item()
-                    )
-                    stat_totals["proposal_cell_clean_candidates"] += float(
-                        stats.proposal_cell_clean_counts.sum().item()
-                    )
-                    stat_totals["proposal_cell_rejected_candidates"] += float(
-                        stats.proposal_cell_rejected_counts.sum().item()
-                    )
-                    stat_totals["proposal_cell_clean_door_invalid_sum"] += float(
-                        stats.proposal_cell_clean_door_invalid_sums.sum().item()
-                    )
-                    stat_totals["proposal_comparison_mismatches"] += float(
-                        stats.proposal_comparison_mismatch_counts.sum().item()
-                    )
-                    candidate_valid = candidates.room_idx != num_rooms
-                    candidate_door_invalid = (
-                        candidate_batch.post_candidate_outcomes.door_invalid == 1
-                    ).sum(dim=2)
-                    stat_totals["proposal_batch_door_invalid_sum"] += float(
-                        torch.where(
-                            candidate_valid,
-                            candidate_door_invalid,
-                            torch.zeros_like(candidate_door_invalid),
-                        )
-                        .sum()
-                        .item()
-                    )
-                    stat_totals["proposal_batch_candidate_count"] += float(
-                        candidate_valid.sum().item()
-                    )
-                    selected_door_invalid = torch.gather(
-                        candidate_door_invalid,
-                        1,
-                        action_index.unsqueeze(1),
-                    ).squeeze(1)
-                    selected_valid = torch.gather(
-                        candidate_valid,
-                        1,
-                        action_index.unsqueeze(1),
-                    ).squeeze(1)
-                    stat_totals["proposal_selected_door_invalid_sum"] += float(
-                        torch.where(
-                            selected_valid,
-                            selected_door_invalid,
-                            torch.zeros_like(selected_door_invalid),
-                        )
-                        .sum()
-                        .item()
-                    )
-                    stat_totals["proposal_selected_candidate_count"] += float(
-                        selected_valid.sum().item()
                     )
                 group_index = group_index_by_id[id(step.group)]
                 profile_time = profile_start(profile)
@@ -1453,72 +1324,11 @@ def run_generation_groups(
     ) = merge_generation_results(results)
     proposal_rows = max(stat_totals["proposal_mask_rows"], 1.0)
     evaluated = max(stat_totals["proposal_evaluated_candidates"], 1.0)
-    proposal_cells = max(stat_totals["proposal_cell_candidates"], 1.0)
-    shortlist_valid_logits = max(
-        stat_totals["proposal_shortlist_valid_logit_count"], 1.0
-    )
-    shortlist_prefix_count = max(
-        stat_totals["proposal_shortlist_prefix_count"], 1.0
-    )
-    proposal_batch_candidates = max(
-        stat_totals["proposal_batch_candidate_count"], 1.0
-    )
-    proposal_selected_candidates = max(
-        stat_totals["proposal_selected_candidate_count"], 1.0
-    )
-    proposal_cell_clean_candidates = max(
-        stat_totals["proposal_cell_clean_candidates"], 1.0
-    )
-    shortlist_valid_logit = (
-        stat_totals["proposal_shortlist_valid_logit_sum"] / shortlist_valid_logits
-    )
-    shortlist_prefix_logit = (
-        stat_totals["proposal_shortlist_prefix_logit_sum"] / shortlist_prefix_count
-    )
     generation_stats = {
         "proposal_valid_cells": stat_totals["proposal_valid_cells"] / proposal_rows,
         "proposal_full_set_rate": stat_totals["proposal_full_set_rows"] / proposal_rows,
         "proposal_clean_candidates": stat_totals["proposal_clean_candidates"] / proposal_rows,
         "proposal_rejection_rate": stat_totals["proposal_rejected_candidates"] / evaluated,
         "proposal_exhaustion_rate": stat_totals["proposal_exhausted_rows"] / proposal_rows,
-        "proposal_concrete_candidates": stat_totals["proposal_concrete_candidates"]
-        / proposal_rows,
-        "proposal_concrete_clean_candidates": stat_totals[
-            "proposal_concrete_clean_candidates"
-        ]
-        / proposal_rows,
-        "proposal_concrete_rejected_candidates": stat_totals[
-            "proposal_concrete_rejected_candidates"
-        ]
-        / proposal_rows,
-        "proposal_cell_candidates": stat_totals["proposal_cell_candidates"] / proposal_rows,
-        "proposal_cell_clean_candidates": stat_totals["proposal_cell_clean_candidates"]
-        / proposal_rows,
-        "proposal_cell_rejected_candidates": stat_totals[
-            "proposal_cell_rejected_candidates"
-        ]
-        / proposal_rows,
-        "proposal_comparison_mismatch_rate": stat_totals[
-            "proposal_comparison_mismatches"
-        ]
-        / proposal_cells,
-        "proposal_shortlist_prefix_rank": stat_totals[
-            "proposal_shortlist_prefix_rank_sum"
-        ]
-        / shortlist_prefix_count,
-        "proposal_shortlist_prefix_logit_advantage": shortlist_prefix_logit
-        - shortlist_valid_logit,
-        "proposal_batch_door_invalid": stat_totals[
-            "proposal_batch_door_invalid_sum"
-        ]
-        / proposal_batch_candidates,
-        "proposal_selected_door_invalid": stat_totals[
-            "proposal_selected_door_invalid_sum"
-        ]
-        / proposal_selected_candidates,
-        "proposal_full_clean_door_invalid": stat_totals[
-            "proposal_cell_clean_door_invalid_sum"
-        ]
-        / proposal_cell_clean_candidates,
     }
     return episode_data, outcomes, door_match_counts, proposal_data, generation_stats, profiler.report()

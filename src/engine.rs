@@ -257,14 +257,6 @@ enum WorkerCommand {
         clean_counts: OutputShard<usize>,
         evaluated_counts: OutputShard<usize>,
         rejected_counts: OutputShard<usize>,
-        concrete_candidate_counts: OutputShard<usize>,
-        concrete_clean_counts: OutputShard<usize>,
-        concrete_rejected_counts: OutputShard<usize>,
-        proposal_cell_counts: OutputShard<usize>,
-        proposal_cell_clean_counts: OutputShard<usize>,
-        proposal_cell_rejected_counts: OutputShard<usize>,
-        proposal_cell_clean_door_invalid_sums: OutputShard<usize>,
-        proposal_comparison_mismatch_counts: OutputShard<usize>,
     },
     GetActions {
         action_count: usize,
@@ -798,14 +790,6 @@ fn worker_loop(
                 clean_counts,
                 evaluated_counts,
                 rejected_counts,
-                concrete_candidate_counts,
-                concrete_clean_counts,
-                concrete_rejected_counts,
-                proposal_cell_counts,
-                proposal_cell_clean_counts,
-                proposal_cell_rejected_counts,
-                proposal_cell_clean_door_invalid_sums,
-                proposal_comparison_mismatch_counts,
             } => {
                 let sampled_frontier_idx = unsafe { sampled_frontier_idx.into_slice() };
                 let sampled_door_variant_idx = unsafe { sampled_door_variant_idx.into_slice() };
@@ -823,19 +807,6 @@ fn worker_loop(
                 let clean_counts = unsafe { clean_counts.into_mut_slice() };
                 let evaluated_counts = unsafe { evaluated_counts.into_mut_slice() };
                 let rejected_counts = unsafe { rejected_counts.into_mut_slice() };
-                let concrete_candidate_counts =
-                    unsafe { concrete_candidate_counts.into_mut_slice() };
-                let concrete_clean_counts = unsafe { concrete_clean_counts.into_mut_slice() };
-                let concrete_rejected_counts = unsafe { concrete_rejected_counts.into_mut_slice() };
-                let proposal_cell_counts = unsafe { proposal_cell_counts.into_mut_slice() };
-                let proposal_cell_clean_counts =
-                    unsafe { proposal_cell_clean_counts.into_mut_slice() };
-                let proposal_cell_rejected_counts =
-                    unsafe { proposal_cell_rejected_counts.into_mut_slice() };
-                let proposal_cell_clean_door_invalid_sums =
-                    unsafe { proposal_cell_clean_door_invalid_sums.into_mut_slice() };
-                let proposal_comparison_mismatch_counts =
-                    unsafe { proposal_comparison_mismatch_counts.into_mut_slice() };
 
                 debug_assert_eq!(
                     sampled_frontier_idx.len(),
@@ -911,29 +882,6 @@ fn worker_loop(
                     clean_counts[env_idx] = candidates.len();
                     evaluated_counts[env_idx] = evaluated_count;
                     rejected_counts[env_idx] = rejected_count;
-                    match env.compare_proposal_cells_to_concrete_pool(
-                        &common_data,
-                        &features,
-                        frontier_neighbor_algorithm,
-                        frontier_neighbor_count,
-                        frontier_window_size,
-                    ) {
-                        Ok(stats) => {
-                            concrete_candidate_counts[env_idx] = stats.concrete_count;
-                            concrete_clean_counts[env_idx] = stats.concrete_clean_count;
-                            concrete_rejected_counts[env_idx] = stats.concrete_rejected_count;
-                            proposal_cell_counts[env_idx] = stats.proposal_cell_count;
-                            proposal_cell_clean_counts[env_idx] = stats.proposal_clean_count;
-                            proposal_cell_rejected_counts[env_idx] = stats.proposal_rejected_count;
-                            proposal_cell_clean_door_invalid_sums[env_idx] =
-                                stats.proposal_clean_door_invalid_sum;
-                            proposal_comparison_mismatch_counts[env_idx] = stats.mismatch_count;
-                        }
-                        Err(err) => {
-                            consistency_error = Some(err);
-                            break;
-                        }
-                    }
                     let pre_door_start = env_idx * door_outcome_count;
                     for (outcome_idx, outcome) in
                         pre_candidate_outcomes.door_valid.iter().enumerate()
@@ -1581,14 +1529,6 @@ pub struct CandidatesWithOutcomes {
     clean_counts: Py<PyArray1<usize>>,
     evaluated_counts: Py<PyArray1<usize>>,
     rejected_counts: Py<PyArray1<usize>>,
-    concrete_candidate_counts: Py<PyArray1<usize>>,
-    concrete_clean_counts: Py<PyArray1<usize>>,
-    concrete_rejected_counts: Py<PyArray1<usize>>,
-    proposal_cell_counts: Py<PyArray1<usize>>,
-    proposal_cell_clean_counts: Py<PyArray1<usize>>,
-    proposal_cell_rejected_counts: Py<PyArray1<usize>>,
-    proposal_cell_clean_door_invalid_sums: Py<PyArray1<usize>>,
-    proposal_comparison_mismatch_counts: Py<PyArray1<usize>>,
     #[pyo3(get)]
     feature_frontier_count: usize,
     #[pyo3(get)]
@@ -1698,46 +1638,6 @@ impl CandidatesWithOutcomes {
     #[getter]
     fn rejected_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
         self.rejected_counts.clone_ref(py)
-    }
-
-    #[getter]
-    fn concrete_candidate_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.concrete_candidate_counts.clone_ref(py)
-    }
-
-    #[getter]
-    fn concrete_clean_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.concrete_clean_counts.clone_ref(py)
-    }
-
-    #[getter]
-    fn concrete_rejected_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.concrete_rejected_counts.clone_ref(py)
-    }
-
-    #[getter]
-    fn proposal_cell_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.proposal_cell_counts.clone_ref(py)
-    }
-
-    #[getter]
-    fn proposal_cell_clean_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.proposal_cell_clean_counts.clone_ref(py)
-    }
-
-    #[getter]
-    fn proposal_cell_rejected_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.proposal_cell_rejected_counts.clone_ref(py)
-    }
-
-    #[getter]
-    fn proposal_cell_clean_door_invalid_sums(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.proposal_cell_clean_door_invalid_sums.clone_ref(py)
-    }
-
-    #[getter]
-    fn proposal_comparison_mismatch_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.proposal_comparison_mismatch_counts.clone_ref(py)
     }
 }
 
@@ -2721,14 +2621,6 @@ impl EnvironmentGroup {
         let mut clean_counts = vec![0; self.num_environments];
         let mut evaluated_counts = vec![0; self.num_environments];
         let mut rejected_counts = vec![0; self.num_environments];
-        let mut concrete_candidate_counts = vec![0; self.num_environments];
-        let mut concrete_clean_counts = vec![0; self.num_environments];
-        let mut concrete_rejected_counts = vec![0; self.num_environments];
-        let mut proposal_cell_counts = vec![0; self.num_environments];
-        let mut proposal_cell_clean_counts = vec![0; self.num_environments];
-        let mut proposal_cell_rejected_counts = vec![0; self.num_environments];
-        let mut proposal_cell_clean_door_invalid_sums = vec![0; self.num_environments];
-        let mut proposal_comparison_mismatch_counts = vec![0; self.num_environments];
 
         let (feature_frontier_count, sparse_row_count, worker_sparse_row_counts) =
             py.detach(|| {
@@ -2800,30 +2692,6 @@ impl EnvironmentGroup {
                         ),
                         rejected_counts: OutputShard::from_slice(
                             &mut rejected_counts[worker.start..worker.end()],
-                        ),
-                        concrete_candidate_counts: OutputShard::from_slice(
-                            &mut concrete_candidate_counts[worker.start..worker.end()],
-                        ),
-                        concrete_clean_counts: OutputShard::from_slice(
-                            &mut concrete_clean_counts[worker.start..worker.end()],
-                        ),
-                        concrete_rejected_counts: OutputShard::from_slice(
-                            &mut concrete_rejected_counts[worker.start..worker.end()],
-                        ),
-                        proposal_cell_counts: OutputShard::from_slice(
-                            &mut proposal_cell_counts[worker.start..worker.end()],
-                        ),
-                        proposal_cell_clean_counts: OutputShard::from_slice(
-                            &mut proposal_cell_clean_counts[worker.start..worker.end()],
-                        ),
-                        proposal_cell_rejected_counts: OutputShard::from_slice(
-                            &mut proposal_cell_rejected_counts[worker.start..worker.end()],
-                        ),
-                        proposal_cell_clean_door_invalid_sums: OutputShard::from_slice(
-                            &mut proposal_cell_clean_door_invalid_sums[worker.start..worker.end()],
-                        ),
-                        proposal_comparison_mismatch_counts: OutputShard::from_slice(
-                            &mut proposal_comparison_mismatch_counts[worker.start..worker.end()],
                         ),
                     }) {
                         set_first_error(&mut first_error, err);
@@ -2920,18 +2788,6 @@ impl EnvironmentGroup {
             clean_counts: clean_counts.into_pyarray(py).unbind(),
             evaluated_counts: evaluated_counts.into_pyarray(py).unbind(),
             rejected_counts: rejected_counts.into_pyarray(py).unbind(),
-            concrete_candidate_counts: concrete_candidate_counts.into_pyarray(py).unbind(),
-            concrete_clean_counts: concrete_clean_counts.into_pyarray(py).unbind(),
-            concrete_rejected_counts: concrete_rejected_counts.into_pyarray(py).unbind(),
-            proposal_cell_counts: proposal_cell_counts.into_pyarray(py).unbind(),
-            proposal_cell_clean_counts: proposal_cell_clean_counts.into_pyarray(py).unbind(),
-            proposal_cell_rejected_counts: proposal_cell_rejected_counts.into_pyarray(py).unbind(),
-            proposal_cell_clean_door_invalid_sums: proposal_cell_clean_door_invalid_sums
-                .into_pyarray(py)
-                .unbind(),
-            proposal_comparison_mismatch_counts: proposal_comparison_mismatch_counts
-                .into_pyarray(py)
-                .unbind(),
             feature_frontier_count,
             sparse_row_count,
             worker_sparse_row_counts,
@@ -3158,18 +3014,6 @@ impl EnvironmentGroup {
             clean_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
             evaluated_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
             rejected_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            concrete_candidate_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            concrete_clean_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            concrete_rejected_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            proposal_cell_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            proposal_cell_clean_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            proposal_cell_rejected_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            proposal_cell_clean_door_invalid_sums: vec![0; self.num_environments]
-                .into_pyarray(py)
-                .unbind(),
-            proposal_comparison_mismatch_counts: vec![0; self.num_environments]
-                .into_pyarray(py)
-                .unbind(),
             feature_frontier_count,
             sparse_row_count,
             worker_sparse_row_counts,

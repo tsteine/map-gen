@@ -815,8 +815,7 @@ class TrainingSession:
             "conn %.2f (min %s), front %.2f, ss %.3f, "
             "p %.4f, "
             "cand %d, short %d, pv %.1f, clean %.2f, rej %.4f, ex %.4f, "
-            "fs %.3f, old %.1f/%.1f, cell %.1f/%.1f, cmp %.4f, "
-            "pr %.3f, pa %.3f, fd %.2f, bd %.2f, sd %.2f, frac %.4f",
+            "fs %.3f, frac %.4f",
             round_idx,
             loss.total,
             loss.door,
@@ -846,16 +845,6 @@ class TrainingSession:
             generation_stats["proposal_rejection_rate"],
             generation_stats["proposal_exhaustion_rate"],
             generation_stats["proposal_full_set_rate"],
-            generation_stats["proposal_concrete_candidates"],
-            generation_stats["proposal_concrete_clean_candidates"],
-            generation_stats["proposal_cell_candidates"],
-            generation_stats["proposal_cell_clean_candidates"],
-            generation_stats["proposal_comparison_mismatch_rate"],
-            generation_stats["proposal_shortlist_prefix_rank"],
-            generation_stats["proposal_shortlist_prefix_logit_advantage"],
-            generation_stats["proposal_full_clean_door_invalid"],
-            generation_stats["proposal_batch_door_invalid"],
-            generation_stats["proposal_selected_door_invalid"],
             schedule_progress,
         )
         # logging.info(

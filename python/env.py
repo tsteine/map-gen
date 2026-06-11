@@ -166,28 +166,12 @@ class CandidateStats:
     clean_counts: torch.Tensor
     evaluated_counts: torch.Tensor
     rejected_counts: torch.Tensor
-    concrete_candidate_counts: torch.Tensor
-    concrete_clean_counts: torch.Tensor
-    concrete_rejected_counts: torch.Tensor
-    proposal_cell_counts: torch.Tensor
-    proposal_cell_clean_counts: torch.Tensor
-    proposal_cell_rejected_counts: torch.Tensor
-    proposal_cell_clean_door_invalid_sums: torch.Tensor
-    proposal_comparison_mismatch_counts: torch.Tensor
 
     def to(self, device: torch.device) -> "CandidateStats":
         return CandidateStats(
             self.clean_counts.to(device),
             self.evaluated_counts.to(device),
             self.rejected_counts.to(device),
-            self.concrete_candidate_counts.to(device),
-            self.concrete_clean_counts.to(device),
-            self.concrete_rejected_counts.to(device),
-            self.proposal_cell_counts.to(device),
-            self.proposal_cell_clean_counts.to(device),
-            self.proposal_cell_rejected_counts.to(device),
-            self.proposal_cell_clean_door_invalid_sums.to(device),
-            self.proposal_comparison_mismatch_counts.to(device),
         )
 
 
@@ -516,46 +500,6 @@ class EnvironmentGroup:
                     dtype=torch.int64,
                 ),
                 rejected_counts=torch.from_numpy(result.rejected_counts).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                concrete_candidate_counts=torch.from_numpy(result.concrete_candidate_counts).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                concrete_clean_counts=torch.from_numpy(result.concrete_clean_counts).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                concrete_rejected_counts=torch.from_numpy(result.concrete_rejected_counts).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                proposal_cell_counts=torch.from_numpy(result.proposal_cell_counts).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                proposal_cell_clean_counts=torch.from_numpy(
-                    result.proposal_cell_clean_counts
-                ).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                proposal_cell_rejected_counts=torch.from_numpy(
-                    result.proposal_cell_rejected_counts
-                ).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                proposal_cell_clean_door_invalid_sums=torch.from_numpy(
-                    result.proposal_cell_clean_door_invalid_sums
-                ).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                proposal_comparison_mismatch_counts=torch.from_numpy(
-                    result.proposal_comparison_mismatch_counts
-                ).to(
                     device=device,
                     dtype=torch.int64,
                 ),
