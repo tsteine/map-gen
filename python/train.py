@@ -834,8 +834,7 @@ class TrainingSession:
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
             "conn %.2f (min %s), front %.2f, ss %.3f, "
             "p %.4f, "
-            "cand %d, short %d, pv %.1f, clean %.2f, rej %.4f "
-            "ex %.4f, fs %.3f, frac %.4f",
+            "ex %.4f, frac %.4f",
             round_idx,
             loss.total,
             loss.door,
@@ -858,13 +857,7 @@ class TrainingSession:
             scalar(avg_frontiers),
             scalar(door_match_ss),
             scalar(candidate_diagnostics.selected_probability),
-            step_config.generation.recommended_candidates,
-            step_config.generation.shortlist_candidates,
-            generation_stats["proposal_valid_cells"],
-            generation_stats["proposal_clean_candidates"],
-            generation_stats["proposal_rejection_rate"],
             generation_stats["proposal_exhaustion_rate"],
-            generation_stats["proposal_full_set_rate"],
             schedule_progress,
         )
         # logging.info(

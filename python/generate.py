@@ -857,8 +857,8 @@ def select_candidate_actions(
             include_proposal = group.config.recommended_candidates > 0
             preds = model(
                 env_features,
-                include_proposal=include_proposal,
-                return_proposal_state=False,
+                include_proposal=False,
+                return_proposal_state=include_proposal,
             )
         sync_profile_device(device, profile)
         profiler.add("python.score.model_forward", profile_time)
@@ -910,16 +910,23 @@ def select_candidate_actions(
         profile_time = profile_start(profile)
         selected_proposal_scores = None
         if include_proposal:
-            proposal_score = preds.proposal_score.view(
+            proposal_state = preds.proposal_state.view(
                 environment_count,
                 candidate_count,
-                preds.proposal_score.shape[1],
-                preds.proposal_score.shape[2],
+                preds.proposal_state.shape[1],
+                preds.proposal_state.shape[2],
             )
-            selected_proposal_scores = proposal_score[
+            selected_proposal_state = proposal_state[
                 torch.arange(environment_count, device=device),
                 action_index,
             ]
+            with torch.amp.autocast(
+                "cuda",
+                dtype=torch.bfloat16,
+                enabled=device.type == "cuda" and group.config.autocast,
+            ):
+                selected_proposal_scores = model.proposal_output(selected_proposal_state)
+            sync_profile_device(device, profile)
         profiler.add("python.score.cache_proposal", profile_time)
     return action_index, selected_actions, candidate_logits, selected_proposal_scores
 
