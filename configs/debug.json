@@ -1,0 +1,83 @@
+{
+  "experiment_name": "crateria-testing",
+  "room_set": "room_definitions/crateria.json",
+  "map_size": [72, 72],
+  "knot_episodes": [0, 50000, 300000, 2000000],
+  "checkpoint_period": 100,
+  "model": {
+    "compile": false,
+    "autocast": true,
+    "generation_autocast": true,
+    "embedding_width": 256,
+    "global_embedding_width": 256,
+    "hidden_width": 256,
+    "door_match_embedding_width": 64,
+    "num_layers": 2
+  },
+  "optimizer": {
+    "lr": {"log": [0.001, 0.001, 0.001, 0.0001]},
+    "beta1": 0.95,
+    "beta2": 0.99
+  },
+  "balance_model": {
+    "hidden_width": 64,
+    "num_layers": 1
+  },
+  "balance_optimizer": {
+    "lr": {"log": [0.001, 0.0001, 0.00005, 0.00002]},
+    "beta1": 0.95,
+    "beta2": 0.99
+  },
+  "generation": {
+    "num_environments": 1,
+    "num_iterations": 1,
+    "num_devices": 1,
+    "pipeline_groups": 1,
+    "recommended_candidates": {"log": [1, 4, 8, 16]},
+    "shortlist_candidates": {"log": [4, 16, 32, 64]},
+    "temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
+    "proposal_temperature": {"log": [10.0, 1.0, 0.03, 0.03]},
+    "reward_door": 1.0,
+    "reward_connection": 1.0,
+    "reward_balance": 0.2,
+    "reward_frontier": 0.0,
+    "frontier_neighbor_algorithm": "nearest-exclusive",
+    "frontier_neighbor_count": 1,
+    "frontier_window_size": 16,
+    "num_threads": 32
+  },
+  "features": {
+    "inventory": true,
+    "temperature": true,
+    "recommended_candidates": true,
+    "lookahead_outcomes": true,
+    "room_position": true,
+    "frontier_mask": true,
+    "frontier_position": true,
+    "frontier_orientation": true,
+    "frontier_kind": true,
+    "frontier_occupancy": true,
+    "frontier_neighbor": true,
+    "frontier_neighbor_position_embedding": false,
+    "frontier_neighbor_flags": true,
+    "connection_reachability": true,
+    "frontier_connection_reachability": true
+  },
+  "train": {
+    "batch_size": 1,
+    "fresh_pass_factor": 2.0,
+    "replay_pass_factor": 2.0,
+    "sample_period": 16,
+    "episodes_per_file": 64,
+    "ema_decay": 0.995,
+    "hist_c": 3.0,
+    "door_weight": 1.0,
+    "connection_weight": 1.0,
+    "balance_weight": 5.0,
+    "avg_frontiers_weight": 0.01,
+    "proposal_weight": 0.1,
+    "pipeline_groups": 4,
+    "gradient_accumulation_steps": 1,
+    "shuffle_buffer_batches": 16
+  }
+}

@@ -60,7 +60,7 @@ type RustProfileReport = list[tuple[str, int, int]]
 def compute_door_match_count_ss(counts: torch.Tensor, dim: int) -> torch.Tensor:
     totals = torch.sum(counts, dim=dim, keepdim=True)
     if torch.any(totals <= 1):
-        raise RuntimeError("door_match_ss requires at least two samples per row/column")
+        return counts.new_full((), torch.nan)
     return torch.sum(counts * (counts - 1) / (totals * (totals - 1)))
 
 

@@ -630,6 +630,14 @@ def sample_proposal_shortlist(
         :, :proposal_frontier_count, :proposal_door_variant_count
     ]
     environment_count, frontier_count, door_variant_count = valid.shape
+    if frontier_count == 0 or door_variant_count == 0:
+        empty_sampled = torch.full(
+            (environment_count, config.shortlist_candidates),
+            -1,
+            dtype=torch.int16,
+            device=device,
+        )
+        return empty_sampled, empty_sampled
     flat_valid = valid.flatten(1)
     flat_scores = proposal_scores.to(torch.float32).flatten(1)
     logits = flat_scores / config.proposal_temperature.to(device).unsqueeze(1).clamp_min(1e-6)

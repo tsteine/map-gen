@@ -453,7 +453,16 @@ def proposal_batch_loss(
     frontier_idx = frontier_idx.to(device, dtype=torch.int64)
     door_variant_idx = door_variant_idx.to(device, dtype=torch.int64)
     target_logits = target_logits.to(device, dtype=torch.float32)
-    valid = (frontier_idx >= 0) & (door_variant_idx >= 0) & torch.isfinite(target_logits)
+    valid = (
+        (frontier_idx >= 0)
+        & (frontier_idx < proposal_score.shape[1])
+        & (door_variant_idx >= 0)
+        & (door_variant_idx < proposal_score.shape[2])
+        & torch.isfinite(target_logits)
+    )
+    row_valid = torch.any(valid, dim=1)
+    if not torch.any(row_valid):
+        return torch.sum(proposal_score) * 0.0
     safe_frontier_idx = frontier_idx.clamp_min(0)
     safe_door_variant_idx = door_variant_idx.clamp_min(0)
     batch_idx = torch.arange(
@@ -476,9 +485,6 @@ def proposal_batch_loss(
         target_logits,
         torch.full_like(target_logits, float("-inf")),
     )
-    row_valid = torch.any(valid, dim=1)
-    if not torch.any(row_valid):
-        return torch.sum(proposal_score) * 0.0
     row_candidate_logits = candidate_logits[row_valid]
     row_target_logits = target_logits[row_valid]
     row_mask = valid[row_valid]
