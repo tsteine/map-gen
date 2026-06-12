@@ -373,11 +373,10 @@ class FrontierModel(torch.nn.Module):
         ], dim=-1).flatten(1)
         return torch.cat([door_match_features, connection_features], dim=-1)
 
-    def _relative_position_features(self, features):
+    def _relative_position_features(self, features, neighbor):
         if self.frontier_relative_pos_embedding_x is None:
             return None
         node = features.frontier
-        neighbor = features.frontier_neighbor.clamp_min(0).to(torch.int64)
         raw_x = node[:, 1].to(torch.int64)
         raw_y = node[:, 2].to(torch.int64)
         raw_x0, raw_x1 = raw_x.unsqueeze(1), raw_x[neighbor]
@@ -481,12 +480,20 @@ class FrontierModel(torch.nn.Module):
         if row_count == 0:
             mean_pool = max_pool = X.new_zeros([snapshot_count, self.embedding_width])
         else:
+            row_count_by_snapshot = torch.bincount(
+                row_snapshot_idx,
+                minlength=snapshot_count,
+            )
+            row_start_by_snapshot = row_count_by_snapshot.cumsum(0) - row_count_by_snapshot
             # pair: [r, k, pair_width], neighbor: [r, k], pair_mask: [r, k, 1]
             pair = self._pair_features(features, dtype)
-            relative_position = self._relative_position_features(features)
             frontier_neighbor = features.frontier_neighbor
-            neighbor = frontier_neighbor.clamp_min(0).to(torch.int64)
-            pair_mask = (frontier_neighbor >= 0).unsqueeze(-1)
+            local_neighbor = frontier_neighbor.clamp_min(0).to(torch.int64)
+            row_neighbor_count = row_count_by_snapshot[row_snapshot_idx].unsqueeze(1)
+            neighbor_valid = (frontier_neighbor >= 0) & (local_neighbor < row_neighbor_count)
+            neighbor = row_start_by_snapshot[row_snapshot_idx].unsqueeze(1) + local_neighbor
+            pair_mask = neighbor_valid.unsqueeze(-1)
+            relative_position = self._relative_position_features(features, neighbor)
             single_neighbor = neighbor.shape[1] == 1
             if single_neighbor:
                 neighbor = neighbor[:, 0]
@@ -517,10 +524,6 @@ class FrontierModel(torch.nn.Module):
                     messages = messages.sum(1) / pair_count
                 # messages [r, e]
                 X = X + update_layer(torch.cat([X, messages, global_rows], dim=-1))
-            row_count_by_snapshot = torch.bincount(
-                row_snapshot_idx,
-                minlength=snapshot_count,
-            )
             if X.device.type == "cuda":
                 mean_pool = X.new_zeros([snapshot_count, self.embedding_width])
                 mean_pool.index_add_(0, row_snapshot_idx, X)
