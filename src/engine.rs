@@ -36,7 +36,7 @@ const PROFILE_METRIC_NAMES: [&str; PROFILE_METRIC_COUNT] = [
     "worker.get_door_matches",
     "worker.get_features",
     "worker.get_features_after_candidates",
-    "worker.get_sparse_features_after_candidates",
+    "worker.get_sparse_features_after_candidates.unused",
     "worker.get_feature_frontier_count_after_candidates",
     "worker.pack_features",
     "env.step.push_action",
@@ -338,18 +338,6 @@ enum WorkerCommand {
         room_y: InputShard<Coord>,
         outputs: FeatureOutputShards,
     },
-    GetSparseFeaturesAfterCandidates {
-        frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
-        frontier_neighbor_count: usize,
-        frontier_window_size: usize,
-        environment_start: usize,
-        environment_count: usize,
-        candidate_count: usize,
-        room_idx: InputShard<RoomIdx>,
-        room_x: InputShard<Coord>,
-        room_y: InputShard<Coord>,
-        outputs: SparseFeatureOutputShards,
-    },
     GetFeatureFrontierCountAfterCandidates {
         environment_start: usize,
         environment_count: usize,
@@ -381,7 +369,6 @@ impl WorkerCommand {
             WorkerCommand::GetDoorMatches { .. } => Some(7),
             WorkerCommand::GetFeatures { .. } => Some(8),
             WorkerCommand::GetFeaturesAfterCandidates { .. } => Some(9),
-            WorkerCommand::GetSparseFeaturesAfterCandidates { .. } => Some(10),
             WorkerCommand::GetFeatureFrontierCountAfterCandidates { .. } => Some(11),
             WorkerCommand::PackFeatures { .. } => Some(12),
             WorkerCommand::PackSparseFeatures { .. } => Some(12),
@@ -1303,47 +1290,6 @@ fn worker_loop(
                 }
                 WorkerResponse::FeatureInfo(0, 0)
             }
-            WorkerCommand::GetSparseFeaturesAfterCandidates {
-                frontier_neighbor_algorithm,
-                frontier_neighbor_count,
-                frontier_window_size,
-                environment_start,
-                environment_count,
-                candidate_count,
-                room_idx,
-                room_x,
-                room_y,
-                outputs,
-            } => {
-                let room_idx = unsafe { room_idx.into_slice() };
-                let room_x = unsafe { room_x.into_slice() };
-                let room_y = unsafe { room_y.into_slice() };
-                let mut outputs = unsafe { outputs.into_slices() };
-                for (env_idx, env) in environments
-                    .iter_mut()
-                    .skip(environment_start)
-                    .take(environment_count)
-                    .enumerate()
-                {
-                    for candidate_idx in 0..candidate_count {
-                        let idx = env_idx * candidate_count + candidate_idx;
-                        let features = env.features_after_candidate(
-                            &common_data,
-                            Action {
-                                room_idx: room_idx[idx],
-                                x: room_x[idx],
-                                y: room_y[idx],
-                            },
-                            &features,
-                            frontier_neighbor_algorithm,
-                            frontier_neighbor_count,
-                            frontier_window_size,
-                        );
-                        outputs.write_features(idx, &features);
-                    }
-                }
-                WorkerResponse::FeatureInfo(0, outputs.sparse_row_count)
-            }
             WorkerCommand::GetFeatureFrontierCountAfterCandidates {
                 environment_start,
                 environment_count,
@@ -1887,12 +1833,6 @@ impl FeatureOutputSlices<'_> {
     }
 }
 
-struct SparseFeatureBuffers {
-    fixed: FeatureBuffers,
-    sparse: FeatureBuffers,
-    dense_row_idx: Vec<i64>,
-}
-
 struct SparseFeatureOutputShards {
     fixed: FeatureOutputShards,
     sparse: FeatureOutputShards,
@@ -2098,99 +2038,6 @@ impl FeatureBuffers {
     }
 }
 
-impl SparseFeatureBuffers {
-    fn new(
-        common_data: &CommonData,
-        features: &FeatureConfig,
-        snapshot_count: usize,
-        sparse_row_count: usize,
-        frontier_neighbor_count: usize,
-        frontier_window_size: usize,
-    ) -> Self {
-        let sparse_features = FeatureConfig {
-            inventory: false,
-            temperature: false,
-            recommended_candidates: false,
-            room_position: false,
-            connection_reachability: false,
-            ..*features
-        };
-        Self {
-            fixed: FeatureBuffers::new(
-                common_data,
-                features,
-                snapshot_count,
-                0,
-                frontier_neighbor_count,
-                frontier_window_size,
-            ),
-            sparse: FeatureBuffers::new(
-                common_data,
-                &sparse_features,
-                sparse_row_count,
-                1,
-                frontier_neighbor_count,
-                frontier_window_size,
-            ),
-            dense_row_idx: vec![0; sparse_row_count],
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn output_shard(
-        &mut self,
-        snapshot_start: usize,
-        snapshot_count: usize,
-        sparse_row_start: usize,
-        sparse_row_count: usize,
-        inventory_count: usize,
-        room_count: usize,
-        connection_count: usize,
-        dense_frontier_count: usize,
-        frontier_neighbor_count: usize,
-        frontier_window_size: usize,
-        features: &FeatureConfig,
-    ) -> SparseFeatureOutputShards {
-        let sparse_features = FeatureConfig {
-            inventory: false,
-            temperature: false,
-            recommended_candidates: false,
-            room_position: false,
-            connection_reachability: false,
-            ..*features
-        };
-        SparseFeatureOutputShards {
-            fixed: self.fixed.output_shard(
-                snapshot_start,
-                snapshot_count,
-                inventory_count,
-                room_count,
-                connection_count,
-                0,
-                frontier_neighbor_count,
-                frontier_window_size,
-                features,
-            ),
-            sparse: self.sparse.output_shard(
-                sparse_row_start,
-                sparse_row_count,
-                inventory_count,
-                room_count,
-                connection_count,
-                1,
-                frontier_neighbor_count,
-                frontier_window_size,
-                &sparse_features,
-            ),
-            dense_row_idx: OutputShard::from_slice(
-                &mut self.dense_row_idx[sparse_row_start..sparse_row_start + sparse_row_count],
-            ),
-            snapshot_start,
-            dense_frontier_count,
-        }
-    }
-}
-
 impl Drop for EnvironmentGroup {
     fn drop(&mut self) {
         for worker in &mut self.workers {
@@ -2216,10 +2063,6 @@ impl Engine {
             common_data,
             features,
         })
-    }
-
-    fn num_rooms(&self) -> usize {
-        self.common_data.room.len()
     }
 
     #[pyo3(signature = (map_size, num_environments, seed, frontier_neighbor_count, frontier_window_size, num_threads=None, frontier_neighbor_algorithm="delaunay"))]
@@ -3710,290 +3553,6 @@ impl EnvironmentGroup {
                 frontier_count,
                 connection_count * usize::from(self.features.frontier_connection_reachability),
             )?,
-        ))
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn get_sparse_features_after_candidates<'py>(
-        &self,
-        py: Python<'py>,
-        room_idx: PyReadonlyArray2<'py, RoomIdx>,
-        room_x: PyReadonlyArray2<'py, Coord>,
-        room_y: PyReadonlyArray2<'py, Coord>,
-        environment_start: usize,
-    ) -> PyResult<(
-        (
-            Bound<'py, PyArray3<u8>>,
-            Bound<'py, PyArray3<Coord>>,
-            Bound<'py, PyArray3<Coord>>,
-            Bound<'py, PyArray3<u8>>,
-            Bound<'py, PyArray2<i8>>,
-            Bound<'py, PyArray2<u8>>,
-            Bound<'py, PyArray2<i16>>,
-            Bound<'py, PyArray2<u8>>,
-            Bound<'py, PyArray3<u8>>,
-            Bound<'py, PyArray2<u8>>,
-            Bound<'py, PyArray1<i64>>,
-        ),
-        usize,
-    )> {
-        let shape = room_idx.as_array().shape().to_vec();
-        if room_x.as_array().shape() != shape
-            || room_y.as_array().shape() != shape
-            || environment_start + shape[0] > self.num_environments
-        {
-            return Err(PyValueError::new_err(
-                "candidate action arrays must fit within the environment group",
-            ));
-        }
-        let candidate_count = shape[1];
-        let room_idx = room_idx
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_idx must be contiguous"))?;
-        let room_x = room_x
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_x must be contiguous"))?;
-        let room_y = room_y
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_y must be contiguous"))?;
-        let inventory_count = self.common_data.connection_variant_rooms.len();
-        let room_count = self.common_data.room.len();
-        let connection_count = self.common_data.room_connection.len();
-        let environment_count = shape[0];
-        let snapshot_count = environment_count * candidate_count;
-        let (frontier_count, sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
-            let mut sent_workers = Vec::with_capacity(self.workers.len());
-            let mut first_error = None;
-            for (worker_idx, worker) in self.workers.iter().enumerate() {
-                let start = max(environment_start, worker.start);
-                let end = min(environment_start + environment_count, worker.end());
-                if start >= end {
-                    continue;
-                }
-                let environment_count = end - start;
-                let input_start = (start - environment_start) * candidate_count;
-                let len = environment_count * candidate_count;
-                if let Err(err) =
-                    worker.send(WorkerCommand::GetFeatureFrontierCountAfterCandidates {
-                        environment_start: start - worker.start,
-                        environment_count,
-                        candidate_count,
-                        room_idx: InputShard::from_slice(&room_idx[input_start..input_start + len]),
-                        room_x: InputShard::from_slice(&room_x[input_start..input_start + len]),
-                        room_y: InputShard::from_slice(&room_y[input_start..input_start + len]),
-                    })
-                {
-                    set_first_error(&mut first_error, err);
-                    break;
-                }
-                sent_workers.push(worker_idx);
-            }
-            collect_feature_info(&self.workers, sent_workers, first_error)
-        })?;
-        let frontier_count = frontier_count * usize::from(self.features.has_frontier_features());
-        let sparse_row_count =
-            sparse_row_count * usize::from(self.features.has_frontier_features());
-        let mut buffers = SparseFeatureBuffers::new(
-            &self.common_data,
-            &self.features,
-            snapshot_count,
-            sparse_row_count,
-            self.frontier_neighbor_count,
-            self.frontier_window_size,
-        );
-        let (_, actual_sparse_row_count, _) = py.detach(|| {
-            let mut sent_workers = Vec::with_capacity(self.workers.len());
-            let mut first_error = None;
-            let mut sparse_row_start = 0;
-            for (worker_idx, worker) in self.workers.iter().enumerate() {
-                let start = max(environment_start, worker.start);
-                let end = min(environment_start + environment_count, worker.end());
-                if start >= end {
-                    continue;
-                }
-                let snapshot_start = (start - environment_start) * candidate_count;
-                let snapshot_count = (end - start) * candidate_count;
-                let len = snapshot_count;
-                let worker_sparse_row_count = worker_sparse_row_counts[worker_idx]
-                    * usize::from(self.features.has_frontier_features());
-                if let Err(err) = worker.send(WorkerCommand::GetSparseFeaturesAfterCandidates {
-                    frontier_neighbor_algorithm: self.frontier_neighbor_algorithm,
-                    frontier_neighbor_count: self.frontier_neighbor_count,
-                    frontier_window_size: self.frontier_window_size,
-                    environment_start: start - worker.start,
-                    environment_count: end - start,
-                    candidate_count,
-                    room_idx: InputShard::from_slice(
-                        &room_idx[snapshot_start..snapshot_start + len],
-                    ),
-                    room_x: InputShard::from_slice(&room_x[snapshot_start..snapshot_start + len]),
-                    room_y: InputShard::from_slice(&room_y[snapshot_start..snapshot_start + len]),
-                    outputs: buffers.output_shard(
-                        snapshot_start,
-                        snapshot_count,
-                        sparse_row_start,
-                        worker_sparse_row_count,
-                        inventory_count,
-                        room_count,
-                        connection_count,
-                        frontier_count,
-                        self.frontier_neighbor_count,
-                        self.frontier_window_size,
-                        &self.features,
-                    ),
-                }) {
-                    set_first_error(&mut first_error, err);
-                    break;
-                }
-                sent_workers.push(worker_idx);
-                sparse_row_start += worker_sparse_row_count;
-            }
-            collect_feature_info(&self.workers, sent_workers, first_error)
-        })?;
-        if actual_sparse_row_count != sparse_row_count {
-            return Err(PyRuntimeError::new_err(format!(
-                "sparse feature row count changed between passes: expected {sparse_row_count}, got {actual_sparse_row_count}"
-            )));
-        }
-        Ok((
-            (
-                pyarray3_from_flat_vec(
-                    py,
-                    buffers.fixed.inventory,
-                    environment_count,
-                    candidate_count,
-                    inventory_count * usize::from(self.features.inventory),
-                )?,
-                pyarray3_from_flat_vec(
-                    py,
-                    buffers.fixed.room_x,
-                    environment_count,
-                    candidate_count,
-                    room_count * usize::from(self.features.room_position),
-                )?,
-                pyarray3_from_flat_vec(
-                    py,
-                    buffers.fixed.room_y,
-                    environment_count,
-                    candidate_count,
-                    room_count * usize::from(self.features.room_position),
-                )?,
-                pyarray3_from_flat_vec(
-                    py,
-                    buffers.fixed.room_placed,
-                    environment_count,
-                    candidate_count,
-                    room_count * usize::from(self.features.room_position),
-                )?,
-                pyarray2_from_flat_vec(
-                    py,
-                    buffers.sparse.frontier,
-                    sparse_row_count,
-                    FEATURE_FRONTIER_WIDTH,
-                )?,
-                pyarray2_from_flat_vec(
-                    py,
-                    buffers.sparse.frontier_occupancy,
-                    sparse_row_count,
-                    (self.frontier_window_size * self.frontier_window_size).div_ceil(8)
-                        * usize::from(self.features.frontier_occupancy),
-                )?,
-                pyarray2_from_flat_vec(
-                    py,
-                    buffers.sparse.frontier_neighbor,
-                    sparse_row_count,
-                    self.frontier_neighbor_count * usize::from(self.features.frontier_neighbor),
-                )?,
-                pyarray2_from_flat_vec(
-                    py,
-                    buffers.sparse.frontier_neighbor_pair,
-                    sparse_row_count,
-                    self.frontier_neighbor_count
-                        * usize::from(self.features.frontier_neighbor_flags),
-                )?,
-                pyarray3_from_flat_vec(
-                    py,
-                    buffers.fixed.connection_reachability,
-                    environment_count,
-                    candidate_count,
-                    connection_count * usize::from(self.features.connection_reachability),
-                )?,
-                pyarray2_from_flat_vec(
-                    py,
-                    buffers.sparse.frontier_connection_reachability,
-                    sparse_row_count,
-                    connection_count * usize::from(self.features.frontier_connection_reachability),
-                )?,
-                buffers.dense_row_idx.into_pyarray(py),
-            ),
-            frontier_count,
-        ))
-    }
-
-    fn get_sparse_feature_requirements_after_candidates<'py>(
-        &self,
-        py: Python<'py>,
-        room_idx: PyReadonlyArray2<'py, RoomIdx>,
-        room_x: PyReadonlyArray2<'py, Coord>,
-        room_y: PyReadonlyArray2<'py, Coord>,
-        environment_start: usize,
-    ) -> PyResult<(usize, usize, Vec<usize>)> {
-        let shape = room_idx.as_array().shape().to_vec();
-        if room_x.as_array().shape() != shape
-            || room_y.as_array().shape() != shape
-            || environment_start + shape[0] > self.num_environments
-        {
-            return Err(PyValueError::new_err(
-                "candidate action arrays must fit within the environment group",
-            ));
-        }
-        let candidate_count = shape[1];
-        let room_idx = room_idx
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_idx must be contiguous"))?;
-        let room_x = room_x
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_x must be contiguous"))?;
-        let room_y = room_y
-            .as_slice()
-            .map_err(|_| PyValueError::new_err("room_y must be contiguous"))?;
-        let environment_count = shape[0];
-        let (frontier_count, sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
-            let mut sent_workers = Vec::with_capacity(self.workers.len());
-            let mut first_error = None;
-            for (worker_idx, worker) in self.workers.iter().enumerate() {
-                let start = max(environment_start, worker.start);
-                let end = min(environment_start + environment_count, worker.end());
-                if start >= end {
-                    continue;
-                }
-                let environment_count = end - start;
-                let input_start = (start - environment_start) * candidate_count;
-                let len = environment_count * candidate_count;
-                if let Err(err) =
-                    worker.send(WorkerCommand::GetFeatureFrontierCountAfterCandidates {
-                        environment_start: start - worker.start,
-                        environment_count,
-                        candidate_count,
-                        room_idx: InputShard::from_slice(&room_idx[input_start..input_start + len]),
-                        room_x: InputShard::from_slice(&room_x[input_start..input_start + len]),
-                        room_y: InputShard::from_slice(&room_y[input_start..input_start + len]),
-                    })
-                {
-                    set_first_error(&mut first_error, err);
-                    break;
-                }
-                sent_workers.push(worker_idx);
-            }
-            collect_feature_info(&self.workers, sent_workers, first_error)
-        })?;
-        Ok((
-            frontier_count * usize::from(self.features.has_frontier_features()),
-            sparse_row_count * usize::from(self.features.has_frontier_features()),
-            worker_sparse_row_counts
-                .into_iter()
-                .map(|count| count * usize::from(self.features.has_frontier_features()))
-                .collect(),
         ))
     }
 

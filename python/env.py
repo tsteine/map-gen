@@ -364,14 +364,6 @@ class EnvironmentGroup:
     def clear(self):
         self.env.clear()
 
-    def get_initial_action(self, device: torch.device) -> Actions:
-        room_idx, room_x, room_y = self.env.get_initial_action()
-        return Actions(
-            room_idx=torch.from_numpy(room_idx).to(device),
-            room_x=torch.from_numpy(room_x).to(device),
-            room_y=torch.from_numpy(room_y),
-        )
-
     def step(self, actions: Actions):
         self.env.step(
             actions.room_idx.contiguous().cpu().numpy(),
@@ -654,58 +646,6 @@ class EnvironmentGroup:
             include_recommended_candidates,
             lookahead_outcomes,
             include_lookahead_outcomes,
-        )
-
-    def get_sparse_features_after_candidates(
-        self,
-        actions: Actions,
-        device: torch.device,
-        log_temperature: torch.Tensor,
-        include_temperature: bool,
-        log_recommended_candidates: torch.Tensor,
-        include_recommended_candidates: bool,
-        lookahead_outcomes: PreliminaryOutcomes,
-        include_lookahead_outcomes: bool,
-        environment_start: int = 0,
-    ) -> SparseFeatures:
-        values, frontier_count = self.env.get_sparse_features_after_candidates(
-            actions.room_idx.contiguous().cpu().numpy(),
-            actions.room_x.contiguous().cpu().numpy(),
-            actions.room_y.contiguous().cpu().numpy(),
-            environment_start,
-        )
-        return SparseFeatures(
-            *(torch.from_numpy(value).to(device) for value in values[:4]),
-            log_temperature.to(device) if include_temperature else log_temperature.new_empty([
-                log_temperature.shape[0],
-                log_temperature.shape[1],
-                0,
-            ]).to(device),
-            log_recommended_candidates.to(device) if include_recommended_candidates else log_recommended_candidates.new_empty([
-                log_recommended_candidates.shape[0],
-                log_recommended_candidates.shape[1],
-                0,
-            ]).to(device),
-            lookahead_outcomes.door_invalid.to(device)
-            if include_lookahead_outcomes
-            else lookahead_outcomes.door_invalid.new_empty([
-                *lookahead_outcomes.door_invalid.shape[:-1],
-                0,
-            ]).to(device),
-            lookahead_outcomes.door_match.to(device)
-            if include_lookahead_outcomes
-            else lookahead_outcomes.door_match.new_empty([
-                *lookahead_outcomes.door_match.shape[:-1],
-                0,
-            ]).to(device),
-            lookahead_outcomes.connection_invalid.to(device)
-            if include_lookahead_outcomes
-            else lookahead_outcomes.connection_invalid.new_empty([
-                *lookahead_outcomes.connection_invalid.shape[:-1],
-                0,
-            ]).to(device),
-            *(torch.from_numpy(value).to(device) for value in values[4:]),
-            frontier_count,
         )
 
     def finish(self):

@@ -186,17 +186,7 @@ def extract_candidate_features(
             frontier_count,
         ).flatten_candidates()
     if sparse_frontiers:
-        return env.get_sparse_features_after_candidates(
-            candidates,
-            torch.device("cpu"),
-            log_temperature,
-            include_temperature,
-            log_recommended_candidates,
-            include_recommended_candidates,
-            lookahead_outcomes,
-            include_lookahead_outcomes,
-            0,
-        ).flatten_candidates()
+        raise ValueError("sparse candidate features require a pinned feature slot")
     return env.get_features_after_candidates(
         candidates,
         torch.device("cpu"),

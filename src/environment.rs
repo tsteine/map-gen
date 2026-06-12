@@ -55,15 +55,27 @@ enum CandidateUpdate {
 
 impl CandidateUpdate {
     fn builds_candidates(self) -> bool {
-        matches!(self, Self::Build | Self::Lookahead)
+        match self {
+            CandidateUpdate::Build => true,
+            CandidateUpdate::Lookahead => true,
+            CandidateUpdate::Skip => false,
+        }
     }
 
     fn updates_occupancy(self) -> bool {
-        !matches!(self, Self::Lookahead)
+        match self {
+            CandidateUpdate::Lookahead => false,
+            CandidateUpdate::Build => true,
+            CandidateUpdate::Skip => true,
+        }
     }
 
     fn stores_full_candidate_lists(self) -> bool {
-        matches!(self, Self::Build)
+        match self {
+            CandidateUpdate::Build => true,
+            CandidateUpdate::Lookahead => false,
+            CandidateUpdate::Skip => false,
+        }
     }
 }
 
