@@ -32,8 +32,8 @@
     "beta2": 0.99
   },
   "generation": {
-    "num_environments": 2048,
-    "num_iterations": 4,
+    "num_environments": 8192,
+    "num_iterations": 1,
     "num_devices": 2,
     "pipeline_groups": 2,
     "recommended_candidates": 4,
