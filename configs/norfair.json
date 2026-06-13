@@ -54,7 +54,7 @@
     "reward_balance": 0.2,
     "reward_frontier": 0.0,
     "frontier_neighbor_algorithm": "nearest-exclusive",
-    "frontier_neighbor_count": 2,
+    "frontier_neighbor_count": 1,
     "frontier_window_size": 8,
     "num_threads": 32
   },
@@ -70,7 +70,7 @@
     "frontier_kind": true,
     "frontier_occupancy": true,
     "frontier_neighbor": true,
-    "frontier_neighbor_position_embedding": false,
+    "frontier_neighbor_position_embedding": true,
     "frontier_neighbor_flags": true,
     "connection_reachability": true,
     "frontier_connection_reachability": true
