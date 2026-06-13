@@ -65,6 +65,12 @@ def normalize(x: torch.Tensor):
     return torch.nn.functional.rms_norm(x, (x.size(-1),))
 
 
+def activation_dtype(device: torch.device, parameter_dtype: torch.dtype) -> torch.dtype:
+    if device.type == "cuda" and torch.is_autocast_enabled("cuda"):
+        return torch.get_autocast_dtype("cuda")
+    return parameter_dtype
+
+
 class FactorizedOutcomeHead(torch.nn.Module):
     def __init__(self, output_metadata, num_geometry_outcomes, embedding_width):
         super().__init__()
@@ -93,14 +99,14 @@ class FactorizedOutcomeHead(torch.nn.Module):
             pos_embedding_y = torch.nn.functional.normalize(pos_embedding_y.to(torch.float32), dim=-1)
             base_query = geometry_outcome_embedding[self.geometry_outcome_idx]
             base_logits = torch.matmul(state, base_query.transpose(0, 1))
-        x_logits = torch.matmul(state, pos_embedding_x.transpose(0, 1))
-        y_logits = torch.matmul(state, pos_embedding_y.transpose(0, 1))
-        room_logits = torch.gather(x_logits, -1, room_x) + torch.gather(y_logits, -1, room_y)
-        room_logits = torch.where(room_placed, room_logits, 0.0)
-        position_logits = room_logits[..., self.room_idx]
-        return (base_logits + position_logits) * torch.exp(
-            torch.clamp(self.logit_scale, max=math.log(100.0))
-        )
+            x_logits = torch.matmul(state, pos_embedding_x.transpose(0, 1))
+            y_logits = torch.matmul(state, pos_embedding_y.transpose(0, 1))
+            room_logits = torch.gather(x_logits, -1, room_x) + torch.gather(y_logits, -1, room_y)
+            room_logits = torch.where(room_placed, room_logits, 0.0)
+            position_logits = room_logits[..., self.room_idx]
+            return (base_logits + position_logits) * torch.exp(
+                torch.clamp(self.logit_scale.to(torch.float32), max=math.log(100.0))
+            )
 
 
 class FrontierModel(torch.nn.Module):
@@ -311,10 +317,10 @@ class FrontierModel(torch.nn.Module):
             torch.randn([source_count, partner_count + 1, width]) / math.sqrt(width)
         )
 
-    def _position_embedding(self, x, y, embedding_x, embedding_y, offset=0):
+    def _position_embedding(self, x, y, embedding_x, embedding_y, dtype, offset=0):
         x = x.to(torch.int64) + offset
         y = y.to(torch.int64) + offset
-        return embedding_x[x] + embedding_y[y]
+        return embedding_x[x].to(dtype) + embedding_y[y].to(dtype)
 
     def _pair_features(self, features, dtype):
         values = []
@@ -327,8 +333,8 @@ class FrontierModel(torch.nn.Module):
             ], dim=-1))
         return torch.cat(values, dim=-1) if values else None
 
-    def _feature_dtype(self):
-        return next(self.parameters()).dtype
+    def _activation_dtype(self, device: torch.device) -> torch.dtype:
+        return activation_dtype(device, next(self.parameters()).dtype)
 
     def _direction_door_match_features(
         self,
@@ -386,6 +392,7 @@ class FrontierModel(torch.nn.Module):
             raw_y1 - raw_y0,
             self.frontier_relative_pos_embedding_x,
             self.frontier_relative_pos_embedding_y,
+            self._activation_dtype(features.frontier.device),
             COORD_OFFSET,
         )
 
@@ -404,7 +411,7 @@ class FrontierModel(torch.nn.Module):
         row_count = node.shape[0]
         # numeric: [r, numeric_width]
         numeric = []
-        dtype = self._feature_dtype()
+        dtype = self._activation_dtype(node.device)
         if self.features.frontier_occupancy:
             numeric.append(
                 features.frontier_occupancy.unsqueeze(-1)
@@ -429,11 +436,12 @@ class FrontierModel(torch.nn.Module):
                 node[:, 2],
                 self.frontier_pos_embedding_x,
                 self.frontier_pos_embedding_y,
+                dtype,
             )
         if self.orientation_embedding is not None:
-            X = X + self.orientation_embedding(node[:, 3].to(torch.int64))
+            X = X + self.orientation_embedding(node[:, 3].to(torch.int64)).to(dtype)
         if self.kind_embedding is not None:
-            X = X + self.kind_embedding(node[:, 4].to(torch.int64))
+            X = X + self.kind_embedding(node[:, 4].to(torch.int64)).to(dtype)
         # if self.inventory_embedding is not None:
         #     X = X + torch.matmul(
         #         features.inventory.to(torch.float32), self.inventory_embedding
@@ -598,7 +606,7 @@ class FrontierModel(torch.nn.Module):
             self.pos_embedding_x,
             self.pos_embedding_y,
         )
-        avg_frontiers = self.avg_frontiers_output(X).squeeze(-1)
+        avg_frontiers = self.avg_frontiers_output(X).squeeze(-1).to(torch.float32)
         preds = get_predictions(torch.cat([door, connection, balance_score], dim=-1), self.output_sizes)
         return Predictions(
             preds.door_invalid,
@@ -652,7 +660,12 @@ class BalanceModel(torch.nn.Module):
         self.net = torch.nn.Sequential(*layers)
 
     def forward(self, log_temperature: torch.Tensor) -> BalancePredictions:
-        raw = self.net(log_temperature.to(next(self.parameters()).dtype).unsqueeze(-1))
+        parameter_dtype = next(self.parameters()).dtype
+        raw = self.net(
+            log_temperature.to(
+                activation_dtype(log_temperature.device, parameter_dtype)
+            ).unsqueeze(-1)
+        ).to(torch.float32)
         offset = 0
         left_size = self.left_count * self.right_count
         right_size = self.right_count * self.left_count
