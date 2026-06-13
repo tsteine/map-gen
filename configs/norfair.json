@@ -81,7 +81,7 @@
     "replay_pass_factor": 2.0,
     "sample_period": 16,
     "episodes_per_file": 64,
-    "ema_decay": 0.995,
+    "ema_decay": {"linear": [0.95, 0.99, 0.99, 0.99, 0.99]},
     "hist_c": 3.0,
     "door_weight": 1.0,
     "connection_weight": 1.0,

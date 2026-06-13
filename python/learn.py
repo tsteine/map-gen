@@ -86,7 +86,7 @@ class TrainRoundContext:
     loss_config: LossConfig
     experience: ExperienceStorage
     train_batch_prefetcher: object
-    update_ema_model: Callable[[], None]
+    update_ema_model: Callable[[float], None]
     num_rooms: int
     episode_length: int
 
@@ -688,7 +688,7 @@ def train_optimizer_step(context: TrainRoundContext) -> None:
         raise RuntimeError(f"non-finite balance gradient norm: {balance_grad_norm.item()}")
     context.main_optimizer.step()
     context.balance_optimizer.step()
-    context.update_ema_model()
+    context.update_ema_model(context.step_config.train.ema_decay)
 
 
 def train_prepared_batch_group(

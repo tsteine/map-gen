@@ -1,4 +1,5 @@
 from pathlib import Path
+import math
 from typing import Literal
 
 import numpy as np
@@ -113,7 +114,7 @@ class TrainConfig(StrictBaseModel):
     balance_weight: float
     avg_frontiers_weight: float
     proposal_weight: float
-    ema_decay: float
+    ema_decay: ScheduleableFloat
     pipeline_groups: int
     gradient_accumulation_steps: int
     shuffle_buffer_batches: int
@@ -249,6 +250,7 @@ def validate_config(config: Config) -> None:
         raise ValueError("train.proposal_weight must be greater than or equal to zero")
     if config.train.avg_frontiers_weight < 0:
         raise ValueError("train.avg_frontiers_weight must be greater than or equal to zero")
+    validate_ema_decay_config(config.train.ema_decay, "train.ema_decay", config.knot_episodes)
     if (
         config.generation.num_threads is not None
         and config.generation.num_threads % config.train.pipeline_groups != 0
@@ -308,3 +310,26 @@ def validate_muon_params(config: MuonParamsConfig, path: str) -> None:
 def validate_beta(value: float, path: str) -> None:
     if value < 0.0 or value >= 1.0:
         raise ValueError(f"{path} must be greater than or equal to zero and less than one")
+
+
+def validate_ema_decay(value: float, path: str) -> None:
+    if not math.isfinite(value) or value < 0.0 or value >= 1.0:
+        raise ValueError(f"{path} must be finite, greater than or equal to zero, and less than one")
+
+
+def validate_ema_decay_config(value: ScheduleableFloat, path: str, knot_episodes: list[int]) -> None:
+    if isinstance(value, Schedule):
+        if (value.linear is None) == (value.log is None):
+            raise ValueError(f"{path} must have exactly one schedule value: 'linear' or 'log'")
+        values = value.linear if value.linear is not None else value.log
+        if len(values) != len(knot_episodes):
+            raise ValueError(
+                f"{path} has {len(values)} schedule value(s), but knot_episodes has "
+                f"{len(knot_episodes)} knot(s)"
+            )
+        for index, knot_value in enumerate(values):
+            validate_ema_decay(knot_value, f"{path}[{index}]")
+            if value.log is not None and knot_value <= 0.0:
+                raise ValueError(f"{path}[{index}] must be greater than zero for a log schedule")
+        return
+    validate_ema_decay(value, path)

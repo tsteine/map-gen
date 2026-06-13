@@ -707,10 +707,10 @@ class TrainingSession:
         )
         return metadata
 
-    def update_ema_model(self) -> None:
+    def update_ema_model(self, ema_decay: float) -> None:
         with torch.no_grad():
             for ema_param, main_param in zip(self.ema_model.parameters(), self.main_model.parameters()):
-                ema_param.lerp_(main_param, 1.0 - self.config.train.ema_decay)
+                ema_param.lerp_(main_param, 1.0 - ema_decay)
 
     def generate_round(
         self,
@@ -977,6 +977,7 @@ class TrainingSession:
             "reward_connection": step_config.generation.reward_connection,
             "reward_balance": step_config.generation.reward_balance,
             "reward_frontier": step_config.generation.reward_frontier,
+            "ema_decay": step_config.train.ema_decay,
             "avg_frontiers_weight": step_config.train.avg_frontiers_weight,
             "door_match_left_top1": left_topk[0],
             "door_match_left_top2": left_topk[1],
