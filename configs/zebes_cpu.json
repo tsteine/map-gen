@@ -4,7 +4,7 @@
   "map_size": [72, 72],
   "knot_episodes": [0, 100000, 500000, 4000000, 16000000],
   "checkpoint_period": 100,
-  "visualize": 0,
+  "visualize": 1,
   "model": {
     "compile": true,
     "autocast": true,
@@ -41,7 +41,7 @@
     "beta2": 0.99
   },
   "generation": {
-    "num_environments": 4,
+    "num_environments": 1,
     "num_iterations": 1,
     "num_devices": 1,
     "pipeline_groups": 1,

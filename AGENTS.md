@@ -24,3 +24,5 @@
   make assumptions based on the local development environment.
 - Activate the "map-gen" conda environment before running Python.
 - Do not bother removing or clearing `python/__pycache__`.
+- Ask for confirmation before diving into making changes, unless the desired
+  change is already clear from the user's request.

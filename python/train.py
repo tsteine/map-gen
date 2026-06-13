@@ -16,6 +16,7 @@ import safetensors.torch
 import torch
 import map_gen
 from aim import Run
+from aim.sdk.errors import MissingRunError
 from safetensors import safe_open
 
 from env import (
@@ -1327,6 +1328,21 @@ def create_generation_process_executors(
     ]
 
 
+def open_or_create_aim_run(run_hash: str, experiment_name: str) -> Run:
+    try:
+        return Run(
+            run_hash,
+            experiment=experiment_name,
+            system_tracking_interval=None,
+        )
+    except MissingRunError:
+        logging.warning(
+            "Checkpoint references missing Aim run %s; creating a new Aim run.",
+            run_hash,
+        )
+        return Run(experiment=experiment_name, system_tracking_interval=None)
+
+
 def build_session(args: Args) -> TrainingSession:
     config = Config.model_validate_json(args.config.read_text())
     validate_config(config)
@@ -1405,10 +1421,9 @@ def build_session(args: Args) -> TrainingSession:
     )
     if args.load_checkpoint is not None:
         checkpoint_metadata = session.load_checkpoint(args.load_checkpoint)
-        aim_run = Run(
+        aim_run = open_or_create_aim_run(
             checkpoint_metadata["aim_run_hash"],
-            experiment=config.experiment_name,
-            system_tracking_interval=None,
+            config.experiment_name,
         )
     else:
         aim_run = Run(experiment=config.experiment_name, system_tracking_interval=None)
