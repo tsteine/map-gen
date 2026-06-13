@@ -22,6 +22,8 @@ class Predictions:
     door_invalid: torch.Tensor
     # log-odds of invalid connection (lack of return path):
     connection_invalid: torch.Tensor
+    # log-odds of invalid Toilet crossing count:
+    toilet_invalid: torch.Tensor
     # Predicted balance-model log-odds for the matched target door:
     balance_score: torch.Tensor
     # Predicted average live frontier count across the full episode:
@@ -52,7 +54,8 @@ def get_predictions(raw_preds, output_sizes):
     return Predictions(
         door_invalid=preds[0],
         connection_invalid=preds[1],
-        balance_score=preds[2],
+        toilet_invalid=preds[2].squeeze(-1),
+        balance_score=preds[3],
         avg_frontiers=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1]]),
         proposal_score=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_state=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
@@ -141,6 +144,7 @@ class FrontierModel(torch.nn.Module):
         self.output_sizes = (
             door_output_size,
             connection_output_size,
+            1,
             door_output_size,
         )
         if sum(door_counts) != door_output_size:
@@ -214,6 +218,7 @@ class FrontierModel(torch.nn.Module):
             + (
                 door_match_embedding_width
                 + 2 * connection_output_size
+                + 2
             ) * int(self.features.lookahead_outcomes)
         )
         self.global_mlp = (
@@ -234,6 +239,7 @@ class FrontierModel(torch.nn.Module):
             + (
                 door_match_embedding_width
                 + 2 * connection_output_size
+                + 2
             ) * int(self.features.lookahead_outcomes)
         )
         self.pooled_mlp = torch.nn.Sequential(
@@ -295,6 +301,7 @@ class FrontierModel(torch.nn.Module):
             output_metadata.door, output_metadata.num_door_variants, embedding_width)
         self.connection_output = FactorizedOutcomeHead(
             output_metadata.connection, output_metadata.num_connection_variants, embedding_width)
+        self.toilet_output = torch.nn.Linear(embedding_width, 1)
         self.balance_score_output = FactorizedOutcomeHead(
             output_metadata.door, output_metadata.num_door_variants, embedding_width)
         self.avg_frontiers_output = torch.nn.Linear(embedding_width, 1)
@@ -377,7 +384,11 @@ class FrontierModel(torch.nn.Module):
             (features.lookahead_connection_invalid == 0).to(dtype),
             (features.lookahead_connection_invalid == 1).to(dtype),
         ], dim=-1).flatten(1)
-        return torch.cat([door_match_features, connection_features], dim=-1)
+        toilet_features = torch.stack([
+            (features.lookahead_toilet_invalid == 0).to(dtype),
+            (features.lookahead_toilet_invalid == 1).to(dtype),
+        ], dim=-1).flatten(1)
+        return torch.cat([door_match_features, connection_features, toilet_features], dim=-1)
 
     def _relative_position_features(self, features, neighbor):
         if self.frontier_relative_pos_embedding_x is None:
@@ -598,6 +609,7 @@ class FrontierModel(torch.nn.Module):
         X = pooled_state.unsqueeze(1)
         door = self.door_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
         connection = self.connection_output(X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y)
+        toilet = self.toilet_output(X)
         balance_score = self.balance_score_output(
             X,
             room_x,
@@ -607,10 +619,11 @@ class FrontierModel(torch.nn.Module):
             self.pos_embedding_y,
         )
         avg_frontiers = self.avg_frontiers_output(X).squeeze(-1).to(torch.float32)
-        preds = get_predictions(torch.cat([door, connection, balance_score], dim=-1), self.output_sizes)
+        preds = get_predictions(torch.cat([door, connection, toilet, balance_score], dim=-1), self.output_sizes)
         return Predictions(
             preds.door_invalid,
             preds.connection_invalid,
+            preds.toilet_invalid,
             preds.balance_score,
             avg_frontiers,
             proposal_score,

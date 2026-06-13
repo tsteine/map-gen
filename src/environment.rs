@@ -172,6 +172,8 @@ fn introduces_invalid_outcome(before: &PreliminaryOutcomes, after: &PreliminaryO
             .any(|(&before, &after)| {
                 before == DoorValidOutcome::Unknown && after == DoorValidOutcome::Invalid
             })
+        || (before.toilet_valid == DoorValidOutcome::Unknown
+            && after.toilet_valid == DoorValidOutcome::Invalid)
 }
 
 enum CandidateOutcome {
@@ -226,6 +228,8 @@ pub struct PreliminaryOutcomes {
     pub door_valid: Vec<DoorValidOutcome>,
     // For each connection, whether its destination can reach its source.
     pub connections_valid: Vec<DoorValidOutcome>,
+    // Whether the Toilet crosses exactly one room.
+    pub toilet_valid: DoorValidOutcome,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -1613,6 +1617,19 @@ impl Environment {
         }
         profile_end(PROFILE_PROPOSAL_CONNECTION_OUTCOMES, profile);
 
+        let toilet_valid = if pre_candidate_outcomes.toilet_valid == DoorValidOutcome::Unknown {
+            let after = self.toilet_outcome(common);
+            if after == DoorValidOutcome::Invalid {
+                let profile = profile_start();
+                self.restore_lookahead_candidate(snapshot);
+                profile_end(PROFILE_PROPOSAL_RESTORE, profile);
+                return Ok(CandidateOutcome::Rejected);
+            }
+            after
+        } else {
+            pre_candidate_outcomes.toilet_valid
+        };
+
         let profile = profile_start();
         let features = self.features_for_applied_candidate(
             common,
@@ -1626,6 +1643,7 @@ impl Environment {
         let outcomes = PreliminaryOutcomes {
             door_valid: door_valid.clone(),
             connections_valid: connections_valid.clone(),
+            toilet_valid,
         };
         let profile = profile_start();
         let door_match = self.door_match_feature(common, &outcomes);
@@ -2320,6 +2338,45 @@ impl Environment {
         PreliminaryOutcomes {
             door_valid,
             connections_valid,
+            toilet_valid: self.toilet_outcome(common),
+        }
+    }
+
+    fn toilet_outcome(&self, common: &CommonData) -> DoorValidOutcome {
+        let Some(toilet_room_idx) = common.toilet_room_idx() else {
+            return DoorValidOutcome::Valid;
+        };
+        if !self.room_used[toilet_room_idx as usize] {
+            return if self.finished {
+                DoorValidOutcome::Invalid
+            } else {
+                DoorValidOutcome::Unknown
+            };
+        }
+
+        let toilet_x = self.room_x[toilet_room_idx as usize];
+        let toilet_y = self.room_y[toilet_room_idx as usize];
+        let mut crossing_count = 0;
+        for action in &self.actions {
+            if action.room_idx == toilet_room_idx {
+                continue;
+            }
+            if room_crosses_toilet(common, *action, toilet_x, toilet_y) {
+                crossing_count += 1;
+                if crossing_count > 1 {
+                    return DoorValidOutcome::Invalid;
+                }
+            }
+        }
+
+        if self.finished {
+            if crossing_count == 1 {
+                DoorValidOutcome::Valid
+            } else {
+                DoorValidOutcome::Invalid
+            }
+        } else {
+            DoorValidOutcome::Unknown
         }
     }
 
@@ -2401,6 +2458,12 @@ impl Environment {
                 "connection",
                 stage,
             )?;
+            check_outcome_transition_consistency(
+                &[known_outcomes.toilet_valid],
+                &[outcomes.toilet_valid],
+                "toilet",
+                stage,
+            )?;
         }
         self.known_outcomes = Some(merge_known_outcomes(
             self.known_outcomes.as_ref(),
@@ -2423,6 +2486,45 @@ fn merge_known_outcomes(
             &known.connections_valid,
             &current.connections_valid,
         ),
+        toilet_valid: merge_known_outcome_value(known.toilet_valid, current.toilet_valid),
+    }
+}
+
+fn room_crosses_toilet(
+    common: &CommonData,
+    action: Action,
+    toilet_x: Coord,
+    toilet_y: Coord,
+) -> bool {
+    if action.room_idx >= common.room.len() as RoomIdx {
+        return false;
+    }
+    let geometry_idx = common.room[action.room_idx as usize].geometry_idx;
+    let geometry = &common.geometry[geometry_idx as usize];
+    let crossing_x = toilet_x - action.x;
+    if crossing_x < 0 || crossing_x >= geometry.map[0].len() as Coord {
+        return false;
+    }
+    for open_y in 2..=7 {
+        let room_y = toilet_y + open_y - action.y;
+        if room_y >= 0
+            && room_y < geometry.map.len() as Coord
+            && geometry.map[room_y as usize][crossing_x as usize] != 0
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn merge_known_outcome_value(
+    known: DoorValidOutcome,
+    current: DoorValidOutcome,
+) -> DoorValidOutcome {
+    if known == DoorValidOutcome::Unknown {
+        current
+    } else {
+        known
     }
 }
 
@@ -2520,6 +2622,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -2580,6 +2683,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
@@ -2589,6 +2693,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
@@ -2635,6 +2740,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
@@ -2704,6 +2810,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
@@ -2713,6 +2820,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
@@ -2818,20 +2926,24 @@ mod tests {
             &PreliminaryOutcomes {
                 door_valid: vec![Unknown],
                 connections_valid: vec![Valid],
+                toilet_valid: Valid,
             },
             &PreliminaryOutcomes {
                 door_valid: vec![Invalid],
                 connections_valid: vec![Valid],
+                toilet_valid: Valid,
             },
         ));
         assert!(!introduces_invalid_outcome(
             &PreliminaryOutcomes {
                 door_valid: vec![Invalid],
                 connections_valid: vec![Unknown],
+                toilet_valid: Unknown,
             },
             &PreliminaryOutcomes {
                 door_valid: vec![Invalid],
                 connections_valid: vec![Valid],
+                toilet_valid: Unknown,
             },
         ));
     }
@@ -2972,6 +3084,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
@@ -2981,6 +3094,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3035,6 +3149,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3043,6 +3158,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3051,6 +3167,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3059,6 +3176,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3129,6 +3247,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
@@ -3161,6 +3280,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
@@ -3204,6 +3324,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
@@ -3213,6 +3334,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3260,6 +3382,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
@@ -3269,6 +3392,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3277,6 +3401,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "up", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3311,6 +3436,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
@@ -3320,6 +3446,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3378,6 +3505,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
@@ -3388,6 +3516,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3480,6 +3609,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
@@ -3490,6 +3620,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3532,6 +3663,7 @@ mod tests {
         [
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
@@ -3542,6 +3674,7 @@ mod tests {
             },
             {
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
@@ -3636,6 +3769,7 @@ mod tests {
             r#"
             [{
                 "map": [[1]],
+                "toilet_crossing_x": [],
                 "doors": [
                     [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
                     [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
@@ -3670,7 +3804,7 @@ mod tests {
     #[test]
     fn disabled_features_skip_candidate_simulation() {
         let rooms: Vec<Room> = serde_json::from_str(
-            r#"[{"map": [[1]], "doors": [], "connections": [], "missing_connections": []}]"#,
+            r#"[{"map": [[1]], "toilet_crossing_x": [], "doors": [], "connections": [], "missing_connections": []}]"#,
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
@@ -3688,5 +3822,166 @@ mod tests {
             4,
         );
         assert_eq!(features, Features::default());
+    }
+
+    fn toilet_outcome_test_common() -> CommonData {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1], [1]],
+                    "toilet_crossing_x": [],
+                    "doors": [],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1], [1]],
+                    "toilet_crossing_x": [],
+                    "doors": [],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1], [1], [0], [0], [0], [0], [0], [0], [1], [1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "toilet",
+                    "doors": [],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        CommonData::new(rooms).unwrap()
+    }
+
+    #[test]
+    fn toilet_outcome_is_valid_without_toilet_room() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"[{"map": [[1]], "toilet_crossing_x": [], "doors": [], "connections": [], "missing_connections": []}]"#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let env = Environment::new(&common, (8, 12), 0);
+
+        assert_eq!(env.outcomes(&common).toilet_valid, DoorValidOutcome::Valid);
+    }
+
+    #[test]
+    fn toilet_outcome_requires_exactly_one_crossing_at_finish() {
+        let common = toilet_outcome_test_common();
+        let mut env = Environment::new(&common, (8, 12), 0);
+        env.step_known(
+            Action {
+                room_idx: 2,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        assert_eq!(
+            env.outcomes(&common).toilet_valid,
+            DoorValidOutcome::Unknown
+        );
+        env.finish();
+        assert_eq!(
+            env.outcomes(&common).toilet_valid,
+            DoorValidOutcome::Invalid
+        );
+
+        let mut env = Environment::new(&common, (8, 12), 0);
+        env.step_known(
+            Action {
+                room_idx: 2,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 2,
+            },
+            &common,
+        );
+        assert_eq!(
+            env.outcomes(&common).toilet_valid,
+            DoorValidOutcome::Unknown
+        );
+        env.finish();
+        assert_eq!(env.outcomes(&common).toilet_valid, DoorValidOutcome::Valid);
+    }
+
+    #[test]
+    fn toilet_outcome_is_invalid_after_second_crossing() {
+        let common = toilet_outcome_test_common();
+        let mut env = Environment::new(&common, (8, 12), 0);
+        env.step_known(
+            Action {
+                room_idx: 2,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 2,
+            },
+            &common,
+        );
+
+        let (outcomes, _) = env.outcomes_after_candidate(
+            &common,
+            Action {
+                room_idx: 1,
+                x: 0,
+                y: 4,
+            },
+        );
+        assert_eq!(outcomes.toilet_valid, DoorValidOutcome::Invalid);
+
+        env.step_known(
+            Action {
+                room_idx: 1,
+                x: 0,
+                y: 4,
+            },
+            &common,
+        );
+        assert_eq!(
+            env.outcomes(&common).toilet_valid,
+            DoorValidOutcome::Invalid
+        );
+    }
+
+    #[test]
+    fn toilet_outcome_ignores_dummy_candidate() {
+        let common = toilet_outcome_test_common();
+        let mut env = Environment::new(&common, (8, 12), 0);
+        env.step_known(
+            Action {
+                room_idx: 2,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+
+        let (outcomes, _) = env.outcomes_after_candidate(
+            &common,
+            Action {
+                room_idx: common.room.len() as RoomIdx,
+                x: 0,
+                y: 0,
+            },
+        );
+        assert_eq!(outcomes.toilet_valid, DoorValidOutcome::Invalid);
     }
 }

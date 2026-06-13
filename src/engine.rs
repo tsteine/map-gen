@@ -231,8 +231,10 @@ enum WorkerCommand {
         connection_outcome_count: usize,
         pre_door_valid: OutputShard<i8>,
         pre_connections_valid: OutputShard<i8>,
+        pre_toilet_valid: OutputShard<i8>,
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
+        toilet_valid: OutputShard<i8>,
         door_match: OutputShard<i16>,
     },
     GetProposalCandidateMask {
@@ -259,8 +261,10 @@ enum WorkerCommand {
         connection_outcome_count: usize,
         pre_door_valid: OutputShard<i8>,
         pre_connections_valid: OutputShard<i8>,
+        pre_toilet_valid: OutputShard<i8>,
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
+        toilet_valid: OutputShard<i8>,
         door_match: OutputShard<i16>,
         clean_counts: OutputShard<usize>,
         evaluated_counts: OutputShard<usize>,
@@ -278,6 +282,7 @@ enum WorkerCommand {
         verify_consistency: bool,
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
+        toilet_valid: OutputShard<i8>,
         avg_frontiers: OutputShard<f32>,
     },
     GetOutcomesAfterCandidates {
@@ -291,6 +296,7 @@ enum WorkerCommand {
         connection_outcome_count: usize,
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
+        toilet_valid: OutputShard<i8>,
         door_match: OutputShard<i16>,
     },
     GetDoorMatchCounts {
@@ -510,8 +516,10 @@ fn worker_loop(
                 connection_outcome_count,
                 pre_door_valid,
                 pre_connections_valid,
+                pre_toilet_valid,
                 door_valid,
                 connections_valid,
+                toilet_valid,
                 door_match,
             } => {
                 // SAFETY: The main thread guarantees that for the duration of this command,
@@ -526,8 +534,10 @@ fn worker_loop(
                     unsafe { proposal_door_variant_idx.into_mut_slice() };
                 let pre_door_valid = unsafe { pre_door_valid.into_mut_slice() };
                 let pre_connections_valid = unsafe { pre_connections_valid.into_mut_slice() };
+                let pre_toilet_valid = unsafe { pre_toilet_valid.into_mut_slice() };
                 let door_valid = unsafe { door_valid.into_mut_slice() };
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
+                let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
                 let door_match = unsafe { door_match.into_mut_slice() };
                 let max_candidates = recommended_candidates + exploration_candidates;
                 debug_assert_eq!(room_idx.len(), environments.len() * max_candidates);
@@ -550,6 +560,7 @@ fn worker_loop(
                     pre_connections_valid.len(),
                     environments.len() * connection_outcome_count
                 );
+                debug_assert_eq!(pre_toilet_valid.len(), environments.len());
                 debug_assert_eq!(
                     door_valid.len(),
                     environments.len() * max_candidates * door_outcome_count
@@ -558,6 +569,7 @@ fn worker_loop(
                     connections_valid.len(),
                     environments.len() * max_candidates * connection_outcome_count
                 );
+                debug_assert_eq!(toilet_valid.len(), environments.len() * max_candidates);
                 debug_assert_eq!(
                     door_match.len(),
                     environments.len() * max_candidates * door_outcome_count
@@ -612,6 +624,7 @@ fn worker_loop(
                     {
                         pre_connections_valid[pre_connection_start + outcome_idx] = *outcome as i8;
                     }
+                    pre_toilet_valid[env_idx] = outcome_to_i8(pre_candidate_outcomes.toilet_valid);
                     let row_start = env_idx * max_candidates;
                     let dummy_outcome = if candidates.len() < max_candidates {
                         Some(PreliminaryOutcomes {
@@ -620,6 +633,7 @@ fn worker_loop(
                                 DoorValidOutcome::Unknown;
                                 connection_outcome_count
                             ],
+                            toilet_valid: DoorValidOutcome::Unknown,
                         })
                     } else {
                         None
@@ -684,6 +698,7 @@ fn worker_loop(
                         {
                             *dst = outcome as i8;
                         }
+                        toilet_valid[idx] = outcome_to_i8(outcome.toilet_valid);
                         for (dst, &value) in door_match[door_start..door_end]
                             .iter_mut()
                             .zip(match_values)
@@ -751,8 +766,10 @@ fn worker_loop(
                 connection_outcome_count,
                 pre_door_valid,
                 pre_connections_valid,
+                pre_toilet_valid,
                 door_valid,
                 connections_valid,
+                toilet_valid,
                 door_match,
                 clean_counts,
                 evaluated_counts,
@@ -768,8 +785,10 @@ fn worker_loop(
                     unsafe { proposal_door_variant_idx.into_mut_slice() };
                 let pre_door_valid = unsafe { pre_door_valid.into_mut_slice() };
                 let pre_connections_valid = unsafe { pre_connections_valid.into_mut_slice() };
+                let pre_toilet_valid = unsafe { pre_toilet_valid.into_mut_slice() };
                 let door_valid = unsafe { door_valid.into_mut_slice() };
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
+                let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
                 let door_match = unsafe { door_match.into_mut_slice() };
                 let clean_counts = unsafe { clean_counts.into_mut_slice() };
                 let evaluated_counts = unsafe { evaluated_counts.into_mut_slice() };
@@ -802,6 +821,7 @@ fn worker_loop(
                     pre_connections_valid.len(),
                     environments.len() * connection_outcome_count
                 );
+                debug_assert_eq!(pre_toilet_valid.len(), environments.len());
                 debug_assert_eq!(
                     door_valid.len(),
                     environments.len() * recommended_candidates * door_outcome_count
@@ -809,6 +829,10 @@ fn worker_loop(
                 debug_assert_eq!(
                     connections_valid.len(),
                     environments.len() * recommended_candidates * connection_outcome_count
+                );
+                debug_assert_eq!(
+                    toilet_valid.len(),
+                    environments.len() * recommended_candidates
                 );
                 debug_assert_eq!(
                     door_match.len(),
@@ -860,6 +884,7 @@ fn worker_loop(
                     {
                         pre_connections_valid[pre_connection_start + outcome_idx] = *outcome as i8;
                     }
+                    pre_toilet_valid[env_idx] = outcome_to_i8(pre_candidate_outcomes.toilet_valid);
                     let row_start = env_idx * recommended_candidates;
                     let dummy_outcome = if candidates.len() < recommended_candidates {
                         Some(PreliminaryOutcomes {
@@ -868,6 +893,7 @@ fn worker_loop(
                                 DoorValidOutcome::Unknown;
                                 connection_outcome_count
                             ],
+                            toilet_valid: DoorValidOutcome::Unknown,
                         })
                     } else {
                         None
@@ -932,6 +958,7 @@ fn worker_loop(
                         {
                             *dst = outcome as i8;
                         }
+                        toilet_valid[idx] = outcome_to_i8(outcome.toilet_valid);
                         for (dst, &value) in door_match[door_start..door_end]
                             .iter_mut()
                             .zip(match_values)
@@ -988,18 +1015,21 @@ fn worker_loop(
                 verify_consistency,
                 door_valid,
                 connections_valid,
+                toilet_valid,
                 avg_frontiers,
             } => {
                 // SAFETY: The main thread guarantees that for the duration of this command,
                 // the output slices remain valid and that no other thread accesses them.
                 let door_valid = unsafe { door_valid.into_mut_slice() };
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
+                let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
                 let avg_frontiers = unsafe { avg_frontiers.into_mut_slice() };
                 debug_assert_eq!(door_valid.len(), environments.len() * door_outcome_count);
                 debug_assert_eq!(
                     connections_valid.len(),
                     environments.len() * connection_outcome_count
                 );
+                debug_assert_eq!(toilet_valid.len(), environments.len());
                 debug_assert_eq!(avg_frontiers.len(), environments.len());
 
                 let mut consistency_error = None;
@@ -1041,6 +1071,7 @@ fn worker_loop(
                             DoorValidOutcome::Invalid => 1,
                         };
                     }
+                    toilet_valid[env_idx] = outcome_to_i8(outcomes.toilet_valid);
                 }
                 match consistency_error {
                     Some(err) => WorkerResponse::Error(err),
@@ -1058,6 +1089,7 @@ fn worker_loop(
                 connection_outcome_count,
                 door_valid,
                 connections_valid,
+                toilet_valid,
                 door_match,
             } => {
                 // SAFETY: The main thread guarantees that for the duration of this command,
@@ -1068,6 +1100,7 @@ fn worker_loop(
                 let room_y = unsafe { room_y.into_slice() };
                 let door_valid = unsafe { door_valid.into_mut_slice() };
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
+                let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
                 let door_match = unsafe { door_match.into_mut_slice() };
                 debug_assert_eq!(room_idx.len(), environment_count * candidate_count);
                 debug_assert_eq!(room_x.len(), environment_count * candidate_count);
@@ -1080,6 +1113,7 @@ fn worker_loop(
                     connections_valid.len(),
                     environment_count * candidate_count * connection_outcome_count
                 );
+                debug_assert_eq!(toilet_valid.len(), environment_count * candidate_count);
                 debug_assert_eq!(
                     door_match.len(),
                     environment_count * candidate_count * door_outcome_count
@@ -1127,6 +1161,7 @@ fn worker_loop(
                                 DoorValidOutcome::Invalid => 1,
                             };
                         }
+                        toilet_valid[input_idx] = outcome_to_i8(outcomes.toilet_valid);
                     }
                 }
                 WorkerResponse::Done
@@ -1394,8 +1429,10 @@ pub struct CandidatesWithOutcomes {
     proposal_door_variant_idx: Py<PyArray2<DoorVariantIdx>>,
     pre_door_valid: Py<PyArray2<i8>>,
     pre_connections_valid: Py<PyArray2<i8>>,
+    pre_toilet_valid: Py<PyArray1<i8>>,
     door_valid: Py<PyArray3<i8>>,
     connections_valid: Py<PyArray3<i8>>,
+    toilet_valid: Py<PyArray2<i8>>,
     door_match: Py<PyArray3<i16>>,
     clean_counts: Py<PyArray1<usize>>,
     evaluated_counts: Py<PyArray1<usize>>,
@@ -1421,6 +1458,7 @@ pub struct ProposalCandidateMask {
 pub struct EpisodeOutcomes {
     door_valid: Py<PyArray2<i8>>,
     connections_valid: Py<PyArray2<i8>>,
+    toilet_valid: Py<PyArray1<i8>>,
     avg_frontiers: Py<PyArray1<f32>>,
 }
 
@@ -1434,6 +1472,11 @@ impl EpisodeOutcomes {
     #[getter]
     fn connections_valid(&self, py: Python<'_>) -> Py<PyArray2<i8>> {
         self.connections_valid.clone_ref(py)
+    }
+
+    #[getter]
+    fn toilet_valid(&self, py: Python<'_>) -> Py<PyArray1<i8>> {
+        self.toilet_valid.clone_ref(py)
     }
 
     #[getter]
@@ -1480,6 +1523,11 @@ impl CandidatesWithOutcomes {
     }
 
     #[getter]
+    fn pre_toilet_valid(&self, py: Python<'_>) -> Py<PyArray1<i8>> {
+        self.pre_toilet_valid.clone_ref(py)
+    }
+
+    #[getter]
     fn door_valid(&self, py: Python<'_>) -> Py<PyArray3<i8>> {
         self.door_valid.clone_ref(py)
     }
@@ -1487,6 +1535,11 @@ impl CandidatesWithOutcomes {
     #[getter]
     fn connections_valid(&self, py: Python<'_>) -> Py<PyArray3<i8>> {
         self.connections_valid.clone_ref(py)
+    }
+
+    #[getter]
+    fn toilet_valid(&self, py: Python<'_>) -> Py<PyArray2<i8>> {
+        self.toilet_valid.clone_ref(py)
     }
 
     #[getter]
@@ -1536,6 +1589,14 @@ fn output_sizes(common_data: &CommonData) -> (usize, usize) {
         .sum();
     let connection_outcome_count = common_data.room_connection.len();
     (door_outcome_count, connection_outcome_count)
+}
+
+fn outcome_to_i8(outcome: DoorValidOutcome) -> i8 {
+    match outcome {
+        DoorValidOutcome::Unknown => -1,
+        DoorValidOutcome::Valid => 0,
+        DoorValidOutcome::Invalid => 1,
+    }
 }
 
 struct FeatureBuffers {
@@ -1964,6 +2025,7 @@ impl Engine {
         })?;
         features.validate().map_err(PyValueError::new_err)?;
         let common_data = Arc::new(CommonData::new(rooms)?);
+        let _toilet_room_idx = common_data.toilet_room_idx();
 
         Ok(Self {
             common_data,
@@ -2427,8 +2489,10 @@ impl EnvironmentGroup {
         let mut pre_door_valid = vec![DoorValidOutcome::Unknown as i8; pre_door_output_len];
         let mut pre_connections_valid =
             vec![DoorValidOutcome::Unknown as i8; pre_connection_output_len];
+        let mut pre_toilet_valid = vec![DoorValidOutcome::Unknown as i8; self.num_environments];
         let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
         let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
+        let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; output_len];
         let mut door_match = vec![-1; door_match_output_len];
         let mut clean_counts = vec![0; self.num_environments];
         let mut evaluated_counts = vec![0; self.num_environments];
@@ -2486,11 +2550,17 @@ impl EnvironmentGroup {
                             &mut pre_connections_valid
                                 [pre_connection_output_start..pre_connection_output_end],
                         ),
+                        pre_toilet_valid: OutputShard::from_slice(
+                            &mut pre_toilet_valid[worker.start..worker.end()],
+                        ),
                         door_valid: OutputShard::from_slice(
                             &mut door_valid[door_output_start..door_output_end],
                         ),
                         connections_valid: OutputShard::from_slice(
                             &mut connections_valid[connection_output_start..connection_output_end],
+                        ),
+                        toilet_valid: OutputShard::from_slice(
+                            &mut toilet_valid[output_start..output_end],
                         ),
                         door_match: OutputShard::from_slice(
                             &mut door_match[door_match_output_start..door_match_output_end],
@@ -2572,6 +2642,7 @@ impl EnvironmentGroup {
                 connection_outcome_count,
             )?
             .unbind(),
+            pre_toilet_valid: pre_toilet_valid.into_pyarray(py).unbind(),
             door_valid: pyarray3_from_flat_vec(
                 py,
                 door_valid,
@@ -2586,6 +2657,13 @@ impl EnvironmentGroup {
                 self.num_environments,
                 recommended_candidates,
                 connection_outcome_count,
+            )?
+            .unbind(),
+            toilet_valid: pyarray2_from_flat_vec(
+                py,
+                toilet_valid,
+                self.num_environments,
+                recommended_candidates,
             )?
             .unbind(),
             door_match: pyarray3_from_flat_vec(
@@ -2674,8 +2752,10 @@ impl EnvironmentGroup {
         let mut pre_door_valid = vec![DoorValidOutcome::Unknown as i8; pre_door_output_len];
         let mut pre_connections_valid =
             vec![DoorValidOutcome::Unknown as i8; pre_connection_output_len];
+        let mut pre_toilet_valid = vec![DoorValidOutcome::Unknown as i8; self.num_environments];
         let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
         let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
+        let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; output_len];
         let mut door_match = vec![-1; door_match_output_len];
 
         let (feature_frontier_count, sparse_row_count, worker_sparse_row_counts) =
@@ -2736,11 +2816,17 @@ impl EnvironmentGroup {
                             &mut pre_connections_valid
                                 [pre_connection_output_start..pre_connection_output_end],
                         ),
+                        pre_toilet_valid: OutputShard::from_slice(
+                            &mut pre_toilet_valid[worker.start..worker.end()],
+                        ),
                         door_valid: OutputShard::from_slice(
                             &mut door_valid[door_output_start..door_output_end],
                         ),
                         connections_valid: OutputShard::from_slice(
                             &mut connections_valid[connection_output_start..connection_output_end],
+                        ),
+                        toilet_valid: OutputShard::from_slice(
+                            &mut toilet_valid[output_start..output_end],
                         ),
                         door_match: OutputShard::from_slice(
                             &mut door_match[door_match_output_start..door_match_output_end],
@@ -2798,6 +2884,7 @@ impl EnvironmentGroup {
                 connection_outcome_count,
             )?
             .unbind(),
+            pre_toilet_valid: pre_toilet_valid.into_pyarray(py).unbind(),
             door_valid: pyarray3_from_flat_vec(
                 py,
                 door_valid,
@@ -2812,6 +2899,13 @@ impl EnvironmentGroup {
                 self.num_environments,
                 max_candidates,
                 connection_outcome_count,
+            )?
+            .unbind(),
+            toilet_valid: pyarray2_from_flat_vec(
+                py,
+                toilet_valid,
+                self.num_environments,
+                max_candidates,
             )?
             .unbind(),
             door_match: pyarray3_from_flat_vec(
@@ -2841,6 +2935,7 @@ impl EnvironmentGroup {
         let connection_output_len = self.num_environments * connection_outcome_count;
         let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
         let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
+        let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; self.num_environments];
         let mut avg_frontiers = vec![0.0; self.num_environments];
 
         py.detach(|| {
@@ -2864,6 +2959,9 @@ impl EnvironmentGroup {
                     ),
                     connections_valid: OutputShard::from_slice(
                         &mut connections_valid[connection_output_start..connection_output_end],
+                    ),
+                    toilet_valid: OutputShard::from_slice(
+                        &mut toilet_valid[worker.start..worker.end()],
                     ),
                     avg_frontiers: OutputShard::from_slice(
                         &mut avg_frontiers[avg_frontiers_start..avg_frontiers_end],
@@ -2893,6 +2991,7 @@ impl EnvironmentGroup {
                 connection_outcome_count,
             )?
             .unbind(),
+            toilet_valid: toilet_valid.into_pyarray(py).unbind(),
             avg_frontiers: avg_frontiers.into_pyarray(py).unbind(),
         })
     }
@@ -2907,6 +3006,7 @@ impl EnvironmentGroup {
     ) -> PyResult<(
         Bound<'py, PyArray3<i8>>,
         Bound<'py, PyArray3<i8>>,
+        Bound<'py, PyArray2<i8>>,
         Bound<'py, PyArray3<i16>>,
     )> {
         let shape = room_idx.as_array().shape().to_vec();
@@ -2932,9 +3032,11 @@ impl EnvironmentGroup {
         let (door_outcome_count, connection_outcome_count) = output_sizes(&self.common_data);
         let door_output_len = environment_count * candidate_count * door_outcome_count;
         let connection_output_len = environment_count * candidate_count * connection_outcome_count;
+        let toilet_output_len = environment_count * candidate_count;
         let door_match_output_len = environment_count * candidate_count * door_outcome_count;
         let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
         let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
+        let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; toilet_output_len];
         let mut door_match = vec![-1; door_match_output_len];
 
         py.detach(|| {
@@ -2974,6 +3076,9 @@ impl EnvironmentGroup {
                     connections_valid: OutputShard::from_slice(
                         &mut connections_valid[connection_output_start..connection_output_end],
                     ),
+                    toilet_valid: OutputShard::from_slice(
+                        &mut toilet_valid[input_start..input_start + input_len],
+                    ),
                     door_match: OutputShard::from_slice(
                         &mut door_match[door_match_output_start..door_match_output_end],
                     ),
@@ -3002,6 +3107,7 @@ impl EnvironmentGroup {
                 candidate_count,
                 connection_outcome_count,
             )?,
+            pyarray2_from_flat_vec(py, toilet_valid, environment_count, candidate_count)?,
             pyarray3_from_flat_vec(
                 py,
                 door_match,

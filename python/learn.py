@@ -56,11 +56,13 @@ class MainLossBreakdown:
     total: float
     door: float
     connection: float
+    toilet: float
     balance: float
     avg_frontiers: float
     proposal: float
     door_contribution: float
     connection_contribution: float
+    toilet_contribution: float
     balance_contribution: float
     avg_frontiers_contribution: float
     proposal_contribution: float
@@ -96,11 +98,13 @@ def empty_main_loss_breakdown() -> MainLossBreakdown:
         total=0.0,
         door=0.0,
         connection=0.0,
+        toilet=0.0,
         balance=0.0,
         avg_frontiers=0.0,
         proposal=0.0,
         door_contribution=0.0,
         connection_contribution=0.0,
+        toilet_contribution=0.0,
         balance_contribution=0.0,
         avg_frontiers_contribution=0.0,
         proposal_contribution=0.0,
@@ -111,11 +115,13 @@ def accumulate_main_loss(target: MainLossBreakdown, source: MainLossBreakdown) -
     target.total += source.total
     target.door += source.door
     target.connection += source.connection
+    target.toilet += source.toilet
     target.balance += source.balance
     target.avg_frontiers += source.avg_frontiers
     target.proposal += source.proposal
     target.door_contribution += source.door_contribution
     target.connection_contribution += source.connection_contribution
+    target.toilet_contribution += source.toilet_contribution
     target.balance_contribution += source.balance_contribution
     target.avg_frontiers_contribution += source.avg_frontiers_contribution
     target.proposal_contribution += source.proposal_contribution
@@ -126,11 +132,13 @@ def average_main_loss(total_loss: MainLossBreakdown, count: int) -> MainLossBrea
         total=total_loss.total / count,
         door=total_loss.door / count,
         connection=total_loss.connection / count,
+        toilet=total_loss.toilet / count,
         balance=total_loss.balance / count,
         avg_frontiers=total_loss.avg_frontiers / count,
         proposal=total_loss.proposal / count,
         door_contribution=total_loss.door_contribution / count,
         connection_contribution=total_loss.connection_contribution / count,
+        toilet_contribution=total_loss.toilet_contribution / count,
         balance_contribution=total_loss.balance_contribution / count,
         avg_frontiers_contribution=total_loss.avg_frontiers_contribution / count,
         proposal_contribution=total_loss.proposal_contribution / count,
@@ -211,6 +219,7 @@ def select_batch(
         PreliminaryOutcomes(
             door_invalid=outcomes.door_invalid[start:end],
             connection_invalid=outcomes.connection_invalid[start:end],
+            toilet_invalid=outcomes.toilet_invalid[start:end],
             door_match=outcomes.door_match[start:end],
         ),
     )
@@ -292,6 +301,11 @@ def prepare_feature_batches(
                     next_lookahead_outcomes.connection_invalid,
                 ),
                 torch.where(
+                    dummy_action[:, None],
+                    torch.full_like(next_lookahead_outcomes.toilet_invalid, -1),
+                    next_lookahead_outcomes.toilet_invalid,
+                ),
+                torch.where(
                     dummy_action[:, None, None],
                     torch.full_like(next_lookahead_outcomes.door_match, -1),
                     next_lookahead_outcomes.door_match,
@@ -322,6 +336,7 @@ def prepare_feature_batches(
                         PreliminaryOutcomes(
                             next_lookahead_outcomes.door_invalid.squeeze(1),
                             next_lookahead_outcomes.connection_invalid.squeeze(1),
+                            next_lookahead_outcomes.toilet_invalid.squeeze(1),
                             next_lookahead_outcomes.door_match.squeeze(1),
                         ),
                         config.features.lookahead_outcomes,
@@ -562,6 +577,7 @@ def train_feature_batch_backward(
     repeated_outcomes = PreliminaryOutcomes(
         door_invalid=train_outcomes.door_invalid.unsqueeze(1),
         connection_invalid=train_outcomes.connection_invalid.unsqueeze(1),
+        toilet_invalid=train_outcomes.toilet_invalid.unsqueeze(1),
         door_match=train_outcomes.door_match.unsqueeze(1),
     )
     with torch.no_grad():
@@ -616,11 +632,15 @@ def train_feature_batch_backward(
         total_loss.total += prefix_loss.total.item() * prefix_weight
         total_loss.door += prefix_loss.door.item() * prefix_weight
         total_loss.connection += prefix_loss.connection.item() * prefix_weight
+        total_loss.toilet += prefix_loss.toilet.item() * prefix_weight
         total_loss.balance += prefix_loss.balance.item() * prefix_weight
         total_loss.avg_frontiers += prefix_loss.avg_frontiers.item() * prefix_weight
         total_loss.door_contribution += prefix_loss.door_contribution.item() * prefix_weight
         total_loss.connection_contribution += (
             prefix_loss.connection_contribution.item() * prefix_weight
+        )
+        total_loss.toilet_contribution += (
+            prefix_loss.toilet_contribution.item() * prefix_weight
         )
         total_loss.balance_contribution += (
             prefix_loss.balance_contribution.item() * prefix_weight

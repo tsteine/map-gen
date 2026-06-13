@@ -76,6 +76,7 @@ class GenerationConfig(StrictBaseModel):
     proposal_temperature: ScheduleableFloat
     reward_door: ScheduleableFloat
     reward_connection: ScheduleableFloat
+    reward_toilet: ScheduleableFloat
     reward_balance: ScheduleableFloat
     reward_frontier: ScheduleableFloat
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
@@ -111,6 +112,7 @@ class TrainConfig(StrictBaseModel):
     hist_c: float
     door_weight: float
     connection_weight: float
+    toilet_weight: float
     balance_weight: float
     avg_frontiers_weight: float
     proposal_weight: float
@@ -248,6 +250,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("train.shuffle_buffer_batches must be greater than zero")
     if config.train.proposal_weight < 0:
         raise ValueError("train.proposal_weight must be greater than or equal to zero")
+    if config.train.toilet_weight < 0:
+        raise ValueError("train.toilet_weight must be greater than or equal to zero")
     if config.train.avg_frontiers_weight < 0:
         raise ValueError("train.avg_frontiers_weight must be greater than or equal to zero")
     validate_ema_decay_config(config.train.ema_decay, "train.ema_decay", config.knot_episodes)

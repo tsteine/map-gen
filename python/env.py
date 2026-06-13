@@ -22,6 +22,7 @@ class GenerateConfig:
     proposal_temperature: torch.Tensor
     reward_door: float
     reward_connection: float
+    reward_toilet: float
     reward_balance: float
     reward_frontier: float
     autocast: bool
@@ -111,6 +112,8 @@ class PreliminaryOutcomes:
     door_invalid: torch.Tensor
     # -1 = unknown, 0 = valid (connection has return path), 1 = invalid (connection does not have return path)
     connection_invalid: torch.Tensor
+    # -1 = unknown, 0 = valid (the Toilet crosses exactly one room), 1 = invalid
+    toilet_invalid: torch.Tensor
     # -1 = unknown; for a valid door this is its matched partner's index within
     # the opposite direction; for an invalid door this is the opposite direction
     # door count sentinel.
@@ -120,6 +123,7 @@ class PreliminaryOutcomes:
         return PreliminaryOutcomes(
             self.door_invalid.to(device),
             self.connection_invalid.to(device),
+            self.toilet_invalid.to(device),
             self.door_match.to(device),
         )
 
@@ -209,6 +213,7 @@ class Features:
     lookahead_door_invalid: torch.Tensor
     lookahead_door_match: torch.Tensor
     lookahead_connection_invalid: torch.Tensor
+    lookahead_toilet_invalid: torch.Tensor
     frontier: torch.Tensor
     frontier_occupancy: torch.Tensor
     frontier_neighbor: torch.Tensor
@@ -237,6 +242,7 @@ class SparseFeatures:
     lookahead_door_invalid: torch.Tensor
     lookahead_door_match: torch.Tensor
     lookahead_connection_invalid: torch.Tensor
+    lookahead_toilet_invalid: torch.Tensor
     frontier: torch.Tensor
     frontier_occupancy: torch.Tensor
     frontier_neighbor: torch.Tensor
@@ -262,6 +268,7 @@ class SparseFeatures:
             self.lookahead_door_invalid.flatten(0, 1),
             self.lookahead_door_match.flatten(0, 1),
             self.lookahead_connection_invalid.flatten(0, 1),
+            self.lookahead_toilet_invalid.flatten(0, 1),
             self.frontier,
             self.frontier_occupancy,
             self.frontier_neighbor,
@@ -470,6 +477,7 @@ class EnvironmentGroup:
             PreliminaryOutcomes(
                 door_invalid=torch.from_numpy(result.pre_door_valid).to(device),
                 connection_invalid=torch.from_numpy(result.pre_connections_valid).to(device),
+                toilet_invalid=torch.from_numpy(result.pre_toilet_valid).to(device),
                 door_match=torch.empty(
                     [result.pre_door_valid.shape[0], 0],
                     dtype=torch.int16,
@@ -479,6 +487,7 @@ class EnvironmentGroup:
             PreliminaryOutcomes(
                 door_invalid=torch.from_numpy(result.door_valid).to(device),
                 connection_invalid=torch.from_numpy(result.connections_valid).to(device),
+                toilet_invalid=torch.from_numpy(result.toilet_valid).to(device),
                 door_match=torch.from_numpy(result.door_match).to(device),
             ),
             CandidateFeatureRequirements(
@@ -507,6 +516,7 @@ class EnvironmentGroup:
             validity=PreliminaryOutcomes(
                 door_invalid=torch.from_numpy(result.door_valid).to(device),
                 connection_invalid=torch.from_numpy(result.connections_valid).to(device),
+                toilet_invalid=torch.from_numpy(result.toilet_valid).to(device),
                 door_match=torch.empty(
                     [result.door_valid.shape[0], 0],
                     dtype=torch.int16,
@@ -522,15 +532,18 @@ class EnvironmentGroup:
         device: torch.device,
         environment_start: int = 0,
     ) -> PreliminaryOutcomes:
-        door_invalid, connection_invalid, door_match = self.env.get_outcomes_after_candidates(
-            actions.room_idx.contiguous().cpu().numpy(),
-            actions.room_x.contiguous().cpu().numpy(),
-            actions.room_y.contiguous().cpu().numpy(),
-            environment_start,
+        door_invalid, connection_invalid, toilet_invalid, door_match = (
+            self.env.get_outcomes_after_candidates(
+                actions.room_idx.contiguous().cpu().numpy(),
+                actions.room_x.contiguous().cpu().numpy(),
+                actions.room_y.contiguous().cpu().numpy(),
+                environment_start,
+            )
         )
         return PreliminaryOutcomes(
             door_invalid=torch.from_numpy(door_invalid).to(device),
             connection_invalid=torch.from_numpy(connection_invalid).to(device),
+            toilet_invalid=torch.from_numpy(toilet_invalid).to(device),
             door_match=torch.from_numpy(door_match).to(device),
         )
 
@@ -574,6 +587,7 @@ class EnvironmentGroup:
         lookahead_door_invalid = lookahead_outcomes.door_invalid.to(device)
         lookahead_door_match = lookahead_outcomes.door_match.to(device)
         lookahead_connection_invalid = lookahead_outcomes.connection_invalid.to(device)
+        lookahead_toilet_invalid = lookahead_outcomes.toilet_invalid.to(device)
         if not include_lookahead_outcomes:
             lookahead_door_invalid = lookahead_door_invalid.new_empty([
                 *lookahead_door_invalid.shape[:-1],
@@ -587,6 +601,10 @@ class EnvironmentGroup:
                 *lookahead_connection_invalid.shape[:-1],
                 0,
             ])
+            lookahead_toilet_invalid = lookahead_toilet_invalid.new_empty([
+                *lookahead_toilet_invalid.shape,
+                0,
+            ])
         return Features(
             *tensors[:4],
             log_temperature,
@@ -594,6 +612,7 @@ class EnvironmentGroup:
             lookahead_door_invalid,
             lookahead_door_match,
             lookahead_connection_invalid,
+            lookahead_toilet_invalid,
             *tensors[4:],
         )
 
@@ -646,6 +665,7 @@ class EnvironmentGroup:
         lookahead_door_invalid = lookahead_outcomes.door_invalid.to(device)
         lookahead_door_match = lookahead_outcomes.door_match.to(device)
         lookahead_connection_invalid = lookahead_outcomes.connection_invalid.to(device)
+        lookahead_toilet_invalid = lookahead_outcomes.toilet_invalid.to(device)
         if not include_lookahead_outcomes:
             lookahead_door_invalid = lookahead_door_invalid.new_empty([
                 *lookahead_door_invalid.shape[:-1],
@@ -659,6 +679,10 @@ class EnvironmentGroup:
                 *lookahead_connection_invalid.shape[:-1],
                 0,
             ])
+            lookahead_toilet_invalid = lookahead_toilet_invalid.new_empty([
+                *lookahead_toilet_invalid.shape,
+                0,
+            ])
         return SparseFeatures(
             *tensors[:4],
             log_temperature,
@@ -666,6 +690,7 @@ class EnvironmentGroup:
             lookahead_door_invalid,
             lookahead_door_match,
             lookahead_connection_invalid,
+            lookahead_toilet_invalid,
             *tensors[4:],
         )
 

@@ -12,6 +12,7 @@ BALANCE_TARGET_LOG_ODDS_LIMIT = 20.0
 class LossConfig:
     door_weight: float
     connection_weight: float
+    toilet_weight: float
     balance_weight: float
     avg_frontiers_weight: float
 
@@ -21,10 +22,12 @@ class LossBreakdown:
     total: torch.Tensor
     door: torch.Tensor
     connection: torch.Tensor
+    toilet: torch.Tensor
     balance: torch.Tensor
     avg_frontiers: torch.Tensor
     door_contribution: torch.Tensor
     connection_contribution: torch.Tensor
+    toilet_contribution: torch.Tensor
     balance_contribution: torch.Tensor
     avg_frontiers_contribution: torch.Tensor
 
@@ -75,6 +78,8 @@ def compute_loss_breakdown(
         preds.door_invalid, outcomes.door_invalid, mask, config.door_weight)
     conn_loss, conn_wt = masked_binary_cross_entropy_loss(
         preds.connection_invalid, outcomes.connection_invalid, mask, config.connection_weight)
+    toilet_loss, toilet_wt = masked_binary_cross_entropy_loss(
+        preds.toilet_invalid, outcomes.toilet_invalid, mask.squeeze(-1), config.toilet_weight)
     balance_loss, balance_wt = masked_bernoulli_kl_loss(
         preds.balance_score,
         balance_score_target_logits,
@@ -89,14 +94,16 @@ def compute_loss_breakdown(
         avg_frontiers_error.square() * avg_frontiers_mask
     )
     avg_frontiers_wt = config.avg_frontiers_weight * torch.sum(avg_frontiers_mask)
-    total_weight = door_wt + conn_wt + balance_wt + avg_frontiers_wt + 1e-15
+    total_weight = door_wt + conn_wt + toilet_wt + balance_wt + avg_frontiers_wt + 1e-15
     door_contribution = door_loss / total_weight
     connection_contribution = conn_loss / total_weight
+    toilet_contribution = toilet_loss / total_weight
     balance_contribution = balance_loss / total_weight
     avg_frontiers_contribution = avg_frontiers_loss / total_weight
     mean_loss = (
         door_contribution
         + connection_contribution
+        + toilet_contribution
         + balance_contribution
         + avg_frontiers_contribution
     )
@@ -104,10 +111,12 @@ def compute_loss_breakdown(
         total=mean_loss,
         door=door_loss / (door_wt + 1e-15),
         connection=conn_loss / (conn_wt + 1e-15),
+        toilet=toilet_loss / (toilet_wt + 1e-15),
         balance=balance_loss / (balance_wt + 1e-15),
         avg_frontiers=avg_frontiers_loss / (avg_frontiers_wt + 1e-15),
         door_contribution=door_contribution,
         connection_contribution=connection_contribution,
+        toilet_contribution=toilet_contribution,
         balance_contribution=balance_contribution,
         avg_frontiers_contribution=avg_frontiers_contribution,
     )

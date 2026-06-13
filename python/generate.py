@@ -110,6 +110,7 @@ def balance_reward(
 
 # preds.door_invalid: [batch_size, max_candidates, num_outputs]
 # preds.connection_invalid: [batch_size, max_candidates, num_outputs]
+# preds.toilet_invalid: [batch_size, max_candidates]
 def compute_expected_reward(
     preds,
     outcomes,
@@ -117,8 +118,10 @@ def compute_expected_reward(
 ):
     door_logprobs = torch.nn.functional.logsigmoid(-preds.door_invalid)
     connection_logprobs = torch.nn.functional.logsigmoid(-preds.connection_invalid)
+    toilet_logprobs = torch.nn.functional.logsigmoid(-preds.toilet_invalid)
     door_logprobs = outcome_reward(door_logprobs, outcomes.door_invalid)
     connection_logprobs = outcome_reward(connection_logprobs, outcomes.connection_invalid)
+    toilet_logprobs = outcome_reward(toilet_logprobs, outcomes.toilet_invalid)
     balance_scores = balance_reward(
         preds.balance_score,
         preds.door_invalid,
@@ -127,6 +130,7 @@ def compute_expected_reward(
     return (
         config.reward_door * torch.sum(door_logprobs, dim=2)
         + config.reward_connection * torch.sum(connection_logprobs, dim=2)
+        + config.reward_toilet * toilet_logprobs
         + config.reward_balance * torch.sum(balance_scores, dim=2)
         - config.reward_frontier * preds.avg_frontiers.to(torch.float32)
     )
@@ -308,6 +312,7 @@ class SparseFeatureSlot:
         lookahead_door_invalid = lookahead_outcomes.door_invalid
         lookahead_door_match = lookahead_outcomes.door_match
         lookahead_connection_invalid = lookahead_outcomes.connection_invalid
+        lookahead_toilet_invalid = lookahead_outcomes.toilet_invalid
         if not include_lookahead_outcomes:
             lookahead_door_invalid = lookahead_door_invalid.new_empty(
                 [environment_count, candidate_count, 0]
@@ -316,6 +321,9 @@ class SparseFeatureSlot:
                 [environment_count, candidate_count, 0]
             )
             lookahead_connection_invalid = lookahead_connection_invalid.new_empty(
+                [environment_count, candidate_count, 0]
+            )
+            lookahead_toilet_invalid = lookahead_toilet_invalid.new_empty(
                 [environment_count, candidate_count, 0]
             )
         return SparseFeatures(
@@ -332,6 +340,7 @@ class SparseFeatureSlot:
             lookahead_door_invalid,
             lookahead_door_match,
             lookahead_connection_invalid,
+            lookahead_toilet_invalid,
             self.frontier[:sparse_row_count],
             self.frontier_occupancy[:sparse_row_count],
             self.frontier_neighbor[:sparse_row_count],
@@ -637,9 +646,13 @@ def select_outcomes(outcomes: PreliminaryOutcomes, index: torch.Tensor) -> Preli
         gather_index = index.view(-1, 1, 1).expand(-1, 1, values.shape[2])
         return torch.gather(values, 1, gather_index).squeeze(1)
 
+    def gather_scalar(values: torch.Tensor) -> torch.Tensor:
+        return torch.gather(values, 1, index.view(-1, 1)).squeeze(1)
+
     return PreliminaryOutcomes(
         gather(outcomes.door_invalid),
         gather(outcomes.connection_invalid),
+        gather_scalar(outcomes.toilet_invalid),
         gather(outcomes.door_match),
     )
 
@@ -780,6 +793,7 @@ def select_candidate_actions(
                     candidate_count,
                     -1,
                 ),
+                toilet_invalid=preds.toilet_invalid.view(environment_count, candidate_count),
                 balance_score=preds.balance_score.view(environment_count, candidate_count, -1),
                 avg_frontiers=preds.avg_frontiers.view(environment_count, candidate_count),
                 proposal_score=preds.proposal_score,

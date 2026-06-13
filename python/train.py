@@ -442,6 +442,7 @@ def create_generate_config(
         ),
         reward_door=config.generation.reward_door,
         reward_connection=config.generation.reward_connection,
+        reward_toilet=config.generation.reward_toilet,
         reward_balance=config.generation.reward_balance,
         reward_frontier=config.generation.reward_frontier,
         autocast=config.model.generation_autocast,
@@ -792,6 +793,9 @@ class TrainingSession:
                     connection_invalid=torch.cat(
                         [outcomes.validity.connection_invalid for outcomes in outcome_iterations]
                     ),
+                    toilet_invalid=torch.cat([
+                        outcomes.validity.toilet_invalid for outcomes in outcome_iterations
+                    ]),
                     door_match=torch.cat([
                         outcomes.validity.door_match for outcomes in outcome_iterations
                     ]),
@@ -900,7 +904,10 @@ class TrainingSession:
         avg_conn = torch.mean(conn_invalid.to(torch.float32))
         min_conn = torch.min(conn_invalid)
 
-        total_invalid = door_invalid + conn_invalid
+        toilet_invalid = (outcomes.toilet_invalid != 0).to(torch.int64)
+        avg_toilet = torch.mean(toilet_invalid.to(torch.float32))
+
+        total_invalid = door_invalid + conn_invalid + toilet_invalid
         avg_invalid = torch.mean(total_invalid.to(torch.float32))
         min_invalid = torch.min(total_invalid)
         avg_frontiers = torch.mean(episode_outcomes.avg_frontiers.to(torch.float32))
@@ -909,6 +916,7 @@ class TrainingSession:
         success_rate = torch.mean(success.to(torch.float32))
         success_door = torch.mean((door_invalid == 0).to(torch.float32))
         success_conn = torch.mean((conn_invalid == 0).to(torch.float32))
+        success_toilet = torch.mean((toilet_invalid == 0).to(torch.float32))
 
         horizontal_door_match_counts = door_match_counts.horizontal[:-1, :-1].to(torch.float64)
         vertical_door_match_counts = door_match_counts.vertical[:-1, :-1].to(torch.float64)
@@ -938,6 +946,7 @@ class TrainingSession:
         loss_denominator = loss.total + 1e-15
         door_loss_pct = 100.0 * loss.door_contribution / loss_denominator
         connection_loss_pct = 100.0 * loss.connection_contribution / loss_denominator
+        toilet_loss_pct = 100.0 * loss.toilet_contribution / loss_denominator
         main_balance_loss_pct = 100.0 * loss.balance_contribution / loss_denominator
         avg_frontiers_loss_pct = 100.0 * loss.avg_frontiers_contribution / loss_denominator
         proposal_loss_pct = 100.0 * loss.proposal_contribution / loss_denominator
@@ -948,6 +957,8 @@ class TrainingSession:
             "door_loss_pct": door_loss_pct,
             "connection_loss": loss.connection,
             "connection_loss_pct": connection_loss_pct,
+            "toilet_loss": loss.toilet,
+            "toilet_loss_pct": toilet_loss_pct,
             "main_balance_loss": loss.balance,
             "main_balance_loss_pct": main_balance_loss_pct,
             "avg_frontiers_loss": loss.avg_frontiers,
@@ -961,10 +972,12 @@ class TrainingSession:
             "success_rate": success_rate,
             "success_door": success_door,
             "success_conn": success_conn,
+            "success_toilet": success_toilet,
             "avg_invalid": avg_invalid,
             "avg_frontiers": avg_frontiers,
             "avg_door": avg_door,
             "avg_conn": avg_conn,
+            "avg_toilet": avg_toilet,
             "min_invalid": min_invalid,
             "min_door": min_door,
             "min_conn": min_conn,
@@ -976,9 +989,11 @@ class TrainingSession:
             "proposal_temperature": step_config.generation.proposal_temperature,
             "reward_door": step_config.generation.reward_door,
             "reward_connection": step_config.generation.reward_connection,
+            "reward_toilet": step_config.generation.reward_toilet,
             "reward_balance": step_config.generation.reward_balance,
             "reward_frontier": step_config.generation.reward_frontier,
             "ema_decay": step_config.train.ema_decay,
+            "toilet_weight": step_config.train.toilet_weight,
             "avg_frontiers_weight": step_config.train.avg_frontiers_weight,
             "door_match_left_top1": left_topk[0],
             "door_match_left_top2": left_topk[1],
@@ -998,10 +1013,10 @@ class TrainingSession:
 
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
-            "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, "
+            "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, tube %.4f %.1f%%, "
             "bal %.4f %.1f%%, front %.2f %.1f%%, prop %.4f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
-            "conn %.2f (min %s), front %.2f, ss %.3f, "
+            "conn %.2f (min %s), tube %.2f, front %.2f, ss %.3f, "
             "p %.4f, "
             "ex %.4f, frac %.4f",
             round_idx,
@@ -1010,6 +1025,8 @@ class TrainingSession:
             door_loss_pct,
             loss.connection,
             connection_loss_pct,
+            loss.toilet,
+            toilet_loss_pct,
             loss.balance,
             main_balance_loss_pct,
             loss.avg_frontiers,
@@ -1023,6 +1040,7 @@ class TrainingSession:
             scalar(min_door),
             scalar(avg_conn),
             scalar(min_conn),
+            scalar(avg_toilet),
             scalar(avg_frontiers),
             scalar(door_match_ss),
             scalar(candidate_diagnostics.selected_probability),
@@ -1408,6 +1426,7 @@ def build_session(args: Args) -> TrainingSession:
         loss_config=LossConfig(
             door_weight=config.train.door_weight,
             connection_weight=config.train.connection_weight,
+            toilet_weight=config.train.toilet_weight,
             balance_weight=config.train.balance_weight,
             avg_frontiers_weight=config.train.avg_frontiers_weight,
         ),

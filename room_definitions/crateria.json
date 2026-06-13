@@ -13,7 +13,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": [0, 1]
     },
     {
         "room_id": 8,
@@ -34,7 +35,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": [3, 5]
     },
     {
         "room_id": 9,
@@ -49,7 +51,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 10,
@@ -73,7 +76,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": [3]
     },
     {
         "room_id": 11,
@@ -98,7 +102,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 12,
@@ -114,7 +119,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 13,
@@ -129,7 +135,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 14,
@@ -144,7 +151,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 15,
@@ -156,7 +164,8 @@
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 16,
@@ -168,7 +177,8 @@
             [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 17,
@@ -180,7 +190,8 @@
             [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 18,
@@ -195,7 +206,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 19,
@@ -207,7 +219,8 @@
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 20,
@@ -224,7 +237,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 21,
@@ -251,7 +265,8 @@
         "connections": [
             [0, 1]
         ],
-        "missing_connections": [[1, 0]]
+        "missing_connections": [[1, 0]],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 22,
@@ -266,7 +281,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 23,
@@ -283,7 +299,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 24,
@@ -301,7 +318,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 26,
@@ -316,7 +334,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 25,
@@ -333,7 +352,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 306,
@@ -350,7 +370,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 27,
@@ -368,7 +389,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 28,
@@ -380,7 +402,8 @@
             [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 29,
@@ -402,7 +425,8 @@
         "connections": [
             [1, 0]
         ],
-        "missing_connections": [[0, 1]]
+        "missing_connections": [[0, 1]],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 30,
@@ -417,7 +441,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 31,
@@ -432,7 +457,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 33,
@@ -447,7 +473,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 34,
@@ -467,7 +494,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": [0, 1, 2, 3, 4, 5, 6]
     },
     {
         "room_id": 35,
@@ -485,7 +513,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 36,
@@ -501,7 +530,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 37,
@@ -518,7 +548,8 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     },
     {
         "room_id": 305,
@@ -533,6 +564,7 @@
             ]
         ],
         "connections": [],
-        "missing_connections": []
+        "missing_connections": [],
+        "toilet_crossing_x": []
     }
 ]

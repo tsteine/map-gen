@@ -27,9 +27,17 @@ pub const NUM_DIRS: usize = 4; // left, right, up, down
 #[derive(Clone, Deserialize)]
 pub struct Room {
     map: Vec<Vec<u8>>,
+    toilet_crossing_x: Vec<Coord>,
+    special_type: Option<SpecialType>,
     doors: Vec<Vec<Door>>,
     connections: Vec<(PartIdx, PartIdx)>,
     missing_connections: Vec<(PartIdx, PartIdx)>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SpecialType {
+    Toilet,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -178,6 +186,8 @@ struct GeometryDoorData {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct GeometryKey {
     map: Vec<Vec<u8>>,
+    toilet_crossing_x: Vec<Coord>,
+    is_toilet: bool,
     doors: Vec<GeometryDoorData>,
 }
 
@@ -189,6 +199,8 @@ struct ConnectionsKey {
 
 pub struct GeometryData {
     pub map: Vec<Vec<u8>>,
+    toilet_crossing_x: Vec<Coord>,
+    is_toilet: bool,
     pub occupied_tiles: Vec<(Coord, Coord)>,
     doors: Vec<GeometryDoorData>,
     pub min_x: Coord,
@@ -206,6 +218,7 @@ pub struct GeometryDirDoorData {
 
 pub struct CommonData {
     pub room: Vec<RoomData>,
+    toilet_room_idx: Option<RoomIdx>,
     pub geometry: Vec<GeometryData>,
     pub geometry_rooms: Vec<Vec<RoomIdx>>,
     pub geometry_connection_variants: Vec<Vec<ConnectionVariantIdx>>,
@@ -230,6 +243,9 @@ pub struct CommonData {
 impl GeometryKey {
     fn from_room(room: &Room) -> Self {
         let map = room.map.clone();
+        let mut toilet_crossing_x = room.toilet_crossing_x.clone();
+        toilet_crossing_x.sort_unstable();
+        let is_toilet = room.special_type == Some(SpecialType::Toilet);
         let mut doors: Vec<_> = room
             .doors
             .iter()
@@ -242,7 +258,12 @@ impl GeometryKey {
             })
             .collect();
         doors.sort_by_key(|door| (door.direction as u8, door.x, door.y, door.kind));
-        Self { map, doors }
+        Self {
+            map,
+            toilet_crossing_x,
+            is_toilet,
+            doors,
+        }
     }
 }
 
@@ -369,6 +390,8 @@ impl GeometryData {
         }
         Ok(Self {
             map: key.map.clone(),
+            toilet_crossing_x: key.toilet_crossing_x.clone(),
+            is_toilet: key.is_toilet,
             occupied_tiles,
             doors: key.doors.clone(),
             min_x,
@@ -379,7 +402,30 @@ impl GeometryData {
     }
 }
 
+fn has_disallowed_toilet_crossing(
+    toilet_x: Coord,
+    toilet_y: Coord,
+    crossed: &GeometryData,
+    crossed_x: Coord,
+    crossed_y: Coord,
+) -> bool {
+    let crossing_x = toilet_x - crossed_x;
+    let crosses_room = (2..=7).any(|toilet_open_y| {
+        let crossed_tile_y = toilet_y + toilet_open_y - crossed_y;
+        crossed_tile_y >= 0
+            && crossing_x >= 0
+            && crossed_tile_y < crossed.map.len() as Coord
+            && crossing_x < crossed.map[0].len() as Coord
+            && crossed.map[crossed_tile_y as usize][crossing_x as usize] != 0
+    });
+    crosses_room && !crossed.toilet_crossing_x.contains(&crossing_x)
+}
+
 impl CommonData {
+    pub fn toilet_room_idx(&self) -> Option<RoomIdx> {
+        self.toilet_room_idx
+    }
+
     pub fn new(rooms: Vec<Room>) -> Result<Self> {
         if rooms.len() > RoomIdx::MAX as usize {
             bail!(
@@ -399,11 +445,20 @@ impl CommonData {
         let mut room_connection = vec![];
         let mut geometry_by_key = HashMap::new();
         let mut connection_variant_by_key = HashMap::new();
+        let mut toilet_room_idx = None;
         let mut geometry_dir_door: [Vec<GeometryDirDoorData>; NUM_DIRS] =
             std::array::from_fn(|_| vec![]);
         let mut room_dir_door: [Vec<RoomDirDoorData>; NUM_DIRS] = std::array::from_fn(|_| vec![]);
 
         for (room_idx, room) in rooms.iter().enumerate() {
+            if room.special_type == Some(SpecialType::Toilet) {
+                if let Some(first_toilet_room_idx) = toilet_room_idx {
+                    bail!(
+                        "rooms {first_toilet_room_idx} and {room_idx} both have special_type toilet"
+                    );
+                }
+                toilet_room_idx = Some(room_idx as RoomIdx);
+            }
             if room.doors.len() > PartIdx::MAX as usize {
                 bail!(
                     "room {room_idx} has {} door groups, exceeding the maximum {}",
@@ -434,6 +489,17 @@ impl CommonData {
             for (connection_idx, connection) in room.missing_connections.iter().enumerate() {
                 if room.missing_connections[..connection_idx].contains(connection) {
                     bail!("room {room_idx} has duplicate missing connection {connection:?}");
+                }
+            }
+            for (x_idx, &x) in room.toilet_crossing_x.iter().enumerate() {
+                if x < 0 || x as usize >= room.map[0].len() {
+                    bail!(
+                        "room {room_idx} has toilet_crossing_x value {x} outside its width {}",
+                        room.map[0].len()
+                    );
+                }
+                if room.toilet_crossing_x[..x_idx].contains(&x) {
+                    bail!("room {room_idx} has duplicate toilet_crossing_x value {x}");
                 }
             }
             validate_missing_connections(room_idx, room)?;
@@ -590,6 +656,7 @@ impl CommonData {
 
         let mut common = Self {
             room: room_data,
+            toilet_room_idx,
             geometry: geometry_data,
             geometry_rooms,
             geometry_connection_variants,
@@ -708,6 +775,12 @@ impl CommonData {
     ) -> bool {
         let geometry1 = &self.geometry[geometry_id1 as usize];
         let geometry2 = &self.geometry[geometry_id2 as usize];
+        if geometry1.is_toilet && has_disallowed_toilet_crossing(x1, y1, geometry2, x2, y2) {
+            return true;
+        }
+        if geometry2.is_toilet && has_disallowed_toilet_crossing(x2, y2, geometry1, x1, y1) {
+            return true;
+        }
         for (dy, row) in geometry1.map.iter().enumerate() {
             for (dx, &tile) in row.iter().enumerate() {
                 if tile != 0 {
@@ -790,24 +863,27 @@ mod tests {
             [
                 {
                     "map": [[1]],
+                    "toilet_crossing_x": [],
                     "doors": [[
                         {"direction": "left", "x": 0, "y": 0, "kind": 0},
                         {"direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
-                "missing_connections": []
+                    "missing_connections": []
                 },
                 {
                     "map": [[1]],
+                    "toilet_crossing_x": [],
                     "doors": [[
                         {"direction": "left", "x": 0, "y": 0, "kind": 0},
                         {"direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
-                "missing_connections": []
+                    "missing_connections": []
                 },
                 {
                     "map": [[1]],
+                    "toilet_crossing_x": [],
                     "doors": [[
                         {"direction": "left", "x": 0, "y": 0, "kind": 0},
                         {"direction": "right", "x": 0, "y": 0, "kind": 0}
@@ -853,7 +929,7 @@ mod tests {
     fn missing_connections_must_be_a_minimum_strong_completion() {
         let parse = |missing_connections| {
             serde_json::from_str::<Vec<Room>>(&format!(
-                r#"[{{"map": [[1]], "doors": [[], []], "connections": [], "missing_connections": {missing_connections}}}]"#
+                r#"[{{"map": [[1]], "toilet_crossing_x": [], "doors": [[], []], "connections": [], "missing_connections": {missing_connections}}}]"#
             ))
             .unwrap()
         };
@@ -861,5 +937,133 @@ mod tests {
         assert!(CommonData::new(parse("[]")).is_err());
         assert!(CommonData::new(parse("[[0, 1], [1, 0], [0, 1]]")).is_err());
         assert!(CommonData::new(parse("[[0, 1], [0, 1]]")).is_err());
+    }
+
+    #[test]
+    fn toilet_crossing_x_restricts_toilet_intersections() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1, 1, 1]],
+                    "toilet_crossing_x": [1],
+                    "doors": [],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1], [1], [0], [0], [0], [0], [0], [0], [1], [1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "toilet",
+                    "doors": [[
+                        {"direction": "down", "x": 0, "y": 9, "kind": 0},
+                        {"direction": "up", "x": 0, "y": 0, "kind": 0}
+                    ]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let room_geometry_idx = common.room[0].geometry_idx;
+        let toilet_geometry_idx = common.room[1].geometry_idx;
+        assert_eq!(common.toilet_room_idx(), Some(1));
+
+        assert!(!common.has_geometry_intersection(
+            room_geometry_idx,
+            0,
+            0,
+            toilet_geometry_idx,
+            1,
+            -2
+        ));
+        assert!(common.has_geometry_intersection(
+            room_geometry_idx,
+            0,
+            0,
+            toilet_geometry_idx,
+            0,
+            -2
+        ));
+    }
+
+    #[test]
+    fn common_data_rejects_multiple_toilet_rooms() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "toilet",
+                    "doors": [],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "toilet",
+                    "doors": [],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+
+        assert!(CommonData::new(rooms).is_err());
+    }
+
+    #[test]
+    fn toilet_cannot_cross_main_hall_rightmost_column() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [
+                        [0, 0, 0, 0, 1, 0, 0, 0],
+                        [0, 0, 0, 0, 1, 0, 0, 0],
+                        [1, 1, 1, 1, 1, 1, 1, 1]
+                    ],
+                    "toilet_crossing_x": [],
+                    "doors": [[
+                        {"direction": "left", "x": 0, "y": 2, "kind": 0},
+                        {"direction": "right", "x": 7, "y": 2, "kind": 0},
+                        {"direction": "up", "x": 4, "y": 0, "kind": 1}
+                    ]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1], [1], [0], [0], [0], [0], [0], [0], [1], [1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "toilet",
+                    "doors": [[
+                        {"direction": "down", "x": 0, "y": 9, "kind": 0},
+                        {"direction": "up", "x": 0, "y": 0, "kind": 0}
+                    ]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let main_hall_geometry_idx = common.room[0].geometry_idx;
+        let toilet_geometry_idx = common.room[1].geometry_idx;
+
+        assert!(common.has_geometry_intersection(
+            main_hall_geometry_idx,
+            0,
+            0,
+            toilet_geometry_idx,
+            7,
+            -5
+        ));
     }
 }
