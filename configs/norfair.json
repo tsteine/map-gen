@@ -2,30 +2,30 @@
   "experiment_name": "norfair-testing",
   "room_set": "room_definitions/norfair.json",
   "map_size": [72, 72],
-  "knot_episodes": [0, 200000, 1000000, 4000000, 16000000],
+  "knot_episodes": [0, 100000, 500000, 4000000, 16000000],
   "checkpoint_period": 100,
   "visualize": 0,
   "model": {
     "compile": true,
     "autocast": true,
     "generation_autocast": true,
-    "embedding_width": 256,
-    "global_embedding_width": 256,
-    "hidden_width": 256,
-    "door_match_embedding_width": 64,
-    "num_layers": 2
+    "embedding_width": 512,
+    "global_embedding_width": 512,
+    "hidden_width": 512,
+    "door_match_embedding_width": 128,
+    "num_layers": 4
   },
   "optimizer": {
     "type": "muon",
     "muon": {
-      "lr": 0.0002,
+      "lr": {"log": [0.0005, 0.0002, 0.0001, 0.00005, 0.00002]},
       "momentum": 0.95,
       "nesterov": true,
       "backend": "newtonschulz5",
       "backend_steps": 5
     },
     "adam": {
-      "lr": 0.005,
+      "lr": {"log": [0.001, 0.0005, 0.0003, 0.0002, 0.0001]},
       "beta1": 0.95,
       "beta2": 0.99
     }
@@ -48,14 +48,14 @@
     "recommended_candidates": 4,
     "shortlist_candidates": 16,
     "temperature": {"log": [10.0, 1.0, 0.03, 0.03, 0.03]},
-    "proposal_temperature": {"log": [30.0, 3.0, 0.1, 0.1, 0.1]},
+    "proposal_temperature": 0.1,
     "reward_door": 1.0,
     "reward_connection": 1.0,
     "reward_balance": 0.2,
-    "reward_frontier": 0.3,
+    "reward_frontier": 0.0,
     "frontier_neighbor_algorithm": "nearest-exclusive",
-    "frontier_neighbor_count": 1,
-    "frontier_window_size": 16,
+    "frontier_neighbor_count": 2,
+    "frontier_window_size": 8,
     "num_threads": 32
   },
   "features": {
@@ -76,7 +76,7 @@
     "frontier_connection_reachability": true
   },
   "train": {
-    "batch_size": 512,
+    "batch_size": 1024,
     "fresh_pass_factor": 2.0,
     "replay_pass_factor": 2.0,
     "sample_period": 16,

@@ -358,7 +358,7 @@ def create_main_optimizer(
             raise TypeError("initial optimizer config must have the same type as optimizer config")
         adam_params, muon_params = split_muon_parameters(model)
         logging.info(
-            "Using Muon for %s Linear weight parameter(s) and Adam for %s other parameter(s).",
+            "Using Muon for %s Linear weight parameter tensor(s) and Adam for %s other parameter tensor(s).",
             len(muon_params),
             len(adam_params),
         )
