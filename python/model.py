@@ -246,6 +246,7 @@ class FrontierModel(torch.nn.Module):
             + global_room_position_embedding_width * int(self.features.global_room_position)
             + 2 * self.num_room_parts * int(self.features.room_part_furthest_distance)
             + self.num_room_parts * int(self.features.room_part_save_distance)
+            + self.num_room_parts * int(self.features.room_part_frontier_distance)
             + (
                 door_match_embedding_width
                 + 2 * connection_output_size
@@ -324,6 +325,10 @@ class FrontierModel(torch.nn.Module):
         self.room_part_save_distance_embedding = (
             torch.nn.Embedding(256, 1)
             if self.features.room_part_save_distance else None
+        )
+        self.room_part_frontier_distance_embedding = (
+            torch.nn.Embedding(256, 1)
+            if self.features.room_part_frontier_distance else None
         )
         self.frontier_pos_embedding_x = (
             torch.nn.Parameter(
@@ -522,6 +527,16 @@ class FrontierModel(torch.nn.Module):
         distances = features.room_part_save_distance.to(torch.int64)
         return self.room_part_save_distance_embedding(distances).flatten(1).to(dtype)
 
+    def _room_part_frontier_distance_features(
+        self,
+        features: SparseFeatures,
+        dtype: torch.dtype,
+    ) -> torch.Tensor | None:
+        if self.room_part_frontier_distance_embedding is None:
+            return None
+        distances = features.room_part_frontier_distance.to(torch.int64)
+        return self.room_part_frontier_distance_embedding(distances).flatten(1).to(dtype)
+
     def _relative_position_features(self, features, neighbor):
         if self.frontier_relative_pos_embedding_x is None:
             return None
@@ -622,6 +637,10 @@ class FrontierModel(torch.nn.Module):
             features,
             X.dtype,
         )
+        room_part_frontier_distance_features = self._room_part_frontier_distance_features(
+            features,
+            X.dtype,
+        )
         global_inputs = []
         if inventory_features is not None:
             global_inputs.append(inventory_features)
@@ -641,6 +660,8 @@ class FrontierModel(torch.nn.Module):
             global_inputs.append(room_part_furthest_distance_features)
         if room_part_save_distance_features is not None:
             global_inputs.append(room_part_save_distance_features)
+        if room_part_frontier_distance_features is not None:
+            global_inputs.append(room_part_frontier_distance_features)
         global_state = (
             self.global_mlp(torch.cat(global_inputs, dim=-1))
             if self.global_mlp is not None

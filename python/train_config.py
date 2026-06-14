@@ -99,6 +99,7 @@ class FeatureConfig(StrictBaseModel):
     global_room_position: bool
     room_part_furthest_distance: bool
     room_part_save_distance: bool
+    room_part_frontier_distance: bool
     frontier_mask: bool
     frontier_position: bool
     frontier_orientation: bool

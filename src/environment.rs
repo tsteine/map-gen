@@ -214,6 +214,7 @@ pub enum FrontierNeighborAlgorithm {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frontier {
     dir_door_idx: DirDoorIdx,
+    room_part_idx: RoomPartIdx,
     component: usize,
     kind: DoorKind,
     candidates: Vec<GeometryAction>, // possible geometry placements to connect to this frontier
@@ -263,6 +264,7 @@ pub struct FeatureConfig {
     pub global_room_position: bool,
     pub room_part_furthest_distance: bool,
     pub room_part_save_distance: bool,
+    pub room_part_frontier_distance: bool,
     pub frontier_mask: bool,
     pub frontier_position: bool,
     pub frontier_orientation: bool,
@@ -285,6 +287,7 @@ impl FeatureConfig {
             && !self.global_room_position
             && !self.room_part_furthest_distance
             && !self.room_part_save_distance
+            && !self.room_part_frontier_distance
             && !self.connection_reachability
             && !self.toilet_crossed_room
             && !self.has_frontier_features()
@@ -327,6 +330,7 @@ impl FeatureConfig {
             global_room_position: true,
             room_part_furthest_distance: true,
             room_part_save_distance: true,
+            room_part_frontier_distance: true,
             frontier_mask: true,
             frontier_position: true,
             frontier_orientation: true,
@@ -352,6 +356,7 @@ impl FeatureConfig {
             global_room_position: false,
             room_part_furthest_distance: false,
             room_part_save_distance: false,
+            room_part_frontier_distance: false,
             frontier_mask: false,
             frontier_position: false,
             frontier_orientation: false,
@@ -376,6 +381,7 @@ pub struct Features {
     pub room_part_furthest_destination: Vec<u8>,
     pub room_part_furthest_source: Vec<u8>,
     pub room_part_save_distance: Vec<u8>,
+    pub room_part_frontier_distance: Vec<u8>,
     // mask, x, y, vertical, kind
     pub frontier: Vec<i8>,
     // Occupied tiles in a square window centered on each frontier, packed row-major.
@@ -602,6 +608,7 @@ pub struct Environment {
     graph_distance: Vec<GraphDistance>,
     room_part_furthest_distance_cache: RoomPartFurthestDistanceCache,
     room_part_save_distance_cache: RoomPartSaveDistanceCache,
+    room_part_frontier_distance_cache: RoomPartFrontierDistanceCache,
     occupancy: Vec<u8>,
     known_outcomes: Option<PreliminaryOutcomes>,
     frontier_count_sum: u64,
@@ -617,6 +624,7 @@ struct FeatureSnapshot {
     scc_dag: SccDag,
     active_room_parts_len: usize,
     graph_distance_snapshot: GraphDistanceSnapshot,
+    room_part_frontier_distance_cache: RoomPartFrontierDistanceCache,
 }
 
 struct LookaheadSnapshot {
@@ -636,6 +644,7 @@ struct LookaheadSnapshot {
     scc_dag: SccDag,
     active_room_parts_len: usize,
     graph_distance_snapshot: GraphDistanceSnapshot,
+    room_part_frontier_distance_cache: RoomPartFrontierDistanceCache,
 }
 
 enum GraphDistanceSnapshot {
@@ -837,6 +846,145 @@ impl RoomPartSaveDistanceCache {
     }
 }
 
+#[derive(Clone)]
+struct RoomPartFrontierDistanceCache {
+    frontier_room_part_count: Vec<u16>,
+    nearest_frontier_destination: Vec<GraphDistance>,
+    nearest_frontier_source: Vec<GraphDistance>,
+}
+
+impl RoomPartFrontierDistanceCache {
+    fn new(graph_size: usize) -> Self {
+        Self {
+            frontier_room_part_count: vec![0; graph_size],
+            nearest_frontier_destination: vec![UNREACHABLE_DISTANCE; graph_size],
+            nearest_frontier_source: vec![UNREACHABLE_DISTANCE; graph_size],
+        }
+    }
+
+    fn clear(&mut self) {
+        self.frontier_room_part_count.fill(0);
+        self.nearest_frontier_destination.fill(UNREACHABLE_DISTANCE);
+        self.nearest_frontier_source.fill(UNREACHABLE_DISTANCE);
+    }
+
+    fn add_frontier_part(
+        &mut self,
+        graph_distance: &[GraphDistance],
+        graph_size: usize,
+        frontier_part: usize,
+    ) {
+        self.frontier_room_part_count[frontier_part] += 1;
+        if self.frontier_room_part_count[frontier_part] > 1 {
+            return;
+        }
+        for part in 0..graph_size {
+            let to_frontier = graph_distance[part * graph_size + frontier_part];
+            if to_frontier < self.nearest_frontier_destination[part] {
+                self.nearest_frontier_destination[part] = to_frontier;
+            }
+            let from_frontier = graph_distance[frontier_part * graph_size + part];
+            if from_frontier < self.nearest_frontier_source[part] {
+                self.nearest_frontier_source[part] = from_frontier;
+            }
+        }
+    }
+
+    fn remove_frontier_part(
+        &mut self,
+        graph_distance: &[GraphDistance],
+        graph_size: usize,
+        frontier_part: usize,
+    ) {
+        debug_assert!(self.frontier_room_part_count[frontier_part] > 0);
+        self.frontier_room_part_count[frontier_part] -= 1;
+        if self.frontier_room_part_count[frontier_part] > 0 {
+            return;
+        }
+        for part in 0..graph_size {
+            if self.nearest_frontier_destination[part]
+                == graph_distance[part * graph_size + frontier_part]
+            {
+                self.nearest_frontier_destination[part] =
+                    self.nearest_frontier_destination_for_part(graph_distance, graph_size, part);
+            }
+            if self.nearest_frontier_source[part]
+                == graph_distance[frontier_part * graph_size + part]
+            {
+                self.nearest_frontier_source[part] =
+                    self.nearest_frontier_source_for_part(graph_distance, graph_size, part);
+            }
+        }
+    }
+
+    fn set_distance(
+        &mut self,
+        graph_distance: &[GraphDistance],
+        graph_size: usize,
+        from_part: usize,
+        to_part: usize,
+        old_distance: GraphDistance,
+        new_distance: GraphDistance,
+    ) {
+        if old_distance == new_distance {
+            return;
+        }
+        if self.frontier_room_part_count[to_part] > 0
+            && new_distance < self.nearest_frontier_destination[from_part]
+        {
+            self.nearest_frontier_destination[from_part] = new_distance;
+        } else if self.frontier_room_part_count[to_part] > 0
+            && old_distance == self.nearest_frontier_destination[from_part]
+            && new_distance > old_distance
+        {
+            self.nearest_frontier_destination[from_part] =
+                self.nearest_frontier_destination_for_part(graph_distance, graph_size, from_part);
+        }
+
+        if self.frontier_room_part_count[from_part] > 0
+            && new_distance < self.nearest_frontier_source[to_part]
+        {
+            self.nearest_frontier_source[to_part] = new_distance;
+        } else if self.frontier_room_part_count[from_part] > 0
+            && old_distance == self.nearest_frontier_source[to_part]
+            && new_distance > old_distance
+        {
+            self.nearest_frontier_source[to_part] =
+                self.nearest_frontier_source_for_part(graph_distance, graph_size, to_part);
+        }
+    }
+
+    fn nearest_frontier_destination_for_part(
+        &self,
+        graph_distance: &[GraphDistance],
+        graph_size: usize,
+        part: usize,
+    ) -> GraphDistance {
+        self.frontier_room_part_count
+            .iter()
+            .enumerate()
+            .filter(|&(_, &count)| count > 0)
+            .map(|(frontier_part, _)| graph_distance[part * graph_size + frontier_part])
+            .min()
+            .unwrap_or(UNREACHABLE_DISTANCE)
+    }
+
+    fn nearest_frontier_source_for_part(
+        &self,
+        graph_distance: &[GraphDistance],
+        graph_size: usize,
+        part: usize,
+    ) -> GraphDistance {
+        self.frontier_room_part_count
+            .iter()
+            .enumerate()
+            .filter(|&(_, &count)| count > 0)
+            .map(|(frontier_part, _)| graph_distance[frontier_part * graph_size + part])
+            .min()
+            .unwrap_or(UNREACHABLE_DISTANCE)
+    }
+}
+
 impl Environment {
     pub fn new(common: &CommonData, map_size: (Coord, Coord), seed: u64) -> Self {
         Self {
@@ -872,6 +1020,9 @@ impl Environment {
                 common.room_part.len(),
             ),
             room_part_save_distance_cache: RoomPartSaveDistanceCache::new(common.room_part.len()),
+            room_part_frontier_distance_cache: RoomPartFrontierDistanceCache::new(
+                common.room_part.len(),
+            ),
             occupancy: vec![0; map_size.0 as usize * map_size.1 as usize],
             known_outcomes: None,
             frontier_count_sum: 0,
@@ -903,6 +1054,7 @@ impl Environment {
         self.graph_distance.fill(UNREACHABLE_DISTANCE);
         self.room_part_furthest_distance_cache.clear();
         self.room_part_save_distance_cache.clear();
+        self.room_part_frontier_distance_cache.clear();
         self.occupancy.fill(0);
         self.known_outcomes = None;
         self.frontier_count_sum = 0;
@@ -1224,6 +1376,31 @@ impl Environment {
             .collect()
     }
 
+    fn room_part_frontier_distance_features(&self, common: &CommonData) -> Vec<u8> {
+        debug_assert_eq!(
+            self.room_part_frontier_distance_cache
+                .nearest_frontier_destination
+                .len(),
+            common.room_part.len()
+        );
+        self.room_part_frontier_distance_cache
+            .nearest_frontier_destination
+            .iter()
+            .zip(
+                &self
+                    .room_part_frontier_distance_cache
+                    .nearest_frontier_source,
+            )
+            .map(|(&to_frontier, &from_frontier)| {
+                if to_frontier == UNREACHABLE_DISTANCE || from_frontier == UNREACHABLE_DISTANCE {
+                    0
+                } else {
+                    to_frontier.saturating_add(from_frontier).saturating_add(1)
+                }
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     fn slow_room_part_furthest_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
         fn encode_distance(distance: GraphDistance) -> u8 {
@@ -1303,6 +1480,39 @@ impl Environment {
     }
 
     #[cfg(test)]
+    fn slow_room_part_frontier_distance_features(&self, common: &CommonData) -> Vec<u8> {
+        let graph_size = common.room_part.len();
+        let frontier_parts = self
+            .frontier
+            .values()
+            .map(|frontier| frontier.room_part_idx as usize)
+            .collect::<Vec<_>>();
+        (0..graph_size)
+            .map(|part| {
+                let nearest_frontier_destination = frontier_parts
+                    .iter()
+                    .map(|&frontier_part| self.graph_distance[part * graph_size + frontier_part])
+                    .min()
+                    .unwrap_or(UNREACHABLE_DISTANCE);
+                let nearest_frontier_source = frontier_parts
+                    .iter()
+                    .map(|&frontier_part| self.graph_distance[frontier_part * graph_size + part])
+                    .min()
+                    .unwrap_or(UNREACHABLE_DISTANCE);
+                if nearest_frontier_destination == UNREACHABLE_DISTANCE
+                    || nearest_frontier_source == UNREACHABLE_DISTANCE
+                {
+                    0
+                } else {
+                    nearest_frontier_destination
+                        .saturating_add(nearest_frontier_source)
+                        .saturating_add(1)
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
     fn assert_room_part_furthest_distance_cache_matches_slow(&self, common: &CommonData) {
         assert_eq!(
             self.room_part_furthest_distance_features(common),
@@ -1315,6 +1525,14 @@ impl Environment {
         assert_eq!(
             self.room_part_save_distance_features(common),
             self.slow_room_part_save_distance_features(common)
+        );
+    }
+
+    #[cfg(test)]
+    fn assert_room_part_frontier_distance_cache_matches_slow(&self, common: &CommonData) {
+        assert_eq!(
+            self.room_part_frontier_distance_features(common),
+            self.slow_room_part_frontier_distance_features(common)
         );
     }
 
@@ -1388,6 +1606,11 @@ impl Environment {
                 let p1 = common.room_dir_door[door.direction as usize][i1 as usize].room_part_idx;
                 let p2 = common.room_dir_door[door.direction.opposite() as usize][i2 as usize]
                     .room_part_idx;
+                self.room_part_frontier_distance_cache.remove_frontier_part(
+                    &self.graph_distance,
+                    common.room_part.len(),
+                    frontier.room_part_idx as usize,
+                );
                 self.add_component_edge(
                     self.room_part_component[p1 as usize],
                     self.room_part_component[p2 as usize],
@@ -1458,13 +1681,22 @@ impl Environment {
                     }
                     profile_end(PROFILE_STEP_BUILD_NEW_FRONTIER_CANDIDATES, profile);
                 }
+                let frontier_part = common.room_dir_door[door.direction as usize]
+                    [door.dir_door_idx as usize]
+                    .room_part_idx;
                 let frontier = Frontier {
                     dir_door_idx: door.dir_door_idx,
+                    room_part_idx: frontier_part,
                     component: self.room_part_component(common, action.room_idx, door.part_idx),
                     kind: common.room_dir_door[door.direction as usize][door.dir_door_idx as usize]
                         .kind,
                     candidates,
                 };
+                self.room_part_frontier_distance_cache.add_frontier_part(
+                    &self.graph_distance,
+                    common.room_part.len(),
+                    frontier_part as usize,
+                );
                 self.frontier.insert(door_loc, frontier);
             }
         }
@@ -1737,6 +1969,14 @@ impl Environment {
             distance,
         );
         self.room_part_save_distance_cache.set_distance(
+            &self.graph_distance,
+            graph_size,
+            from_part,
+            to_part,
+            old_distance,
+            distance,
+        );
+        self.room_part_frontier_distance_cache.set_distance(
             &self.graph_distance,
             graph_size,
             from_part,
@@ -2549,6 +2789,7 @@ impl Environment {
             scc_dag: self.scc_dag.clone(),
             active_room_parts_len: self.active_room_parts.len(),
             graph_distance_snapshot,
+            room_part_frontier_distance_cache: self.room_part_frontier_distance_cache.clone(),
         };
         profile_end(PROFILE_LOOKAHEAD_SNAPSHOT, profile);
         let profile = profile_start();
@@ -2581,6 +2822,7 @@ impl Environment {
         self.active_room_parts
             .truncate(snapshot.active_room_parts_len);
         self.restore_graph_distance_snapshot(common, snapshot.graph_distance_snapshot);
+        self.room_part_frontier_distance_cache = snapshot.room_part_frontier_distance_cache;
     }
 
     fn apply_feature_candidate(
@@ -2597,6 +2839,7 @@ impl Environment {
                     location,
                     Frontier {
                         dir_door_idx: frontier.dir_door_idx,
+                        room_part_idx: frontier.room_part_idx,
                         component: frontier.component,
                         kind: frontier.kind,
                         candidates: vec![],
@@ -2618,6 +2861,7 @@ impl Environment {
             scc_dag: self.scc_dag.clone(),
             active_room_parts_len: self.active_room_parts.len(),
             graph_distance_snapshot,
+            room_part_frontier_distance_cache: self.room_part_frontier_distance_cache.clone(),
         };
         self.step_for_features(candidate, common);
         snapshot
@@ -2644,6 +2888,7 @@ impl Environment {
         self.active_room_parts
             .truncate(snapshot.active_room_parts_len);
         self.restore_graph_distance_snapshot(common, snapshot.graph_distance_snapshot);
+        self.room_part_frontier_distance_cache = snapshot.room_part_frontier_distance_cache;
     }
 
     #[cfg(test)]
@@ -2742,6 +2987,11 @@ impl Environment {
             };
         let room_part_save_distance = if config.room_part_save_distance {
             self.room_part_save_distance_features(common)
+        } else {
+            vec![]
+        };
+        let room_part_frontier_distance = if config.room_part_frontier_distance {
+            self.room_part_frontier_distance_features(common)
         } else {
             vec![]
         };
@@ -2999,6 +3249,7 @@ impl Environment {
             room_part_furthest_destination,
             room_part_furthest_source,
             room_part_save_distance,
+            room_part_frontier_distance,
             frontier,
             frontier_occupancy,
             frontier_neighbor,
@@ -3576,6 +3827,7 @@ mod tests {
             door_location(0, 0, false),
             Frontier {
                 dir_door_idx: 0,
+                room_part_idx: 0,
                 component: 0,
                 kind: 0,
                 candidates: vec![candidate, candidate],
@@ -3585,6 +3837,7 @@ mod tests {
             door_location(1, 0, false),
             Frontier {
                 dir_door_idx: 0,
+                room_part_idx: 0,
                 component: 0,
                 kind: 0,
                 candidates: vec![candidate],
@@ -4558,6 +4811,161 @@ mod tests {
             vec![1, 1, 255]
         );
         env.assert_room_part_save_distance_cache_matches_slow(&common);
+    }
+
+    #[test]
+    fn room_part_frontier_distance_features_encode_nearest_round_trip_frontier_distance() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 0);
+        let graph_size = common.room_part.len();
+        env.active_room_parts = vec![0, 1, 2];
+        for part in 0..graph_size {
+            env.set_graph_distance(graph_size, part, part, 0);
+        }
+        env.set_graph_distance(graph_size, 1, 0, 2);
+        env.set_graph_distance(graph_size, 0, 1, 4);
+        env.set_graph_distance(graph_size, 2, 0, 5);
+        env.frontier.insert(
+            door_location(0, 0, false),
+            Frontier {
+                dir_door_idx: 0,
+                room_part_idx: 0,
+                component: 0,
+                kind: 0,
+                candidates: vec![],
+            },
+        );
+        env.room_part_frontier_distance_cache
+            .add_frontier_part(&env.graph_distance, graph_size, 0);
+
+        assert_eq!(
+            env.room_part_frontier_distance_features(&common),
+            vec![1, 7, 0]
+        );
+        env.assert_room_part_frontier_distance_cache_matches_slow(&common);
+    }
+
+    #[test]
+    fn room_part_frontier_distance_cache_handles_removal_counts_and_saturation() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 0);
+        let graph_size = common.room_part.len();
+        env.active_room_parts = vec![0, 1, 2];
+        for part in 0..graph_size {
+            env.set_graph_distance(graph_size, part, part, 0);
+        }
+        env.set_graph_distance(graph_size, 2, 0, 250);
+        env.set_graph_distance(graph_size, 0, 2, 10);
+        env.set_graph_distance(graph_size, 2, 1, 20);
+        env.set_graph_distance(graph_size, 1, 2, 30);
+
+        for (idx, frontier_part) in [(0, 0), (1, 1), (2, 1)] {
+            env.frontier.insert(
+                door_location(idx, 0, false),
+                Frontier {
+                    dir_door_idx: 0,
+                    room_part_idx: frontier_part,
+                    component: 0,
+                    kind: 0,
+                    candidates: vec![],
+                },
+            );
+            env.room_part_frontier_distance_cache.add_frontier_part(
+                &env.graph_distance,
+                graph_size,
+                frontier_part as usize,
+            );
+        }
+
+        assert_eq!(
+            env.room_part_frontier_distance_features(&common),
+            vec![1, 1, 31]
+        );
+
+        env.set_graph_distance(graph_size, 1, 2, 5);
+        assert_eq!(
+            env.room_part_frontier_distance_features(&common),
+            vec![1, 1, 26]
+        );
+
+        env.frontier.remove(&door_location(1, 0, false));
+        env.room_part_frontier_distance_cache.remove_frontier_part(
+            &env.graph_distance,
+            graph_size,
+            1,
+        );
+        assert_eq!(
+            env.room_part_frontier_distance_features(&common),
+            vec![1, 1, 26]
+        );
+
+        env.frontier.remove(&door_location(2, 0, false));
+        env.room_part_frontier_distance_cache.remove_frontier_part(
+            &env.graph_distance,
+            graph_size,
+            1,
+        );
+        assert_eq!(
+            env.room_part_frontier_distance_features(&common),
+            vec![1, 0, 255]
+        );
+        env.assert_room_part_frontier_distance_cache_matches_slow(&common);
     }
 
     #[test]
