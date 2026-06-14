@@ -595,6 +595,7 @@ pub struct Environment {
     scc_dag: SccDag, // DAG of strongly connected components (condensation graph)
     active_room_parts: Vec<RoomPartIdx>,
     graph_distance: Vec<GraphDistance>,
+    room_part_graph_distance_cache: RoomPartGraphDistanceCache,
     occupancy: Vec<u8>,
     known_outcomes: Option<PreliminaryOutcomes>,
     frontier_count_sum: u64,
@@ -633,8 +634,94 @@ struct LookaheadSnapshot {
 
 enum GraphDistanceSnapshot {
     None,
-    NewRoom(RoomIdx),
-    Full(Vec<GraphDistance>),
+    NewRoom {
+        room_idx: RoomIdx,
+        cache: RoomPartGraphDistanceCache,
+    },
+    Full {
+        graph_distance: Vec<GraphDistance>,
+        cache: RoomPartGraphDistanceCache,
+    },
+}
+
+#[derive(Clone)]
+struct RoomPartGraphDistanceCache {
+    furthest_destination: Vec<GraphDistance>,
+    furthest_source: Vec<GraphDistance>,
+}
+
+impl RoomPartGraphDistanceCache {
+    fn new(graph_size: usize) -> Self {
+        Self {
+            furthest_destination: vec![UNREACHABLE_DISTANCE; graph_size],
+            furthest_source: vec![UNREACHABLE_DISTANCE; graph_size],
+        }
+    }
+
+    fn clear(&mut self) {
+        self.furthest_destination.fill(UNREACHABLE_DISTANCE);
+        self.furthest_source.fill(UNREACHABLE_DISTANCE);
+    }
+
+    fn set_distance(
+        &mut self,
+        graph_distance: &[GraphDistance],
+        graph_size: usize,
+        from_part: usize,
+        to_part: usize,
+        old_distance: GraphDistance,
+        new_distance: GraphDistance,
+    ) {
+        if old_distance == new_distance {
+            return;
+        }
+        if new_distance != UNREACHABLE_DISTANCE
+            && (self.furthest_destination[from_part] == UNREACHABLE_DISTANCE
+                || new_distance > self.furthest_destination[from_part])
+        {
+            self.furthest_destination[from_part] = new_distance;
+        } else if old_distance == self.furthest_destination[from_part]
+            && new_distance < old_distance
+        {
+            self.furthest_destination[from_part] =
+                Self::furthest_destination_for_source(graph_distance, graph_size, from_part);
+        }
+
+        if new_distance != UNREACHABLE_DISTANCE
+            && (self.furthest_source[to_part] == UNREACHABLE_DISTANCE
+                || new_distance > self.furthest_source[to_part])
+        {
+            self.furthest_source[to_part] = new_distance;
+        } else if old_distance == self.furthest_source[to_part] && new_distance < old_distance {
+            self.furthest_source[to_part] =
+                Self::furthest_source_for_destination(graph_distance, graph_size, to_part);
+        }
+    }
+
+    fn furthest_destination_for_source(
+        graph_distance: &[GraphDistance],
+        graph_size: usize,
+        from_part: usize,
+    ) -> GraphDistance {
+        graph_distance[from_part * graph_size..(from_part + 1) * graph_size]
+            .iter()
+            .copied()
+            .filter(|&distance| distance != UNREACHABLE_DISTANCE)
+            .max()
+            .unwrap_or(UNREACHABLE_DISTANCE)
+    }
+
+    fn furthest_source_for_destination(
+        graph_distance: &[GraphDistance],
+        graph_size: usize,
+        to_part: usize,
+    ) -> GraphDistance {
+        (0..graph_size)
+            .map(|from_part| graph_distance[from_part * graph_size + to_part])
+            .filter(|&distance| distance != UNREACHABLE_DISTANCE)
+            .max()
+            .unwrap_or(UNREACHABLE_DISTANCE)
+    }
 }
 
 impl Environment {
@@ -668,6 +755,7 @@ impl Environment {
                 UNREACHABLE_DISTANCE;
                 common.room_part.len() * common.room_part.len()
             ],
+            room_part_graph_distance_cache: RoomPartGraphDistanceCache::new(common.room_part.len()),
             occupancy: vec![0; map_size.0 as usize * map_size.1 as usize],
             known_outcomes: None,
             frontier_count_sum: 0,
@@ -697,6 +785,7 @@ impl Environment {
         self.scc_dag.clear();
         self.active_room_parts.clear();
         self.graph_distance.fill(UNREACHABLE_DISTANCE);
+        self.room_part_graph_distance_cache.clear();
         self.occupancy.fill(0);
         self.known_outcomes = None;
         self.frontier_count_sum = 0;
@@ -935,6 +1024,38 @@ impl Environment {
             }
         }
 
+        debug_assert_eq!(
+            self.room_part_graph_distance_cache
+                .furthest_destination
+                .len(),
+            common.room_part.len()
+        );
+        (
+            self.room_part_graph_distance_cache
+                .furthest_destination
+                .iter()
+                .copied()
+                .map(encode_distance)
+                .collect(),
+            self.room_part_graph_distance_cache
+                .furthest_source
+                .iter()
+                .copied()
+                .map(encode_distance)
+                .collect(),
+        )
+    }
+
+    #[cfg(test)]
+    fn slow_room_part_graph_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
+        fn encode_distance(distance: GraphDistance) -> u8 {
+            if distance == UNREACHABLE_DISTANCE {
+                0
+            } else {
+                distance + 1
+            }
+        }
+
         let graph_size = common.room_part.len();
         let mut furthest_destination = vec![UNREACHABLE_DISTANCE; graph_size];
         let mut furthest_source = vec![UNREACHABLE_DISTANCE; graph_size];
@@ -963,6 +1084,14 @@ impl Environment {
                 .collect(),
             furthest_source.into_iter().map(encode_distance).collect(),
         )
+    }
+
+    #[cfg(test)]
+    fn assert_room_part_graph_distance_cache_matches_slow(&self, common: &CommonData) {
+        assert_eq!(
+            self.room_part_graph_distance_features(common),
+            self.slow_room_part_graph_distance_features(common)
+        );
     }
 
     fn step_for_lookahead(&mut self, action: Action, common: &CommonData) {
@@ -1361,7 +1490,19 @@ impl Environment {
         distance: GraphDistance,
     ) {
         let idx = from_part * graph_size + to_part;
+        let old_distance = self.graph_distance[idx];
+        if old_distance == distance {
+            return;
+        }
         self.graph_distance[idx] = distance;
+        self.room_part_graph_distance_cache.set_distance(
+            &self.graph_distance,
+            graph_size,
+            from_part,
+            to_part,
+            old_distance,
+            distance,
+        );
     }
 
     fn graph_distance_snapshot_for_candidate(
@@ -1382,9 +1523,15 @@ impl Environment {
             })
             .count();
         if external_edge_count >= 2 {
-            GraphDistanceSnapshot::Full(self.graph_distance.clone())
+            GraphDistanceSnapshot::Full {
+                graph_distance: self.graph_distance.clone(),
+                cache: self.room_part_graph_distance_cache.clone(),
+            }
         } else {
-            GraphDistanceSnapshot::NewRoom(candidate.room_idx)
+            GraphDistanceSnapshot::NewRoom {
+                room_idx: candidate.room_idx,
+                cache: self.room_part_graph_distance_cache.clone(),
+            }
         }
     }
 
@@ -1395,11 +1542,16 @@ impl Environment {
     ) {
         match snapshot {
             GraphDistanceSnapshot::None => {}
-            GraphDistanceSnapshot::NewRoom(room_idx) => {
+            GraphDistanceSnapshot::NewRoom { room_idx, cache } => {
                 self.clear_room_graph_distances(common, room_idx);
+                self.room_part_graph_distance_cache = cache;
             }
-            GraphDistanceSnapshot::Full(graph_distance) => {
+            GraphDistanceSnapshot::Full {
+                graph_distance,
+                cache,
+            } => {
                 self.graph_distance = graph_distance;
+                self.room_part_graph_distance_cache = cache;
             }
         }
     }
@@ -3863,23 +4015,56 @@ mod tests {
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
         let mut env = Environment::new(&common, (5, 5), 0);
-        env.graph_distance = vec![
-            0,
-            2,
-            UNREACHABLE_DISTANCE,
-            1,
-            0,
-            3,
-            UNREACHABLE_DISTANCE,
-            UNREACHABLE_DISTANCE,
-            UNREACHABLE_DISTANCE,
-        ];
+        let graph_size = common.room_part.len();
+        for (from_part, to_part, distance) in
+            [(0, 0, 0), (0, 1, 2), (1, 0, 1), (1, 1, 0), (1, 2, 3)]
+        {
+            env.set_graph_distance(graph_size, from_part, to_part, distance);
+        }
 
         let (furthest_destination, furthest_source) =
             env.room_part_graph_distance_features(&common);
 
         assert_eq!(furthest_destination, vec![3, 4, 0]);
         assert_eq!(furthest_source, vec![2, 3, 4]);
+        env.assert_room_part_graph_distance_cache_matches_slow(&common);
+    }
+
+    #[test]
+    fn room_part_graph_distance_cache_handles_decreased_max_distance() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": [[0, 1], [1, 2], [2, 0]]
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 0);
+        let graph_size = common.room_part.len();
+        for (from_part, to_part, distance) in
+            [(0, 0, 0), (0, 1, 4), (0, 2, 2), (1, 2, 4), (2, 2, 0)]
+        {
+            env.set_graph_distance(graph_size, from_part, to_part, distance);
+        }
+        env.set_graph_distance(graph_size, 0, 1, 1);
+        env.set_graph_distance(graph_size, 1, 2, 3);
+
+        let (furthest_destination, furthest_source) =
+            env.room_part_graph_distance_features(&common);
+
+        assert_eq!(furthest_destination, vec![3, 4, 1]);
+        assert_eq!(furthest_source, vec![1, 2, 4]);
+        env.assert_room_part_graph_distance_cache_matches_slow(&common);
     }
 
     #[test]
@@ -4317,6 +4502,7 @@ mod tests {
         assert_eq!(env.scc_dag, expected_scc_dag);
         assert_eq!(env.active_room_parts, expected_active_room_parts);
         assert_eq!(env.graph_distance, expected_graph_distance);
+        env.assert_room_part_graph_distance_cache_matches_slow(&common);
         env.step(candidate, &common);
         assert_eq!(
             simulated,
@@ -4395,6 +4581,7 @@ mod tests {
 
         assert_eq!(env.active_room_parts, expected_active_room_parts);
         assert_eq!(env.graph_distance, expected_graph_distance);
+        env.assert_room_part_graph_distance_cache_matches_slow(&common);
     }
 
     #[test]

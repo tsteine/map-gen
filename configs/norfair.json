@@ -57,7 +57,7 @@
     "reward_balance": 0.2,
     "reward_toilet_balance": 0.2,
     "reward_frontier": 0.0,
-    "reward_graph_diameter": 0.1,
+    "reward_graph_diameter": 0.2,
     "frontier_neighbor_algorithm": "nearest-exclusive",
     "frontier_neighbor_count": 1,
     "frontier_window_size": 8,
