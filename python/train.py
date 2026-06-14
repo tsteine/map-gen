@@ -979,6 +979,14 @@ class TrainingSession:
             )
             balance_preds = self.balance_model(torch.log(generate_config.temperature))
             balance_door_match_ss = compute_balance_door_match_ss(balance_preds)
+            balance_left_topk = topk_or_zeros(
+                torch.softmax(balance_preds.left, dim=-1).flatten(),
+                3,
+            )
+            balance_up_topk = topk_or_zeros(
+                torch.softmax(balance_preds.up, dim=-1).flatten(),
+                3,
+            )
             balance_toilet_crossed_room_p = torch.softmax(
                 balance_preds.toilet_crossed_room,
                 dim=-1,
@@ -1051,6 +1059,12 @@ class TrainingSession:
             "door_match_up_top2": up_topk[1],
             "door_match_up_top3": up_topk[2],
             "door_match_ss": door_match_ss,
+            "balance_door_match_left_top1": balance_left_topk[0],
+            "balance_door_match_left_top2": balance_left_topk[1],
+            "balance_door_match_left_top3": balance_left_topk[2],
+            "balance_door_match_up_top1": balance_up_topk[0],
+            "balance_door_match_up_top2": balance_up_topk[1],
+            "balance_door_match_up_top3": balance_up_topk[2],
             "balance_door_match_ss": balance_door_match_ss,
             "toilet_crossed_room_top1": toilet_crossed_room_topk[0],
             "toilet_crossed_room_top2": toilet_crossed_room_topk[1],
