@@ -92,7 +92,7 @@
     "toilet_weight": 1.0,
     "balance_weight": 1.0,
     "toilet_balance_weight": 1.0,
-    "avg_frontiers_weight": 0.1,
+    "avg_frontiers_weight": 0.0,
     "proposal_weight": 0.005,
     "pipeline_groups": 4,
     "gradient_accumulation_steps": 1,

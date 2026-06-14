@@ -10,13 +10,14 @@ use std::time::Instant;
 
 use crate::common::{
     Action, CommonData, ConnectionVariantIdx, Coord, DirDoorIdx, Direction, DoorKind, DoorLocation,
-    DoorValidOutcome, DoorVariantIdx, FrontierIdx, GeometryData, GeometryIdx, NUM_DIRS, PartIdx,
-    RoomIdx, RoomPartIdx, get_behind_door_position,
+    DoorValidOutcome, DoorVariantIdx, FrontierIdx, GeometryData, GeometryIdx, GraphDistance,
+    NUM_DIRS, PartIdx, RoomIdx, RoomPartIdx, get_behind_door_position,
 };
 use crate::engine::{profile_enabled, record_profile_metric};
 use crate::scc_dag::SccDag;
 
 const NO_COMPONENT: usize = usize::MAX;
+const UNREACHABLE_DISTANCE: GraphDistance = GraphDistance::MAX;
 pub const FEATURE_FRONTIER_WIDTH: usize = 5;
 const PROFILE_STEP_PUSH_ACTION: usize = 13;
 const PROFILE_STEP_MARK_ROOM_USED: usize = 14;
@@ -566,6 +567,7 @@ pub struct Environment {
     connection_variant_unused_count: Vec<usize>, // number of unused room representatives for each connection variant
     room_part_component: Vec<usize>,             // maps placed room door groups to SCC components
     scc_dag: SccDag, // DAG of strongly connected components (condensation graph)
+    graph_distance: Vec<GraphDistance>,
     occupancy: Vec<u8>,
     known_outcomes: Option<PreliminaryOutcomes>,
     frontier_count_sum: u64,
@@ -579,6 +581,7 @@ struct FeatureSnapshot {
     connection_variant_unused_count: usize,
     room_part_component: Vec<usize>,
     scc_dag: SccDag,
+    graph_distance: Vec<GraphDistance>,
 }
 
 struct LookaheadSnapshot {
@@ -596,6 +599,7 @@ struct LookaheadSnapshot {
     door_matches: Vec<(usize, usize, DirDoorIdx)>,
     room_part_component: Vec<usize>,
     scc_dag: SccDag,
+    graph_distance: Vec<GraphDistance>,
 }
 
 impl Environment {
@@ -624,6 +628,10 @@ impl Environment {
                 .collect(),
             room_part_component: vec![NO_COMPONENT; common.room_part.len()],
             scc_dag: SccDag::default(),
+            graph_distance: vec![
+                UNREACHABLE_DISTANCE;
+                common.room_part.len() * common.room_part.len()
+            ],
             occupancy: vec![0; map_size.0 as usize * map_size.1 as usize],
             known_outcomes: None,
             frontier_count_sum: 0,
@@ -651,6 +659,7 @@ impl Environment {
         );
         self.room_part_component.fill(NO_COMPONENT);
         self.scc_dag.clear();
+        self.graph_distance.fill(UNREACHABLE_DISTANCE);
         self.occupancy.fill(0);
         self.known_outcomes = None;
         self.frontier_count_sum = 0;
@@ -941,6 +950,8 @@ impl Environment {
                 let p1 = common.room_dir_door[door.direction as usize][i1 as usize].room_part_idx;
                 let p2 = common.room_dir_door[door.direction.opposite() as usize][i2 as usize]
                     .room_part_idx;
+                self.add_graph_distance_edge(common, p1, p2, 1);
+                self.add_graph_distance_edge(common, p2, p1, 1);
                 self.add_component_edge(
                     self.room_part_component[p1 as usize],
                     self.room_part_component[p2 as usize],
@@ -1061,6 +1072,7 @@ impl Environment {
     fn add_room_components_and_edges(&mut self, action: Action, common: &CommonData) {
         let room_idx = action.room_idx;
         let room = &common.room[room_idx as usize];
+        self.add_room_part_distances(common, room_idx);
         let mut attached_room_parts = vec![Vec::new(); room.door_group_count];
         for door in &room.doors {
             let door_loc = DoorLocation::new(door, action.x, action.y);
@@ -1103,6 +1115,71 @@ impl Environment {
             let to = self.room_part_component(common, room_idx, to_part);
             self.add_component_edge(from, to);
         }
+    }
+
+    fn add_room_part_distances(&mut self, common: &CommonData, room_idx: RoomIdx) {
+        let room = &common.room[room_idx as usize];
+        let graph_size = common.room_part.len();
+        for from_part in 0..room.door_group_count {
+            let from_room_part = room.door_group_offset + from_part;
+            for to_part in 0..room.door_group_count {
+                let to_room_part = room.door_group_offset + to_part;
+                self.graph_distance[from_room_part * graph_size + to_room_part] =
+                    room.part_distances[from_part * room.door_group_count + to_part];
+            }
+        }
+    }
+
+    fn add_graph_distance_edge(
+        &mut self,
+        common: &CommonData,
+        from_part: RoomPartIdx,
+        to_part: RoomPartIdx,
+        cost: GraphDistance,
+    ) {
+        let graph_size = common.room_part.len();
+        let from_part = from_part as usize;
+        let to_part = to_part as usize;
+        let edge_idx = from_part * graph_size + to_part;
+        if cost < self.graph_distance[edge_idx] {
+            self.graph_distance[edge_idx] = cost;
+        }
+
+        for source in 0..graph_size {
+            let source_distance = self.graph_distance[source * graph_size + from_part];
+            if source_distance == UNREACHABLE_DISTANCE {
+                continue;
+            }
+            let Some(prefix_distance) = source_distance.checked_add(cost) else {
+                continue;
+            };
+            if prefix_distance == UNREACHABLE_DISTANCE {
+                continue;
+            }
+            for destination in 0..graph_size {
+                let destination_distance = self.graph_distance[to_part * graph_size + destination];
+                if destination_distance == UNREACHABLE_DISTANCE {
+                    continue;
+                }
+                let Some(distance) = prefix_distance.checked_add(destination_distance) else {
+                    continue;
+                };
+                if distance < self.graph_distance[source * graph_size + destination] {
+                    self.graph_distance[source * graph_size + destination] = distance;
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn graph_distance(
+        &self,
+        common: &CommonData,
+        from_part: RoomPartIdx,
+        to_part: RoomPartIdx,
+    ) -> GraphDistance {
+        let graph_size = common.room_part.len();
+        self.graph_distance[from_part as usize * graph_size + to_part as usize]
     }
 
     fn add_component_edge(&mut self, from_component: usize, to_component: usize) {
@@ -1816,6 +1893,7 @@ impl Environment {
             door_matches,
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
+            graph_distance: self.graph_distance.clone(),
         };
         profile_end(PROFILE_LOOKAHEAD_SNAPSHOT, profile);
         let profile = profile_start();
@@ -1845,6 +1923,7 @@ impl Environment {
         }
         self.room_part_component = snapshot.room_part_component;
         self.scc_dag = snapshot.scc_dag;
+        self.graph_distance = snapshot.graph_distance;
     }
 
     fn apply_feature_candidate(
@@ -1879,6 +1958,7 @@ impl Environment {
                 .map_or(0, |idx| self.connection_variant_unused_count[idx as usize]),
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
+            graph_distance: self.graph_distance.clone(),
         };
         self.step_for_features(candidate, common);
         snapshot
@@ -1897,6 +1977,7 @@ impl Environment {
         }
         self.room_part_component = snapshot.room_part_component;
         self.scc_dag = snapshot.scc_dag;
+        self.graph_distance = snapshot.graph_distance;
     }
 
     #[cfg(test)]
@@ -3182,6 +3263,181 @@ mod tests {
                 .iter()
                 .all(|&component| component == NO_COMPONENT)
         );
+        assert!(
+            env.graph_distance
+                .iter()
+                .all(|&distance| distance == GraphDistance::MAX)
+        );
+    }
+
+    #[test]
+    fn environment_tracks_global_graph_distances() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [[0, 1]],
+                "missing_connections": [[1, 0]]
+            },
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [[0, 1]],
+                "missing_connections": [[1, 0]]
+            },
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 0);
+
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        let room0_part0 = Environment::room_part_idx(&common, 0, 0);
+        let room0_part1 = Environment::room_part_idx(&common, 0, 1);
+        assert_eq!(env.graph_distance(&common, room0_part0, room0_part1), 0);
+        assert_eq!(
+            env.graph_distance(&common, room0_part1, room0_part0),
+            GraphDistance::MAX
+        );
+
+        env.step(
+            Action {
+                room_idx: 1,
+                x: 1,
+                y: 0,
+            },
+            &common,
+        );
+        let room1_part0 = Environment::room_part_idx(&common, 1, 0);
+        let room1_part1 = Environment::room_part_idx(&common, 1, 1);
+        assert_eq!(env.graph_distance(&common, room0_part0, room1_part0), 1);
+        assert_eq!(env.graph_distance(&common, room1_part0, room0_part0), 1);
+        assert_eq!(env.graph_distance(&common, room0_part0, room1_part1), 1);
+        assert_eq!(
+            env.graph_distance(&common, room1_part1, room0_part0),
+            GraphDistance::MAX
+        );
+
+        env.step(
+            Action {
+                room_idx: 2,
+                x: 2,
+                y: 0,
+            },
+            &common,
+        );
+        let room2_part0 = Environment::room_part_idx(&common, 2, 0);
+        assert_eq!(env.graph_distance(&common, room0_part0, room2_part0), 2);
+        assert_eq!(
+            env.graph_distance(&common, room2_part0, room0_part0),
+            GraphDistance::MAX
+        );
+        assert_eq!(
+            env.graph_distance(&common, room0_part1, room2_part0),
+            GraphDistance::MAX
+        );
+    }
+
+    #[test]
+    fn graph_distance_relaxation_updates_existing_parts_through_new_room() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            },
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            },
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [[0, 1]],
+                "missing_connections": [[1, 0]]
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 0);
+
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        env.step(
+            Action {
+                room_idx: 1,
+                x: 2,
+                y: 0,
+            },
+            &common,
+        );
+        let left_part = Environment::room_part_idx(&common, 0, 0);
+        let right_part = Environment::room_part_idx(&common, 1, 0);
+        assert_eq!(
+            env.graph_distance(&common, left_part, right_part),
+            GraphDistance::MAX
+        );
+
+        env.step(
+            Action {
+                room_idx: 2,
+                x: 1,
+                y: 0,
+            },
+            &common,
+        );
+
+        assert_eq!(env.graph_distance(&common, left_part, right_part), 2);
+        assert_eq!(
+            env.graph_distance(&common, right_part, left_part),
+            GraphDistance::MAX
+        );
     }
 
     #[test]
@@ -3590,6 +3846,7 @@ mod tests {
         let expected_connection_variant_unused_count = env.connection_variant_unused_count.clone();
         let expected_room_part_component = env.room_part_component.clone();
         let expected_scc_dag = env.scc_dag.clone();
+        let expected_graph_distance = env.graph_distance.clone();
         let expected_frontier_count =
             env.feature_frontier_count_after_candidate(candidate, &common);
         let simulated = env.features_after_candidate(
@@ -3615,6 +3872,7 @@ mod tests {
         );
         assert_eq!(env.room_part_component, expected_room_part_component);
         assert_eq!(env.scc_dag, expected_scc_dag);
+        assert_eq!(env.graph_distance, expected_graph_distance);
         env.step(candidate, &common);
         assert_eq!(
             simulated,
@@ -3642,6 +3900,55 @@ mod tests {
             simulated,
             env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4)
         );
+    }
+
+    #[test]
+    fn outcomes_after_candidate_restores_graph_distances() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            },
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (4, 4), 0);
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        let expected_graph_distance = env.graph_distance.clone();
+
+        env.outcomes_after_candidate(
+            &common,
+            Action {
+                room_idx: 1,
+                x: 1,
+                y: 0,
+            },
+        );
+
+        assert_eq!(env.graph_distance, expected_graph_distance);
     }
 
     #[test]

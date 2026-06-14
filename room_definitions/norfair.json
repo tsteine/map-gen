@@ -1308,5 +1308,31 @@
         "connections": [],
         "missing_connections": [],
         "toilet_crossing_x": []
-    }
+    },
+    {
+        "room_id": 321,
+        "name": "Toilet",
+        "map": [
+            [1],
+            [1],
+            [0],
+            [0],
+            [0],
+            [0],
+            [0],
+            [0],
+            [1],
+            [1]
+        ],
+        "doors": [
+            [
+                {"direction": "down", "x": 0, "y": 9, "kind": 0},
+                {"direction": "up",   "x": 0, "y": 0, "kind": 0}
+            ]
+        ],
+        "connections": [],
+        "missing_connections": [],
+        "toilet_crossing_x": [],
+        "special_type": "toilet"
+    }    
 ]

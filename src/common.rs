@@ -11,6 +11,7 @@ pub type DoorVariantIdx = i16; // index into door variants keyed by room type an
 pub type Coord = i8; // x or y position on the map
 pub type PartIdx = u8; // index of part within a room
 pub type RoomPartIdx = u16; // flat index of part across all rooms
+pub type GraphDistance = u8; // shortest-path cost between graph parts; u8::MAX means unreachable
 pub type DoorKind = i8; // distinguishes different types of "doors", e.g. regular, elevator, and sand.
 pub type DirDoorIdx = u8; // index of a door among all doors with the given direction, across all rooms
 
@@ -173,6 +174,7 @@ pub struct RoomData {
     pub door_group_offset: usize,
     pub door_group_count: usize,
     pub connections: Vec<(PartIdx, PartIdx)>,
+    pub part_distances: Vec<GraphDistance>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -359,6 +361,31 @@ fn validate_missing_connections(room_idx: usize, room: &Room) -> Result<()> {
         bail!("room {room_idx} connections and missing_connections are not strongly connected");
     }
     Ok(())
+}
+
+fn room_part_distances(room: &Room) -> Vec<GraphDistance> {
+    let part_count = room.doors.len();
+    let mut distances = vec![GraphDistance::MAX; part_count * part_count];
+    for part_idx in 0..part_count {
+        distances[part_idx * part_count + part_idx] = 0;
+    }
+    for &(from_part, to_part) in &room.connections {
+        distances[from_part as usize * part_count + to_part as usize] = 0;
+    }
+    for via in 0..part_count {
+        for from in 0..part_count {
+            if distances[from * part_count + via] == GraphDistance::MAX {
+                continue;
+            }
+            for to in 0..part_count {
+                if distances[via * part_count + to] == GraphDistance::MAX {
+                    continue;
+                }
+                distances[from * part_count + to] = 0;
+            }
+        }
+    }
+    distances
 }
 
 impl GeometryData {
@@ -601,6 +628,7 @@ impl CommonData {
                 door_group_offset: door_group_count,
                 door_group_count: room.doors.len(),
                 connections: room.connections.clone(),
+                part_distances: room_part_distances(room),
             });
             door_group_count += room.doors.len();
         }
@@ -937,6 +965,60 @@ mod tests {
         assert!(CommonData::new(parse("[]")).is_err());
         assert!(CommonData::new(parse("[[0, 1], [1, 0], [0, 1]]")).is_err());
         assert!(CommonData::new(parse("[[0, 1], [0, 1]]")).is_err());
+    }
+
+    #[test]
+    fn room_part_distances_use_directed_zero_cost_connections() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [{
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [[], [], []],
+                "connections": [[0, 1], [1, 2]],
+                "missing_connections": [[2, 0]]
+            }]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+
+        assert_eq!(
+            common.room[0].part_distances,
+            vec![
+                0,
+                0,
+                0,
+                GraphDistance::MAX,
+                0,
+                0,
+                GraphDistance::MAX,
+                GraphDistance::MAX,
+                0,
+            ]
+        );
+    }
+
+    #[test]
+    fn room_part_distances_exclude_missing_connections() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [{
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [[], []],
+                "connections": [],
+                "missing_connections": [[0, 1], [1, 0]]
+            }]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+
+        assert_eq!(
+            common.room[0].part_distances,
+            vec![0, GraphDistance::MAX, GraphDistance::MAX, 0]
+        );
     }
 
     #[test]
