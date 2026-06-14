@@ -271,6 +271,7 @@ pub struct FeatureConfig {
     pub frontier_neighbor_flags: bool,
     pub connection_reachability: bool,
     pub frontier_connection_reachability: bool,
+    pub toilet_crossed_room: bool,
 }
 
 impl FeatureConfig {
@@ -281,6 +282,7 @@ impl FeatureConfig {
             && !self.room_position
             && !self.global_room_position
             && !self.connection_reachability
+            && !self.toilet_crossed_room
             && !self.has_frontier_features()
     }
 
@@ -329,6 +331,7 @@ impl FeatureConfig {
             frontier_neighbor_flags: true,
             connection_reachability: true,
             frontier_connection_reachability: true,
+            toilet_crossed_room: true,
         }
     }
 
@@ -351,6 +354,7 @@ impl FeatureConfig {
             frontier_neighbor_flags: false,
             connection_reachability: false,
             frontier_connection_reachability: false,
+            toilet_crossed_room: false,
         }
     }
 }
@@ -375,6 +379,8 @@ pub struct Features {
     // Bit flags per frontier and required closure edge: source reaches frontier,
     // frontier reaches destination.
     pub frontier_connection_reachability: Vec<u8>,
+    // Concrete room crossed by the Toilet when exactly one non-Toilet room crosses it.
+    pub toilet_crossed_room_idx: Vec<i16>,
 }
 
 fn frontier_midpoint(location: DoorLocation) -> (i16, i16) {
@@ -2520,6 +2526,12 @@ impl Environment {
         };
         profile_end(PROFILE_FEATURES_ROOM_POSITION_CLONE, profile);
 
+        let toilet_crossed_room_idx = if config.toilet_crossed_room {
+            vec![self.toilet_crossed_room_idx(common)]
+        } else {
+            vec![]
+        };
+
         let profile = profile_start();
         let result = Features {
             inventory,
@@ -2532,6 +2544,7 @@ impl Environment {
             frontier_neighbor_pair,
             connection_reachability,
             frontier_connection_reachability,
+            toilet_crossed_room_idx,
         };
         profile_end(PROFILE_FEATURES_OUTPUT, profile);
         result

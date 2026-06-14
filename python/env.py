@@ -226,6 +226,7 @@ class Features:
     frontier_neighbor_pair: torch.Tensor
     connection_reachability: torch.Tensor
     frontier_connection_reachability: torch.Tensor
+    toilet_crossed_room_idx: torch.Tensor
 
     def to(self, device: torch.device) -> "Features":
         return Features(*(value.to(device) for value in vars(self).values()))
@@ -255,6 +256,7 @@ class SparseFeatures:
     frontier_neighbor_pair: torch.Tensor
     connection_reachability: torch.Tensor
     frontier_connection_reachability: torch.Tensor
+    toilet_crossed_room_idx: torch.Tensor
     row_snapshot_idx: torch.Tensor
     row_frontier_idx: torch.Tensor
 
@@ -281,6 +283,7 @@ class SparseFeatures:
             self.frontier_neighbor_pair,
             self.connection_reachability.flatten(0, 1),
             self.frontier_connection_reachability,
+            self.toilet_crossed_room_idx.flatten(0, 1),
             self.row_snapshot_idx,
             self.row_frontier_idx,
         )

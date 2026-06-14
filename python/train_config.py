@@ -28,6 +28,7 @@ class ModelConfig(StrictBaseModel):
     global_room_position_embedding_width: int
     hidden_width: int
     door_match_embedding_width: int
+    toilet_crossed_room_embedding_width: int
     num_layers: int
 
 
@@ -105,6 +106,7 @@ class FeatureConfig(StrictBaseModel):
     frontier_neighbor_flags: bool
     connection_reachability: bool
     frontier_connection_reachability: bool
+    toilet_crossed_room: bool
 
 
 class TrainConfig(StrictBaseModel):
@@ -203,6 +205,13 @@ def validate_config(config: Config) -> None:
         raise ValueError("model.global_embedding_width must be greater than zero")
     if config.model.global_room_position_embedding_width <= 0:
         raise ValueError("model.global_room_position_embedding_width must be greater than zero")
+    if (
+        config.features.toilet_crossed_room
+        and config.model.toilet_crossed_room_embedding_width <= 0
+    ):
+        raise ValueError(
+            "model.toilet_crossed_room_embedding_width must be greater than zero"
+        )
     validate_optimizer_config(config.optimizer, "optimizer")
     validate_optimizer_config(config.balance_optimizer, "balance_optimizer")
     if config.generation.num_iterations <= 0:

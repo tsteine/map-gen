@@ -198,6 +198,7 @@ def extract_candidate_features(
         feature_slot.frontier_neighbor_pair.numpy(),
         feature_slot.connection_reachability.numpy(),
         feature_slot.frontier_connection_reachability.numpy(),
+        feature_slot.toilet_crossed_room_idx.numpy(),
         feature_slot.row_snapshot_idx.numpy(),
         feature_slot.row_frontier_idx.numpy(),
     )
@@ -256,6 +257,7 @@ class SparseFeatureSlot:
             connection_count
             * int(features.frontier_connection_reachability)
         )
+        self.toilet_crossed_room_width = int(features.toilet_crossed_room)
         self.pin_memory = pin_memory
         self.snapshot_capacity = 0
         self.sparse_row_capacity = 0
@@ -269,6 +271,7 @@ class SparseFeatureSlot:
         self.frontier_neighbor_pair = None
         self.connection_reachability = None
         self.frontier_connection_reachability = None
+        self.toilet_crossed_room_idx = None
         self.row_snapshot_idx = None
         self.row_frontier_idx = None
 
@@ -312,6 +315,10 @@ class SparseFeatureSlot:
                 self.frontier_connection_reachability_width,
             ),
             torch.uint8,
+        )
+        self.toilet_crossed_room_idx = self._empty(
+            (self.snapshot_capacity, self.toilet_crossed_room_width),
+            torch.int16,
         )
         self.row_snapshot_idx = self._empty((self.sparse_row_capacity,), torch.int64)
         self.row_frontier_idx = self._empty((self.sparse_row_capacity,), torch.int16)
@@ -377,6 +384,9 @@ class SparseFeatureSlot:
                 environment_count, candidate_count, self.connection_reachability_width
             ),
             self.frontier_connection_reachability[:sparse_row_count],
+            self.toilet_crossed_room_idx[:snapshot_count].view(
+                environment_count, candidate_count, self.toilet_crossed_room_width
+            ),
             self.row_snapshot_idx[:sparse_row_count],
             self.row_frontier_idx[:sparse_row_count],
         )

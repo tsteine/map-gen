@@ -273,6 +273,9 @@ def frontier_model_kwargs(
         "global_room_position_embedding_width": config.model.global_room_position_embedding_width,
         "hidden_width": config.model.hidden_width,
         "door_match_embedding_width": config.model.door_match_embedding_width,
+        "toilet_crossed_room_embedding_width": (
+            config.model.toilet_crossed_room_embedding_width
+        ),
         "num_layers": config.model.num_layers,
         "door_counts": (
             count_room_doors_by_direction(rooms, "left"),
@@ -1098,7 +1101,7 @@ class TrainingSession:
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
             "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, tube %.4f %.1f%%, "
-            "bal %.4f %.1f%%, tube-bal %.4f %.1f%%, front %.2f %.1f%%, diam %.2f %.1f%%, prop %.4f %.1f%%), "
+            "bal %.4f %.1f%%, tube-bal %.4f %.1f%%, diam %.2f %.1f%%, prop %.3f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
             "conn %.2f (min %s), tube %.2f, front %.2f, diam %.2f, ss %.3f, "
             "p %.4f, "
@@ -1115,8 +1118,6 @@ class TrainingSession:
             main_balance_loss_pct,
             loss.toilet_balance,
             main_toilet_balance_loss_pct,
-            loss.avg_frontiers,
-            avg_frontiers_loss_pct,
             loss.graph_diameter,
             graph_diameter_loss_pct,
             loss.proposal,

@@ -131,6 +131,7 @@ class FrontierModel(torch.nn.Module):
         global_room_position_embedding_width,
         hidden_width,
         door_match_embedding_width,
+        toilet_crossed_room_embedding_width,
         num_layers,
         door_counts,
         frontier_window_size,
@@ -151,6 +152,11 @@ class FrontierModel(torch.nn.Module):
         self.left_count, self.right_count, self.up_count, self.down_count = door_counts
         if self.features.lookahead_outcomes and door_match_embedding_width <= 0:
             raise ValueError("door_match_embedding_width must be greater than zero")
+        if (
+            self.features.toilet_crossed_room
+            and toilet_crossed_room_embedding_width <= 0
+        ):
+            raise ValueError("toilet_crossed_room_embedding_width must be greater than zero")
         door_output_size, connection_output_size = output_metadata.get_output_sizes()
         self.output_sizes = (
             door_output_size,
@@ -239,6 +245,10 @@ class FrontierModel(torch.nn.Module):
                 + 2 * connection_output_size
                 + 2
             ) * int(self.features.lookahead_outcomes)
+            + (
+                toilet_crossed_room_embedding_width
+                * int(self.features.toilet_crossed_room)
+            )
         )
         self.global_mlp = (
             torch.nn.Linear(global_width, global_embedding_width, bias=False)
@@ -261,6 +271,10 @@ class FrontierModel(torch.nn.Module):
                 + 2 * connection_output_size
                 + 2
             ) * int(self.features.lookahead_outcomes)
+            + (
+                toilet_crossed_room_embedding_width
+                * int(self.features.toilet_crossed_room)
+            )
         )
         self.pooled_mlp = torch.nn.Sequential(
             torch.nn.Linear(pooled_width, hidden_width, bias=False),
@@ -292,6 +306,10 @@ class FrontierModel(torch.nn.Module):
             torch.nn.Linear(self.num_connection_outputs, embedding_width, bias=False)
             if self.features.connection_reachability
             and self.num_connection_outputs > 0 else None
+        )
+        self.toilet_crossed_room_embedding = (
+            torch.nn.Embedding(num_rooms + 1, toilet_crossed_room_embedding_width)
+            if self.features.toilet_crossed_room else None
         )
         self.frontier_pos_embedding_x = (
             torch.nn.Parameter(
@@ -452,6 +470,20 @@ class FrontierModel(torch.nn.Module):
         ], dim=-1).flatten(1)
         return torch.cat([door_match_features, connection_features, toilet_features], dim=-1)
 
+    def _toilet_crossed_room_features(
+        self,
+        features: SparseFeatures,
+        dtype: torch.dtype,
+    ) -> torch.Tensor | None:
+        if self.toilet_crossed_room_embedding is None:
+            return None
+        crossed_room = features.toilet_crossed_room_idx.to(torch.int64)
+        torch._assert(
+            torch.all((crossed_room >= -1) & (crossed_room < self.num_rooms)),
+            "toilet_crossed_room_idx must be -1 or a valid room index",
+        )
+        return self.toilet_crossed_room_embedding(crossed_room + 1).squeeze(-2).to(dtype)
+
     def _relative_position_features(self, features, neighbor):
         if self.frontier_relative_pos_embedding_x is None:
             return None
@@ -542,6 +574,7 @@ class FrontierModel(torch.nn.Module):
             self._lookahead_outcome_features(features, X.dtype)
             if self.features.lookahead_outcomes else None
         )
+        toilet_crossed_room_features = self._toilet_crossed_room_features(features, X.dtype)
         global_room_position_features = self._global_room_position_features(features, X.dtype)
         global_inputs = []
         if inventory_features is not None:
@@ -554,6 +587,8 @@ class FrontierModel(torch.nn.Module):
             global_inputs.append(recommended_candidate_features)
         if lookahead_features is not None:
             global_inputs.append(lookahead_features)
+        if toilet_crossed_room_features is not None:
+            global_inputs.append(toilet_crossed_room_features)
         if global_room_position_features is not None:
             global_inputs.append(global_room_position_features)
         global_state = (
@@ -657,6 +692,8 @@ class FrontierModel(torch.nn.Module):
             pooled_inputs.append(recommended_candidate_features)
         if lookahead_features is not None:
             pooled_inputs.append(lookahead_features)
+        if toilet_crossed_room_features is not None:
+            pooled_inputs.append(toilet_crossed_room_features)
         if global_room_position_features is not None:
             pooled_inputs.append(global_room_position_features)
         pooled_state = (

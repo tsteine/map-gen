@@ -16,6 +16,7 @@ use numpy::{
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 use std::cmp::{max, min};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
@@ -1634,6 +1635,7 @@ struct FeatureBuffers {
     frontier_neighbor_pair: Vec<u8>,
     connection_reachability: Vec<u8>,
     frontier_connection_reachability: Vec<u8>,
+    toilet_crossed_room_idx: Vec<i16>,
 }
 
 struct FeatureOutputShards {
@@ -1647,9 +1649,11 @@ struct FeatureOutputShards {
     frontier_neighbor_pair: OutputShard<u8>,
     connection_reachability: OutputShard<u8>,
     frontier_connection_reachability: OutputShard<u8>,
+    toilet_crossed_room_idx: OutputShard<i16>,
     inventory_count: usize,
     room_count: usize,
     connection_count: usize,
+    toilet_crossed_room_count: usize,
     frontier_count: usize,
     frontier_neighbor_count: usize,
     frontier_window_size: usize,
@@ -1666,9 +1670,11 @@ struct FeatureOutputSlices<'a> {
     frontier_neighbor_pair: &'a mut [u8],
     connection_reachability: &'a mut [u8],
     frontier_connection_reachability: &'a mut [u8],
+    toilet_crossed_room_idx: &'a mut [i16],
     inventory_count: usize,
     room_count: usize,
     connection_count: usize,
+    toilet_crossed_room_count: usize,
     frontier_count: usize,
     frontier_neighbor_count: usize,
     frontier_window_size: usize,
@@ -1689,9 +1695,11 @@ impl FeatureOutputShards {
             frontier_connection_reachability: unsafe {
                 self.frontier_connection_reachability.into_mut_slice()
             },
+            toilet_crossed_room_idx: unsafe { self.toilet_crossed_room_idx.into_mut_slice() },
             inventory_count: self.inventory_count,
             room_count: self.room_count,
             connection_count: self.connection_count,
+            toilet_crossed_room_count: self.toilet_crossed_room_count,
             frontier_count: self.frontier_count,
             frontier_neighbor_count: self.frontier_neighbor_count,
             frontier_window_size: self.frontier_window_size,
@@ -1727,6 +1735,12 @@ impl FeatureOutputSlices<'_> {
             &features.connection_reachability,
             idx,
             self.connection_count,
+        );
+        copy_row(
+            &mut self.toilet_crossed_room_idx,
+            &features.toilet_crossed_room_idx,
+            idx,
+            self.toilet_crossed_room_count,
         );
     }
 
@@ -1941,6 +1955,10 @@ impl FeatureBuffers {
                         features.frontier_connection_reachability
                     )
             ],
+            toilet_crossed_room_idx: vec![
+                -1;
+                snapshot_count * usize::from(features.toilet_crossed_room)
+            ],
         }
     }
 
@@ -1975,7 +1993,9 @@ impl FeatureBuffers {
             connection_count * usize::from(features.connection_reachability);
         let frontier_connection_count =
             connection_count * usize::from(features.frontier_connection_reachability);
+        let toilet_crossed_room_count = usize::from(features.toilet_crossed_room);
         let connection_start = snapshot_start * direct_connection_count;
+        let toilet_crossed_room_start = snapshot_start * toilet_crossed_room_count;
         FeatureOutputShards {
             inventory: output_shard(
                 &mut self.inventory,
@@ -2019,9 +2039,15 @@ impl FeatureBuffers {
                 frontier_start * frontier_connection_count,
                 snapshot_count * frontier_count * frontier_connection_count,
             ),
+            toilet_crossed_room_idx: output_shard(
+                &mut self.toilet_crossed_room_idx,
+                toilet_crossed_room_start,
+                snapshot_count * toilet_crossed_room_count,
+            ),
             inventory_count,
             room_count,
             connection_count: direct_connection_count.max(frontier_connection_count),
+            toilet_crossed_room_count,
             frontier_count,
             frontier_neighbor_count,
             frontier_window_size,
@@ -2276,9 +2302,11 @@ mod tests {
             frontier_neighbor_pair: OutputShard::empty(),
             connection_reachability: OutputShard::empty(),
             frontier_connection_reachability: OutputShard::empty(),
+            toilet_crossed_room_idx: OutputShard::empty(),
             inventory_count: 0,
             room_count: 0,
             connection_count: 0,
+            toilet_crossed_room_count: 0,
             frontier_count: 0,
             frontier_neighbor_count: 1,
             frontier_window_size: 1,
@@ -3291,6 +3319,7 @@ impl EnvironmentGroup {
         Bound<'py, PyArray3<u8>>,
         Bound<'py, PyArray2<u8>>,
         Bound<'py, PyArray3<u8>>,
+        Bound<'py, PyArray2<i16>>,
     )> {
         let inventory_count = self.common_data.connection_variant_rooms.len();
         let room_count = self.common_data.room.len();
@@ -3435,6 +3464,12 @@ impl EnvironmentGroup {
                 frontier_count,
                 connection_count * usize::from(self.features.frontier_connection_reachability),
             )?,
+            pyarray2_from_flat_vec(
+                py,
+                buffers.toilet_crossed_room_idx,
+                environment_count,
+                usize::from(self.features.toilet_crossed_room),
+            )?,
         ))
     }
 
@@ -3445,20 +3480,7 @@ impl EnvironmentGroup {
         py: Python<'py>,
         environment_start: usize,
         environment_count: Option<usize>,
-    ) -> PyResult<(
-        Bound<'py, PyArray2<u8>>,
-        Bound<'py, PyArray2<Coord>>,
-        Bound<'py, PyArray2<Coord>>,
-        Bound<'py, PyArray2<u8>>,
-        Bound<'py, PyArray2<i8>>,
-        Bound<'py, PyArray2<u8>>,
-        Bound<'py, PyArray2<i16>>,
-        Bound<'py, PyArray2<u8>>,
-        Bound<'py, PyArray2<u8>>,
-        Bound<'py, PyArray2<u8>>,
-        Bound<'py, PyArray1<i64>>,
-        Bound<'py, PyArray1<FrontierIdx>>,
-    )> {
+    ) -> PyResult<Bound<'py, PyTuple>> {
         let inventory_count = self.common_data.connection_variant_rooms.len();
         let room_count = self.common_data.room.len();
         let connection_count = self.common_data.room_connection.len();
@@ -3516,6 +3538,7 @@ impl EnvironmentGroup {
             connection_count * usize::from(self.features.connection_reachability);
         let frontier_connection_width =
             connection_count * usize::from(self.features.frontier_connection_reachability);
+        let toilet_crossed_room_width = usize::from(self.features.toilet_crossed_room);
         let mut inventory = vec![0; environment_count * inventory_width];
         let mut room_x = vec![0; environment_count * room_width];
         let mut room_y = vec![0; environment_count * room_width];
@@ -3528,6 +3551,7 @@ impl EnvironmentGroup {
             vec![0; environment_count * connection_reachability_width];
         let mut frontier_connection_reachability =
             vec![0; sparse_row_count * frontier_connection_width];
+        let mut toilet_crossed_room_idx = vec![-1; environment_count * toilet_crossed_room_width];
         let mut row_snapshot_idx = vec![0; sparse_row_count];
         let mut row_frontier_idx = vec![-1; sparse_row_count];
         py.detach(|| {
@@ -3572,9 +3596,16 @@ impl EnvironmentGroup {
                                     * connection_reachability_width],
                         ),
                         frontier_connection_reachability: OutputShard::empty(),
+                        toilet_crossed_room_idx: OutputShard::from_slice(
+                            &mut toilet_crossed_room_idx[snapshot_start
+                                * toilet_crossed_room_width
+                                ..(snapshot_start + snapshot_count)
+                                    * toilet_crossed_room_width],
+                        ),
                         inventory_count: inventory_width,
                         room_count: room_width,
                         connection_count: connection_reachability_width,
+                        toilet_crossed_room_count: toilet_crossed_room_width,
                         frontier_count: 0,
                         frontier_neighbor_count: self.frontier_neighbor_count,
                         frontier_window_size: self.frontier_window_size,
@@ -3612,9 +3643,11 @@ impl EnvironmentGroup {
                                 ..(sparse_row_start + worker_sparse_row_count)
                                     * frontier_connection_width],
                         ),
+                        toilet_crossed_room_idx: OutputShard::empty(),
                         inventory_count: 0,
                         room_count: 0,
                         connection_count: frontier_connection_width,
+                        toilet_crossed_room_count: 0,
                         frontier_count: 1,
                         frontier_neighbor_count: self.frontier_neighbor_count,
                         frontier_window_size: self.frontier_window_size,
@@ -3641,45 +3674,74 @@ impl EnvironmentGroup {
             }
             collect_feature_info(&self.workers, sent_workers, first_error).map(|_| ())
         })?;
-        Ok((
-            pyarray2_from_flat_vec(py, inventory, environment_count, inventory_width)?,
-            pyarray2_from_flat_vec(py, room_x, environment_count, room_width)?,
-            pyarray2_from_flat_vec(py, room_y, environment_count, room_width)?,
-            pyarray2_from_flat_vec(py, room_placed, environment_count, room_width)?,
-            pyarray2_from_flat_vec(py, frontier, sparse_row_count, FEATURE_FRONTIER_WIDTH)?,
+        let values = vec![
+            pyarray2_from_flat_vec(py, inventory, environment_count, inventory_width)?
+                .into_any()
+                .unbind(),
+            pyarray2_from_flat_vec(py, room_x, environment_count, room_width)?
+                .into_any()
+                .unbind(),
+            pyarray2_from_flat_vec(py, room_y, environment_count, room_width)?
+                .into_any()
+                .unbind(),
+            pyarray2_from_flat_vec(py, room_placed, environment_count, room_width)?
+                .into_any()
+                .unbind(),
+            pyarray2_from_flat_vec(py, frontier, sparse_row_count, FEATURE_FRONTIER_WIDTH)?
+                .into_any()
+                .unbind(),
             pyarray2_from_flat_vec(
                 py,
                 frontier_occupancy,
                 sparse_row_count,
                 frontier_occupancy_width,
-            )?,
+            )?
+            .into_any()
+            .unbind(),
             pyarray2_from_flat_vec(
                 py,
                 frontier_neighbor,
                 sparse_row_count,
                 frontier_neighbor_width,
-            )?,
+            )?
+            .into_any()
+            .unbind(),
             pyarray2_from_flat_vec(
                 py,
                 frontier_neighbor_pair,
                 sparse_row_count,
                 frontier_neighbor_pair_width,
-            )?,
+            )?
+            .into_any()
+            .unbind(),
             pyarray2_from_flat_vec(
                 py,
                 connection_reachability,
                 environment_count,
                 connection_reachability_width,
-            )?,
+            )?
+            .into_any()
+            .unbind(),
             pyarray2_from_flat_vec(
                 py,
                 frontier_connection_reachability,
                 sparse_row_count,
                 frontier_connection_width,
-            )?,
-            row_snapshot_idx.into_pyarray(py),
-            row_frontier_idx.into_pyarray(py),
-        ))
+            )?
+            .into_any()
+            .unbind(),
+            pyarray2_from_flat_vec(
+                py,
+                toilet_crossed_room_idx,
+                environment_count,
+                toilet_crossed_room_width,
+            )?
+            .into_any()
+            .unbind(),
+            row_snapshot_idx.into_pyarray(py).into_any().unbind(),
+            row_frontier_idx.into_pyarray(py).into_any().unbind(),
+        ];
+        PyTuple::new(py, values)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3700,6 +3762,7 @@ impl EnvironmentGroup {
         mut frontier_neighbor_pair: PyReadwriteArray3<'py, u8>,
         mut connection_reachability: PyReadwriteArray2<'py, u8>,
         mut frontier_connection_reachability: PyReadwriteArray3<'py, u8>,
+        mut toilet_crossed_room_idx: PyReadwriteArray2<'py, i16>,
     ) -> PyResult<()> {
         if environment_start + environment_count > self.num_environments {
             return Err(PyValueError::new_err(
@@ -3723,6 +3786,7 @@ impl EnvironmentGroup {
             connection_count * usize::from(self.features.connection_reachability);
         let frontier_connection_width =
             connection_count * usize::from(self.features.frontier_connection_reachability);
+        let toilet_crossed_room_width = usize::from(self.features.toilet_crossed_room);
 
         let inventory_shape = inventory.as_array().shape().to_vec();
         let room_x_shape = out_room_x.as_array().shape().to_vec();
@@ -3735,11 +3799,13 @@ impl EnvironmentGroup {
         let connection_reachability_shape = connection_reachability.as_array().shape().to_vec();
         let frontier_connection_reachability_shape =
             frontier_connection_reachability.as_array().shape().to_vec();
+        let toilet_crossed_room_shape = toilet_crossed_room_idx.as_array().shape().to_vec();
         if inventory_shape[0] < snapshot_count
             || room_x_shape[0] < snapshot_count
             || room_y_shape[0] < snapshot_count
             || room_placed_shape[0] < snapshot_count
             || connection_reachability_shape[0] < snapshot_count
+            || toilet_crossed_room_shape[0] < snapshot_count
             || frontier_shape[0] < snapshot_count
             || frontier_occupancy_shape[0] < snapshot_count
             || frontier_neighbor_shape[0] < snapshot_count
@@ -3799,6 +3865,11 @@ impl EnvironmentGroup {
             frontier_connection_reachability_shape[2],
             frontier_connection_width,
         )?;
+        check_dim(
+            "toilet_crossed_room_idx",
+            toilet_crossed_room_shape[1],
+            toilet_crossed_room_width,
+        )?;
 
         let inventory = inventory
             .as_slice_mut()
@@ -3832,6 +3903,9 @@ impl EnvironmentGroup {
             .map_err(|_| {
                 PyValueError::new_err("frontier_connection_reachability must be contiguous")
             })?;
+        let toilet_crossed_room_idx = toilet_crossed_room_idx.as_slice_mut().map_err(|_| {
+            PyValueError::new_err("toilet_crossed_room_idx must be contiguous")
+        })?;
 
         py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
@@ -3907,10 +3981,17 @@ impl EnvironmentGroup {
                                     * frontier_count
                                     * frontier_connection_width],
                         ),
+                        toilet_crossed_room_idx: OutputShard::from_slice(
+                            &mut toilet_crossed_room_idx[snapshot_start
+                                * toilet_crossed_room_width
+                                ..(snapshot_start + snapshot_count)
+                                    * toilet_crossed_room_width],
+                        ),
                         inventory_count: inventory_width,
                         room_count: room_width,
                         connection_count: connection_reachability_width
                             .max(frontier_connection_width),
+                        toilet_crossed_room_count: toilet_crossed_room_width,
                         frontier_count,
                         frontier_neighbor_count: self.frontier_neighbor_count,
                         frontier_window_size: self.frontier_window_size,
@@ -3944,6 +4025,7 @@ impl EnvironmentGroup {
         mut frontier_neighbor_pair: PyReadwriteArray2<'py, u8>,
         mut connection_reachability: PyReadwriteArray2<'py, u8>,
         mut frontier_connection_reachability: PyReadwriteArray2<'py, u8>,
+        mut toilet_crossed_room_idx: PyReadwriteArray2<'py, i16>,
         mut row_snapshot_idx: PyReadwriteArray1<'py, i64>,
         mut row_frontier_idx: PyReadwriteArray1<'py, FrontierIdx>,
     ) -> PyResult<()> {
@@ -3970,6 +4052,7 @@ impl EnvironmentGroup {
             connection_count * usize::from(self.features.connection_reachability);
         let frontier_connection_width =
             connection_count * usize::from(self.features.frontier_connection_reachability);
+        let toilet_crossed_room_width = usize::from(self.features.toilet_crossed_room);
 
         let inventory_shape = inventory.as_array().shape().to_vec();
         let room_x_shape = out_room_x.as_array().shape().to_vec();
@@ -3982,6 +4065,7 @@ impl EnvironmentGroup {
         let connection_reachability_shape = connection_reachability.as_array().shape().to_vec();
         let frontier_connection_reachability_shape =
             frontier_connection_reachability.as_array().shape().to_vec();
+        let toilet_crossed_room_shape = toilet_crossed_room_idx.as_array().shape().to_vec();
         let row_snapshot_idx_shape = row_snapshot_idx.as_array().shape().to_vec();
         let row_frontier_idx_shape = row_frontier_idx.as_array().shape().to_vec();
         if inventory_shape[0] < snapshot_count
@@ -3989,6 +4073,7 @@ impl EnvironmentGroup {
             || room_y_shape[0] < snapshot_count
             || room_placed_shape[0] < snapshot_count
             || connection_reachability_shape[0] < snapshot_count
+            || toilet_crossed_room_shape[0] < snapshot_count
             || frontier_shape[0] < sparse_row_count
             || frontier_occupancy_shape[0] < sparse_row_count
             || frontier_neighbor_shape[0] < sparse_row_count
@@ -4031,6 +4116,11 @@ impl EnvironmentGroup {
             frontier_connection_reachability_shape[1],
             frontier_connection_width,
         )?;
+        check_dim(
+            "toilet_crossed_room_idx",
+            toilet_crossed_room_shape[1],
+            toilet_crossed_room_width,
+        )?;
 
         let inventory = inventory
             .as_slice_mut()
@@ -4064,6 +4154,9 @@ impl EnvironmentGroup {
             .map_err(|_| {
                 PyValueError::new_err("frontier_connection_reachability must be contiguous")
             })?;
+        let toilet_crossed_room_idx = toilet_crossed_room_idx.as_slice_mut().map_err(|_| {
+            PyValueError::new_err("toilet_crossed_room_idx must be contiguous")
+        })?;
         let row_snapshot_idx = row_snapshot_idx
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("row_snapshot_idx must be contiguous"))?;
@@ -4119,9 +4212,16 @@ impl EnvironmentGroup {
                                     * connection_reachability_width],
                         ),
                         frontier_connection_reachability: OutputShard::empty(),
+                        toilet_crossed_room_idx: OutputShard::from_slice(
+                            &mut toilet_crossed_room_idx[snapshot_start
+                                * toilet_crossed_room_width
+                                ..(snapshot_start + snapshot_count)
+                                    * toilet_crossed_room_width],
+                        ),
                         inventory_count: inventory_width,
                         room_count: room_width,
                         connection_count: connection_reachability_width,
+                        toilet_crossed_room_count: toilet_crossed_room_width,
                         frontier_count: 0,
                         frontier_neighbor_count: self.frontier_neighbor_count,
                         frontier_window_size: self.frontier_window_size,
@@ -4159,9 +4259,11 @@ impl EnvironmentGroup {
                                 ..(sparse_row_start + worker_sparse_row_count)
                                     * frontier_connection_width],
                         ),
+                        toilet_crossed_room_idx: OutputShard::empty(),
                         inventory_count: 0,
                         room_count: 0,
                         connection_count: frontier_connection_width,
+                        toilet_crossed_room_count: 0,
                         frontier_count: 1,
                         frontier_neighbor_count: self.frontier_neighbor_count,
                         frontier_window_size: self.frontier_window_size,

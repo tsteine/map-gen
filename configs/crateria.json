@@ -14,6 +14,7 @@
     "global_room_position_embedding_width": 256,
     "hidden_width": 256,
     "door_match_embedding_width": 64,
+    "toilet_crossed_room_embedding_width": 32,
     "num_layers": 2
   },
   "optimizer": {
@@ -69,7 +70,8 @@
     "frontier_neighbor_position_embedding": false,
     "frontier_neighbor_flags": true,
     "connection_reachability": true,
-    "frontier_connection_reachability": true
+    "frontier_connection_reachability": true,
+    "toilet_crossed_room": true
   },
   "train": {
     "batch_size": 512,
