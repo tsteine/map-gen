@@ -160,6 +160,13 @@ def _placement_elements(
     return room_polygons, room_colors, wall_segments
 
 
+def _room_center(geometry: dict, room_x: int, room_y: int) -> Tuple[float, float]:
+    cells = geometry["cells"]
+    xs = [room_x + x for x, _ in cells]
+    ys = [room_y + y for _, y in cells]
+    return (min(xs) + max(xs) + 1) / 2, (min(ys) + max(ys) + 1) / 2
+
+
 class MapVisualizer:
     """Incrementally update a map plot as rooms are placed."""
 
@@ -480,6 +487,7 @@ def save_episode_frames(
     wall_segments: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
     saved_paths = []
     placements = _normalize_actions(actions, environment_index)
+    save_label_positions: List[Tuple[float, float]] = []
     for step_idx, action in enumerate(placements):
         room_idx, room_x, room_y = action
         if not 0 <= room_idx < len(rooms):
@@ -495,6 +503,8 @@ def save_episode_frames(
         room_polygons.extend(polygons)
         room_colors.extend(colors)
         wall_segments.extend(segments)
+        if rooms[room_idx].get("save", False):
+            save_label_positions.append(_room_center(geometry, room_x, room_y))
 
         image = Image.new("RGB", canvas_size, "white")
         draw = ImageDraw.Draw(image)
@@ -518,6 +528,17 @@ def save_episode_frames(
                 ],
                 fill="black",
                 width=2,
+            )
+        for label_x, label_y in save_label_positions:
+            pixel_x = margin + label_x * scale
+            pixel_y = margin + label_y * scale
+            text_bbox = draw.textbbox((0, 0), "S")
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+            draw.text(
+                (pixel_x - text_width / 2, pixel_y - text_height / 2),
+                "S",
+                fill="black",
             )
         frame_path = output_dir / f"step_{step_idx + 1:03d}.png"
         image.save(frame_path)

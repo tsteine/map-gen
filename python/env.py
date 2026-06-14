@@ -221,6 +221,7 @@ class Features:
     room_placed: torch.Tensor
     room_part_furthest_destination: torch.Tensor
     room_part_furthest_source: torch.Tensor
+    room_part_save_distance: torch.Tensor
     log_temperature: torch.Tensor
     log_recommended_candidates: torch.Tensor
     lookahead_door_invalid: torch.Tensor
@@ -253,6 +254,7 @@ class SparseFeatures:
     room_placed: torch.Tensor
     room_part_furthest_destination: torch.Tensor
     room_part_furthest_source: torch.Tensor
+    room_part_save_distance: torch.Tensor
     log_temperature: torch.Tensor
     log_recommended_candidates: torch.Tensor
     lookahead_door_invalid: torch.Tensor
@@ -282,6 +284,7 @@ class SparseFeatures:
             self.room_placed.flatten(0, 1),
             self.room_part_furthest_destination.flatten(0, 1),
             self.room_part_furthest_source.flatten(0, 1),
+            self.room_part_save_distance.flatten(0, 1),
             self.log_temperature.flatten(0, 1),
             self.log_recommended_candidates.flatten(0, 1),
             self.lookahead_door_invalid.flatten(0, 1),
@@ -379,6 +382,7 @@ FEATURE_RESULT_FIELDS = (
     "room_placed",
     "room_part_furthest_destination",
     "room_part_furthest_source",
+    "room_part_save_distance",
     "frontier",
     "frontier_occupancy",
     "frontier_neighbor",
@@ -667,14 +671,14 @@ class EnvironmentGroup:
                 0,
             ])
         return Features(
-            *tensors[:6],
+            *tensors[:7],
             log_temperature,
             log_recommended_candidates,
             lookahead_door_invalid,
             lookahead_door_match,
             lookahead_connection_invalid,
             lookahead_toilet_invalid,
-            *tensors[6:],
+            *tensors[7:],
         )
 
     def get_features(
@@ -745,14 +749,14 @@ class EnvironmentGroup:
                 0,
             ])
         return SparseFeatures(
-            *tensors[:6],
+            *tensors[:7],
             log_temperature,
             log_recommended_candidates,
             lookahead_door_invalid,
             lookahead_door_match,
             lookahead_connection_invalid,
             lookahead_toilet_invalid,
-            *tensors[6:],
+            *tensors[7:],
         )
 
     def finish(self):

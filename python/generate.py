@@ -195,6 +195,7 @@ def extract_candidate_features(
         feature_slot.room_placed.numpy(),
         feature_slot.room_part_furthest_destination.numpy(),
         feature_slot.room_part_furthest_source.numpy(),
+        feature_slot.room_part_save_distance.numpy(),
         feature_slot.frontier.numpy(),
         feature_slot.frontier_occupancy.numpy(),
         feature_slot.frontier_neighbor.numpy(),
@@ -247,6 +248,9 @@ class SparseFeatureSlot:
         self.room_part_width = (
             room_part_count * int(features.room_part_furthest_distance)
         )
+        self.room_part_save_distance_width = (
+            room_part_count * int(features.room_part_save_distance)
+        )
         self.frontier_occupancy_width = (
             (env.frontier_window_size * env.frontier_window_size + 7) // 8
         ) * int(features.frontier_occupancy)
@@ -274,6 +278,7 @@ class SparseFeatureSlot:
         self.room_placed = None
         self.room_part_furthest_destination = None
         self.room_part_furthest_source = None
+        self.room_part_save_distance = None
         self.frontier = None
         self.frontier_occupancy = None
         self.frontier_neighbor = None
@@ -308,6 +313,9 @@ class SparseFeatureSlot:
         )
         self.room_part_furthest_source = self._empty(
             (self.snapshot_capacity, self.room_part_width), torch.uint8
+        )
+        self.room_part_save_distance = self._empty(
+            (self.snapshot_capacity, self.room_part_save_distance_width), torch.uint8
         )
         self.frontier = self._empty(
             (self.sparse_row_capacity, 5), torch.int8
@@ -390,6 +398,9 @@ class SparseFeatureSlot:
             ),
             self.room_part_furthest_source[:snapshot_count].view(
                 environment_count, candidate_count, self.room_part_width
+            ),
+            self.room_part_save_distance[:snapshot_count].view(
+                environment_count, candidate_count, self.room_part_save_distance_width
             ),
             log_temperature,
             log_recommended_candidates,

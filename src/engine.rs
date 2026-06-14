@@ -1508,6 +1508,7 @@ pub struct FeatureResult {
     room_placed: Py<PyArray2<u8>>,
     room_part_furthest_destination: Py<PyArray2<u8>>,
     room_part_furthest_source: Py<PyArray2<u8>>,
+    room_part_save_distance: Py<PyArray2<u8>>,
     frontier: Py<PyArray3<i8>>,
     frontier_occupancy: Py<PyArray3<u8>>,
     frontier_neighbor: Py<PyArray3<i16>>,
@@ -1525,6 +1526,7 @@ pub struct SparseFeatureResult {
     room_placed: Py<PyArray2<u8>>,
     room_part_furthest_destination: Py<PyArray2<u8>>,
     room_part_furthest_source: Py<PyArray2<u8>>,
+    room_part_save_distance: Py<PyArray2<u8>>,
     frontier: Py<PyArray2<i8>>,
     frontier_occupancy: Py<PyArray2<u8>>,
     frontier_neighbor: Py<PyArray2<i16>>,
@@ -1612,6 +1614,11 @@ impl FeatureResult {
     }
 
     #[getter]
+    fn room_part_save_distance(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
+        self.room_part_save_distance.clone_ref(py)
+    }
+
+    #[getter]
     fn frontier(&self, py: Python<'_>) -> Py<PyArray3<i8>> {
         self.frontier.clone_ref(py)
     }
@@ -1677,6 +1684,11 @@ impl SparseFeatureResult {
     #[getter]
     fn room_part_furthest_source(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
         self.room_part_furthest_source.clone_ref(py)
+    }
+
+    #[getter]
+    fn room_part_save_distance(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
+        self.room_part_save_distance.clone_ref(py)
     }
 
     #[getter]
@@ -1846,6 +1858,7 @@ struct FeatureBuffers {
     room_placed: Vec<u8>,
     room_part_furthest_destination: Vec<u8>,
     room_part_furthest_source: Vec<u8>,
+    room_part_save_distance: Vec<u8>,
     frontier: Vec<i8>,
     frontier_occupancy: Vec<u8>,
     frontier_neighbor: Vec<i16>,
@@ -1862,6 +1875,7 @@ struct FeatureOutputShards {
     room_placed: OutputShard<u8>,
     room_part_furthest_destination: OutputShard<u8>,
     room_part_furthest_source: OutputShard<u8>,
+    room_part_save_distance: OutputShard<u8>,
     frontier: OutputShard<i8>,
     frontier_occupancy: OutputShard<u8>,
     frontier_neighbor: OutputShard<i16>,
@@ -1871,7 +1885,8 @@ struct FeatureOutputShards {
     toilet_crossed_room_idx: OutputShard<i16>,
     inventory_count: usize,
     room_count: usize,
-    room_part_count: usize,
+    room_part_furthest_count: usize,
+    room_part_save_distance_count: usize,
     connection_count: usize,
     toilet_crossed_room_count: usize,
     frontier_count: usize,
@@ -1886,6 +1901,7 @@ struct FeatureOutputSlices<'a> {
     room_placed: &'a mut [u8],
     room_part_furthest_destination: &'a mut [u8],
     room_part_furthest_source: &'a mut [u8],
+    room_part_save_distance: &'a mut [u8],
     frontier: &'a mut [i8],
     frontier_occupancy: &'a mut [u8],
     frontier_neighbor: &'a mut [i16],
@@ -1895,7 +1911,8 @@ struct FeatureOutputSlices<'a> {
     toilet_crossed_room_idx: &'a mut [i16],
     inventory_count: usize,
     room_count: usize,
-    room_part_count: usize,
+    room_part_furthest_count: usize,
+    room_part_save_distance_count: usize,
     connection_count: usize,
     toilet_crossed_room_count: usize,
     frontier_count: usize,
@@ -1914,6 +1931,7 @@ impl FeatureOutputShards {
                 self.room_part_furthest_destination.into_mut_slice()
             },
             room_part_furthest_source: unsafe { self.room_part_furthest_source.into_mut_slice() },
+            room_part_save_distance: unsafe { self.room_part_save_distance.into_mut_slice() },
             frontier: unsafe { self.frontier.into_mut_slice() },
             frontier_occupancy: unsafe { self.frontier_occupancy.into_mut_slice() },
             frontier_neighbor: unsafe { self.frontier_neighbor.into_mut_slice() },
@@ -1925,7 +1943,8 @@ impl FeatureOutputShards {
             toilet_crossed_room_idx: unsafe { self.toilet_crossed_room_idx.into_mut_slice() },
             inventory_count: self.inventory_count,
             room_count: self.room_count,
-            room_part_count: self.room_part_count,
+            room_part_furthest_count: self.room_part_furthest_count,
+            room_part_save_distance_count: self.room_part_save_distance_count,
             connection_count: self.connection_count,
             toilet_crossed_room_count: self.toilet_crossed_room_count,
             frontier_count: self.frontier_count,
@@ -1962,13 +1981,19 @@ impl FeatureOutputSlices<'_> {
             &mut self.room_part_furthest_destination,
             &features.room_part_furthest_destination,
             idx,
-            self.room_part_count,
+            self.room_part_furthest_count,
         );
         copy_row(
             &mut self.room_part_furthest_source,
             &features.room_part_furthest_source,
             idx,
-            self.room_part_count,
+            self.room_part_furthest_count,
+        );
+        copy_row(
+            &mut self.room_part_save_distance,
+            &features.room_part_save_distance,
+            idx,
+            self.room_part_save_distance_count,
         );
         copy_row(
             &mut self.connection_reachability,
@@ -2172,6 +2197,12 @@ impl FeatureBuffers {
                     * common_data.room_part.len()
                     * usize::from(features.room_part_furthest_distance)
             ],
+            room_part_save_distance: vec![
+                0;
+                snapshot_count
+                    * common_data.room_part.len()
+                    * usize::from(features.room_part_save_distance)
+            ],
             frontier: vec![0; snapshot_count * frontier_count * FEATURE_FRONTIER_WIDTH],
             frontier_occupancy: vec![
                 0;
@@ -2235,10 +2266,14 @@ impl FeatureBuffers {
 
         let inventory_count = inventory_count * usize::from(features.inventory);
         let room_count = room_count * usize::from(features.room_position);
-        let room_part_count = room_part_count * usize::from(features.room_part_furthest_distance);
+        let room_part_furthest_count =
+            room_part_count * usize::from(features.room_part_furthest_distance);
+        let room_part_save_distance_count =
+            room_part_count * usize::from(features.room_part_save_distance);
         let inventory_start = snapshot_start * inventory_count;
         let room_start = snapshot_start * room_count;
-        let room_part_start = snapshot_start * room_part_count;
+        let room_part_furthest_start = snapshot_start * room_part_furthest_count;
+        let room_part_save_distance_start = snapshot_start * room_part_save_distance_count;
         let frontier_start = snapshot_start * frontier_count;
         let packed_window_size = (frontier_window_size * frontier_window_size).div_ceil(8)
             * usize::from(features.frontier_occupancy);
@@ -2268,13 +2303,18 @@ impl FeatureBuffers {
             ),
             room_part_furthest_destination: output_shard(
                 &mut self.room_part_furthest_destination,
-                room_part_start,
-                snapshot_count * room_part_count,
+                room_part_furthest_start,
+                snapshot_count * room_part_furthest_count,
             ),
             room_part_furthest_source: output_shard(
                 &mut self.room_part_furthest_source,
-                room_part_start,
-                snapshot_count * room_part_count,
+                room_part_furthest_start,
+                snapshot_count * room_part_furthest_count,
+            ),
+            room_part_save_distance: output_shard(
+                &mut self.room_part_save_distance,
+                room_part_save_distance_start,
+                snapshot_count * room_part_save_distance_count,
             ),
             frontier: output_shard(
                 &mut self.frontier,
@@ -2313,7 +2353,8 @@ impl FeatureBuffers {
             ),
             inventory_count,
             room_count,
-            room_part_count,
+            room_part_furthest_count,
+            room_part_save_distance_count,
             connection_count: direct_connection_count.max(frontier_connection_count),
             toilet_crossed_room_count,
             frontier_count,
@@ -2568,6 +2609,7 @@ mod tests {
             room_placed: OutputShard::empty(),
             room_part_furthest_destination: OutputShard::empty(),
             room_part_furthest_source: OutputShard::empty(),
+            room_part_save_distance: OutputShard::empty(),
             frontier: OutputShard::empty(),
             frontier_occupancy: OutputShard::empty(),
             frontier_neighbor: OutputShard::empty(),
@@ -2577,7 +2619,8 @@ mod tests {
             toilet_crossed_room_idx: OutputShard::empty(),
             inventory_count: 0,
             room_count: 0,
-            room_part_count: 0,
+            room_part_furthest_count: 0,
+            room_part_save_distance_count: 0,
             connection_count: 0,
             toilet_crossed_room_count: 0,
             frontier_count: 0,
@@ -3727,6 +3770,13 @@ impl EnvironmentGroup {
                 room_part_count * usize::from(self.features.room_part_furthest_distance),
             )?
             .unbind(),
+            room_part_save_distance: pyarray2_from_flat_vec(
+                py,
+                buffers.room_part_save_distance,
+                environment_count,
+                room_part_count * usize::from(self.features.room_part_save_distance),
+            )?
+            .unbind(),
             frontier: pyarray3_from_flat_vec(
                 py,
                 buffers.frontier,
@@ -3839,8 +3889,10 @@ impl EnvironmentGroup {
             .collect::<Vec<_>>();
         let inventory_width = inventory_count * usize::from(self.features.inventory);
         let room_width = room_count * usize::from(self.features.room_position);
-        let room_part_width =
+        let room_part_furthest_width =
             room_part_count * usize::from(self.features.room_part_furthest_distance);
+        let room_part_save_distance_width =
+            room_part_count * usize::from(self.features.room_part_save_distance);
         let frontier_occupancy_width = (self.frontier_window_size * self.frontier_window_size)
             .div_ceil(8)
             * usize::from(self.features.frontier_occupancy);
@@ -3857,8 +3909,11 @@ impl EnvironmentGroup {
         let mut room_x = vec![0; environment_count * room_width];
         let mut room_y = vec![0; environment_count * room_width];
         let mut room_placed = vec![0; environment_count * room_width];
-        let mut room_part_furthest_destination = vec![0; environment_count * room_part_width];
-        let mut room_part_furthest_source = vec![0; environment_count * room_part_width];
+        let mut room_part_furthest_destination =
+            vec![0; environment_count * room_part_furthest_width];
+        let mut room_part_furthest_source = vec![0; environment_count * room_part_furthest_width];
+        let mut room_part_save_distance =
+            vec![0; environment_count * room_part_save_distance_width];
         let mut frontier = vec![0; sparse_row_count * FEATURE_FRONTIER_WIDTH];
         let mut frontier_occupancy = vec![0; sparse_row_count * frontier_occupancy_width];
         let mut frontier_neighbor = vec![-1; sparse_row_count * frontier_neighbor_width];
@@ -3902,12 +3957,19 @@ impl EnvironmentGroup {
                                 ..(snapshot_start + snapshot_count) * room_width],
                         ),
                         room_part_furthest_destination: OutputShard::from_slice(
-                            &mut room_part_furthest_destination[snapshot_start * room_part_width
-                                ..(snapshot_start + snapshot_count) * room_part_width],
+                            &mut room_part_furthest_destination[snapshot_start
+                                * room_part_furthest_width
+                                ..(snapshot_start + snapshot_count) * room_part_furthest_width],
                         ),
                         room_part_furthest_source: OutputShard::from_slice(
-                            &mut room_part_furthest_source[snapshot_start * room_part_width
-                                ..(snapshot_start + snapshot_count) * room_part_width],
+                            &mut room_part_furthest_source[snapshot_start * room_part_furthest_width
+                                ..(snapshot_start + snapshot_count) * room_part_furthest_width],
+                        ),
+                        room_part_save_distance: OutputShard::from_slice(
+                            &mut room_part_save_distance[snapshot_start
+                                * room_part_save_distance_width
+                                ..(snapshot_start + snapshot_count)
+                                    * room_part_save_distance_width],
                         ),
                         frontier: OutputShard::empty(),
                         frontier_occupancy: OutputShard::empty(),
@@ -3926,7 +3988,8 @@ impl EnvironmentGroup {
                         ),
                         inventory_count: inventory_width,
                         room_count: room_width,
-                        room_part_count: room_part_width,
+                        room_part_furthest_count: room_part_furthest_width,
+                        room_part_save_distance_count: room_part_save_distance_width,
                         connection_count: connection_reachability_width,
                         toilet_crossed_room_count: toilet_crossed_room_width,
                         frontier_count: 0,
@@ -3940,6 +4003,7 @@ impl EnvironmentGroup {
                         room_placed: OutputShard::empty(),
                         room_part_furthest_destination: OutputShard::empty(),
                         room_part_furthest_source: OutputShard::empty(),
+                        room_part_save_distance: OutputShard::empty(),
                         frontier: OutputShard::from_slice(
                             &mut frontier[sparse_row_start * FEATURE_FRONTIER_WIDTH
                                 ..(sparse_row_start + worker_sparse_row_count)
@@ -3971,7 +4035,8 @@ impl EnvironmentGroup {
                         toilet_crossed_room_idx: OutputShard::empty(),
                         inventory_count: 0,
                         room_count: 0,
-                        room_part_count: 0,
+                        room_part_furthest_count: 0,
+                        room_part_save_distance_count: 0,
                         connection_count: frontier_connection_width,
                         toilet_crossed_room_count: 0,
                         frontier_count: 1,
@@ -4011,14 +4076,21 @@ impl EnvironmentGroup {
                 py,
                 room_part_furthest_destination,
                 environment_count,
-                room_part_width,
+                room_part_furthest_width,
             )?
             .unbind(),
             room_part_furthest_source: pyarray2_from_flat_vec(
                 py,
                 room_part_furthest_source,
                 environment_count,
-                room_part_width,
+                room_part_furthest_width,
+            )?
+            .unbind(),
+            room_part_save_distance: pyarray2_from_flat_vec(
+                py,
+                room_part_save_distance,
+                environment_count,
+                room_part_save_distance_width,
             )?
             .unbind(),
             frontier: pyarray2_from_flat_vec(
@@ -4089,6 +4161,7 @@ impl EnvironmentGroup {
         mut room_placed: PyReadwriteArray2<'py, u8>,
         mut room_part_furthest_destination: PyReadwriteArray2<'py, u8>,
         mut room_part_furthest_source: PyReadwriteArray2<'py, u8>,
+        mut room_part_save_distance: PyReadwriteArray2<'py, u8>,
         mut frontier: PyReadwriteArray3<'py, i8>,
         mut frontier_occupancy: PyReadwriteArray3<'py, u8>,
         mut frontier_neighbor: PyReadwriteArray3<'py, i16>,
@@ -4109,8 +4182,10 @@ impl EnvironmentGroup {
         let connection_count = self.common_data.room_connection.len();
         let inventory_width = inventory_count * usize::from(self.features.inventory);
         let room_width = room_count * usize::from(self.features.room_position);
-        let room_part_width =
+        let room_part_furthest_width =
             room_part_count * usize::from(self.features.room_part_furthest_distance);
+        let room_part_save_distance_width =
+            room_part_count * usize::from(self.features.room_part_save_distance);
         let frontier_occupancy_width = (self.frontier_window_size * self.frontier_window_size)
             .div_ceil(8)
             * usize::from(self.features.frontier_occupancy);
@@ -4131,6 +4206,7 @@ impl EnvironmentGroup {
         let room_part_furthest_destination_shape =
             room_part_furthest_destination.as_array().shape().to_vec();
         let room_part_furthest_source_shape = room_part_furthest_source.as_array().shape().to_vec();
+        let room_part_save_distance_shape = room_part_save_distance.as_array().shape().to_vec();
         let frontier_shape = frontier.as_array().shape().to_vec();
         let frontier_occupancy_shape = frontier_occupancy.as_array().shape().to_vec();
         let frontier_neighbor_shape = frontier_neighbor.as_array().shape().to_vec();
@@ -4145,6 +4221,7 @@ impl EnvironmentGroup {
             || room_placed_shape[0] < snapshot_count
             || room_part_furthest_destination_shape[0] < snapshot_count
             || room_part_furthest_source_shape[0] < snapshot_count
+            || room_part_save_distance_shape[0] < snapshot_count
             || connection_reachability_shape[0] < snapshot_count
             || toilet_crossed_room_shape[0] < snapshot_count
             || frontier_shape[0] < snapshot_count
@@ -4162,12 +4239,17 @@ impl EnvironmentGroup {
         check_dim(
             "room_part_furthest_destination",
             room_part_furthest_destination_shape[1],
-            room_part_width,
+            room_part_furthest_width,
         )?;
         check_dim(
             "room_part_furthest_source",
             room_part_furthest_source_shape[1],
-            room_part_width,
+            room_part_furthest_width,
+        )?;
+        check_dim(
+            "room_part_save_distance",
+            room_part_save_distance_shape[1],
+            room_part_save_distance_width,
         )?;
         check_dim("frontier", frontier_shape[1], frontier_count)?;
         check_dim("frontier", frontier_shape[2], FEATURE_FRONTIER_WIDTH)?;
@@ -4241,6 +4323,9 @@ impl EnvironmentGroup {
         let room_part_furthest_source = room_part_furthest_source
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("room_part_furthest_source must be contiguous"))?;
+        let room_part_save_distance = room_part_save_distance
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("room_part_save_distance must be contiguous"))?;
         let frontier = frontier
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("frontier must be contiguous"))?;
@@ -4296,12 +4381,19 @@ impl EnvironmentGroup {
                                 ..(snapshot_start + snapshot_count) * room_width],
                         ),
                         room_part_furthest_destination: OutputShard::from_slice(
-                            &mut room_part_furthest_destination[snapshot_start * room_part_width
-                                ..(snapshot_start + snapshot_count) * room_part_width],
+                            &mut room_part_furthest_destination[snapshot_start
+                                * room_part_furthest_width
+                                ..(snapshot_start + snapshot_count) * room_part_furthest_width],
                         ),
                         room_part_furthest_source: OutputShard::from_slice(
-                            &mut room_part_furthest_source[snapshot_start * room_part_width
-                                ..(snapshot_start + snapshot_count) * room_part_width],
+                            &mut room_part_furthest_source[snapshot_start * room_part_furthest_width
+                                ..(snapshot_start + snapshot_count) * room_part_furthest_width],
+                        ),
+                        room_part_save_distance: OutputShard::from_slice(
+                            &mut room_part_save_distance[snapshot_start
+                                * room_part_save_distance_width
+                                ..(snapshot_start + snapshot_count)
+                                    * room_part_save_distance_width],
                         ),
                         frontier: OutputShard::from_slice(
                             &mut frontier[snapshot_start * frontier_count * FEATURE_FRONTIER_WIDTH
@@ -4353,7 +4445,8 @@ impl EnvironmentGroup {
                         ),
                         inventory_count: inventory_width,
                         room_count: room_width,
-                        room_part_count: room_part_width,
+                        room_part_furthest_count: room_part_furthest_width,
+                        room_part_save_distance_count: room_part_save_distance_width,
                         connection_count: connection_reachability_width
                             .max(frontier_connection_width),
                         toilet_crossed_room_count: toilet_crossed_room_width,
@@ -4386,6 +4479,7 @@ impl EnvironmentGroup {
         mut room_placed: PyReadwriteArray2<'py, u8>,
         mut room_part_furthest_destination: PyReadwriteArray2<'py, u8>,
         mut room_part_furthest_source: PyReadwriteArray2<'py, u8>,
+        mut room_part_save_distance: PyReadwriteArray2<'py, u8>,
         mut frontier: PyReadwriteArray2<'py, i8>,
         mut frontier_occupancy: PyReadwriteArray2<'py, u8>,
         mut frontier_neighbor: PyReadwriteArray2<'py, i16>,
@@ -4409,8 +4503,10 @@ impl EnvironmentGroup {
         let connection_count = self.common_data.room_connection.len();
         let inventory_width = inventory_count * usize::from(self.features.inventory);
         let room_width = room_count * usize::from(self.features.room_position);
-        let room_part_width =
+        let room_part_furthest_width =
             room_part_count * usize::from(self.features.room_part_furthest_distance);
+        let room_part_save_distance_width =
+            room_part_count * usize::from(self.features.room_part_save_distance);
         let frontier_occupancy_width = (self.frontier_window_size * self.frontier_window_size)
             .div_ceil(8)
             * usize::from(self.features.frontier_occupancy);
@@ -4431,6 +4527,7 @@ impl EnvironmentGroup {
         let room_part_furthest_destination_shape =
             room_part_furthest_destination.as_array().shape().to_vec();
         let room_part_furthest_source_shape = room_part_furthest_source.as_array().shape().to_vec();
+        let room_part_save_distance_shape = room_part_save_distance.as_array().shape().to_vec();
         let frontier_shape = frontier.as_array().shape().to_vec();
         let frontier_occupancy_shape = frontier_occupancy.as_array().shape().to_vec();
         let frontier_neighbor_shape = frontier_neighbor.as_array().shape().to_vec();
@@ -4447,6 +4544,7 @@ impl EnvironmentGroup {
             || room_placed_shape[0] < snapshot_count
             || room_part_furthest_destination_shape[0] < snapshot_count
             || room_part_furthest_source_shape[0] < snapshot_count
+            || room_part_save_distance_shape[0] < snapshot_count
             || connection_reachability_shape[0] < snapshot_count
             || toilet_crossed_room_shape[0] < snapshot_count
             || frontier_shape[0] < sparse_row_count
@@ -4468,12 +4566,17 @@ impl EnvironmentGroup {
         check_dim(
             "room_part_furthest_destination",
             room_part_furthest_destination_shape[1],
-            room_part_width,
+            room_part_furthest_width,
         )?;
         check_dim(
             "room_part_furthest_source",
             room_part_furthest_source_shape[1],
-            room_part_width,
+            room_part_furthest_width,
+        )?;
+        check_dim(
+            "room_part_save_distance",
+            room_part_save_distance_shape[1],
+            room_part_save_distance_width,
         )?;
         check_dim("frontier", frontier_shape[1], FEATURE_FRONTIER_WIDTH)?;
         check_dim(
@@ -4526,6 +4629,9 @@ impl EnvironmentGroup {
         let room_part_furthest_source = room_part_furthest_source
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("room_part_furthest_source must be contiguous"))?;
+        let room_part_save_distance = room_part_save_distance
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("room_part_save_distance must be contiguous"))?;
         let frontier = frontier
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("frontier must be contiguous"))?;
@@ -4594,12 +4700,19 @@ impl EnvironmentGroup {
                                 ..(snapshot_start + snapshot_count) * room_width],
                         ),
                         room_part_furthest_destination: OutputShard::from_slice(
-                            &mut room_part_furthest_destination[snapshot_start * room_part_width
-                                ..(snapshot_start + snapshot_count) * room_part_width],
+                            &mut room_part_furthest_destination[snapshot_start
+                                * room_part_furthest_width
+                                ..(snapshot_start + snapshot_count) * room_part_furthest_width],
                         ),
                         room_part_furthest_source: OutputShard::from_slice(
-                            &mut room_part_furthest_source[snapshot_start * room_part_width
-                                ..(snapshot_start + snapshot_count) * room_part_width],
+                            &mut room_part_furthest_source[snapshot_start * room_part_furthest_width
+                                ..(snapshot_start + snapshot_count) * room_part_furthest_width],
+                        ),
+                        room_part_save_distance: OutputShard::from_slice(
+                            &mut room_part_save_distance[snapshot_start
+                                * room_part_save_distance_width
+                                ..(snapshot_start + snapshot_count)
+                                    * room_part_save_distance_width],
                         ),
                         frontier: OutputShard::empty(),
                         frontier_occupancy: OutputShard::empty(),
@@ -4618,7 +4731,8 @@ impl EnvironmentGroup {
                         ),
                         inventory_count: inventory_width,
                         room_count: room_width,
-                        room_part_count: room_part_width,
+                        room_part_furthest_count: room_part_furthest_width,
+                        room_part_save_distance_count: room_part_save_distance_width,
                         connection_count: connection_reachability_width,
                         toilet_crossed_room_count: toilet_crossed_room_width,
                         frontier_count: 0,
@@ -4632,6 +4746,7 @@ impl EnvironmentGroup {
                         room_placed: OutputShard::empty(),
                         room_part_furthest_destination: OutputShard::empty(),
                         room_part_furthest_source: OutputShard::empty(),
+                        room_part_save_distance: OutputShard::empty(),
                         frontier: OutputShard::from_slice(
                             &mut frontier[sparse_row_start * FEATURE_FRONTIER_WIDTH
                                 ..(sparse_row_start + worker_sparse_row_count)
@@ -4663,7 +4778,8 @@ impl EnvironmentGroup {
                         toilet_crossed_room_idx: OutputShard::empty(),
                         inventory_count: 0,
                         room_count: 0,
-                        room_part_count: 0,
+                        room_part_furthest_count: 0,
+                        room_part_save_distance_count: 0,
                         connection_count: frontier_connection_width,
                         toilet_crossed_room_count: 0,
                         frontier_count: 1,
