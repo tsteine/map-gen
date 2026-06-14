@@ -581,6 +581,7 @@ pub struct Environment {
     connection_variant_unused_count: Vec<usize>, // number of unused room representatives for each connection variant
     room_part_component: Vec<usize>,             // maps placed room door groups to SCC components
     scc_dag: SccDag, // DAG of strongly connected components (condensation graph)
+    active_room_parts: Vec<RoomPartIdx>,
     graph_distance: Vec<GraphDistance>,
     occupancy: Vec<u8>,
     known_outcomes: Option<PreliminaryOutcomes>,
@@ -595,7 +596,8 @@ struct FeatureSnapshot {
     connection_variant_unused_count: usize,
     room_part_component: Vec<usize>,
     scc_dag: SccDag,
-    graph_distance: Vec<GraphDistance>,
+    active_room_parts_len: usize,
+    graph_distance_snapshot: GraphDistanceSnapshot,
 }
 
 struct LookaheadSnapshot {
@@ -613,7 +615,14 @@ struct LookaheadSnapshot {
     door_matches: Vec<(usize, usize, DirDoorIdx)>,
     room_part_component: Vec<usize>,
     scc_dag: SccDag,
-    graph_distance: Vec<GraphDistance>,
+    active_room_parts_len: usize,
+    graph_distance_snapshot: GraphDistanceSnapshot,
+}
+
+enum GraphDistanceSnapshot {
+    None,
+    NewRoom(RoomIdx),
+    Full(Vec<GraphDistance>),
 }
 
 impl Environment {
@@ -642,6 +651,7 @@ impl Environment {
                 .collect(),
             room_part_component: vec![NO_COMPONENT; common.room_part.len()],
             scc_dag: SccDag::default(),
+            active_room_parts: Vec::new(),
             graph_distance: vec![
                 UNREACHABLE_DISTANCE;
                 common.room_part.len() * common.room_part.len()
@@ -673,6 +683,7 @@ impl Environment {
         );
         self.room_part_component.fill(NO_COMPONENT);
         self.scc_dag.clear();
+        self.active_room_parts.clear();
         self.graph_distance.fill(UNREACHABLE_DISTANCE);
         self.occupancy.fill(0);
         self.known_outcomes = None;
@@ -1153,10 +1164,15 @@ impl Environment {
         let graph_size = common.room_part.len();
         for from_part in 0..room.door_group_count {
             let from_room_part = room.door_group_offset + from_part;
+            self.active_room_parts.push(from_room_part as RoomPartIdx);
             for to_part in 0..room.door_group_count {
                 let to_room_part = room.door_group_offset + to_part;
-                self.graph_distance[from_room_part * graph_size + to_room_part] =
-                    room.part_distances[from_part * room.door_group_count + to_part];
+                self.set_graph_distance(
+                    graph_size,
+                    from_room_part,
+                    to_room_part,
+                    room.part_distances[from_part * room.door_group_count + to_part],
+                );
             }
         }
         if let [(room_part, attached_part)] = external_edges {
@@ -1182,16 +1198,20 @@ impl Environment {
         let room_end = room_start + room.door_group_count;
         let local_attachment = room_part as usize - room_start;
         let attached_part = attached_part as usize;
+        let old_room_parts = self
+            .active_room_parts
+            .iter()
+            .copied()
+            .map(usize::from)
+            .filter(|&part| !(room_start..room_end).contains(&part))
+            .collect::<Vec<_>>();
 
         for local_from in 0..room.door_group_count {
             let from_part = room_start + local_from;
             let to_attachment =
                 room.part_distances[local_from * room.door_group_count + local_attachment];
             if to_attachment != UNREACHABLE_DISTANCE {
-                for to_part in 0..graph_size {
-                    if (room_start..room_end).contains(&to_part) {
-                        continue;
-                    }
+                for &to_part in &old_room_parts {
                     let old_distance = self.graph_distance[attached_part * graph_size + to_part];
                     if let Some(distance) = graph_distance_sum(&[to_attachment, 1, old_distance]) {
                         self.set_graph_distance_min(graph_size, from_part, to_part, distance);
@@ -1202,10 +1222,7 @@ impl Environment {
             let from_attachment =
                 room.part_distances[local_attachment * room.door_group_count + local_from];
             if from_attachment != UNREACHABLE_DISTANCE {
-                for from_old_part in 0..graph_size {
-                    if (room_start..room_end).contains(&from_old_part) {
-                        continue;
-                    }
+                for &from_old_part in &old_room_parts {
                     let old_distance =
                         self.graph_distance[from_old_part * graph_size + attached_part];
                     if let Some(distance) = graph_distance_sum(&[old_distance, 1, from_attachment])
@@ -1246,10 +1263,16 @@ impl Environment {
         let to_part = to_part as usize;
         let edge_idx = from_part * graph_size + to_part;
         if cost < self.graph_distance[edge_idx] {
-            self.graph_distance[edge_idx] = cost;
+            self.set_graph_distance(graph_size, from_part, to_part, cost);
         }
 
-        for source in 0..graph_size {
+        let active_room_parts = self
+            .active_room_parts
+            .iter()
+            .copied()
+            .map(usize::from)
+            .collect::<Vec<_>>();
+        for &source in &active_room_parts {
             let source_distance = self.graph_distance[source * graph_size + from_part];
             if source_distance == UNREACHABLE_DISTANCE {
                 continue;
@@ -1257,7 +1280,7 @@ impl Environment {
             let Some(prefix_distance) = graph_distance_sum(&[source_distance, cost]) else {
                 continue;
             };
-            for destination in 0..graph_size {
+            for &destination in &active_room_parts {
                 let destination_distance = self.graph_distance[to_part * graph_size + destination];
                 let Some(distance) = graph_distance_sum(&[prefix_distance, destination_distance])
                 else {
@@ -1277,7 +1300,76 @@ impl Environment {
     ) {
         let idx = from_part * graph_size + to_part;
         if distance < self.graph_distance[idx] {
-            self.graph_distance[idx] = distance;
+            self.set_graph_distance(graph_size, from_part, to_part, distance);
+        }
+    }
+
+    fn set_graph_distance(
+        &mut self,
+        graph_size: usize,
+        from_part: usize,
+        to_part: usize,
+        distance: GraphDistance,
+    ) {
+        let idx = from_part * graph_size + to_part;
+        self.graph_distance[idx] = distance;
+    }
+
+    fn graph_distance_snapshot_for_candidate(
+        &self,
+        common: &CommonData,
+        candidate: Action,
+    ) -> GraphDistanceSnapshot {
+        if self.finished || candidate.room_idx >= common.room.len() as RoomIdx {
+            return GraphDistanceSnapshot::None;
+        }
+        let room = &common.room[candidate.room_idx as usize];
+        let external_edge_count = room
+            .doors
+            .iter()
+            .filter(|door| {
+                self.frontier
+                    .contains_key(&DoorLocation::new(door, candidate.x, candidate.y))
+            })
+            .count();
+        if external_edge_count >= 2 {
+            GraphDistanceSnapshot::Full(self.graph_distance.clone())
+        } else {
+            GraphDistanceSnapshot::NewRoom(candidate.room_idx)
+        }
+    }
+
+    fn restore_graph_distance_snapshot(
+        &mut self,
+        common: &CommonData,
+        snapshot: GraphDistanceSnapshot,
+    ) {
+        match snapshot {
+            GraphDistanceSnapshot::None => {}
+            GraphDistanceSnapshot::NewRoom(room_idx) => {
+                self.clear_room_graph_distances(common, room_idx);
+            }
+            GraphDistanceSnapshot::Full(graph_distance) => {
+                self.graph_distance = graph_distance;
+            }
+        }
+    }
+
+    fn clear_room_graph_distances(&mut self, common: &CommonData, room_idx: RoomIdx) {
+        let room = &common.room[room_idx as usize];
+        let graph_size = common.room_part.len();
+        for local_part in 0..room.door_group_count {
+            let room_part = room.door_group_offset + local_part;
+            for &active_part in &self.active_room_parts {
+                let active_part = active_part as usize;
+                self.graph_distance[room_part * graph_size + active_part] = UNREACHABLE_DISTANCE;
+                self.graph_distance[active_part * graph_size + room_part] = UNREACHABLE_DISTANCE;
+            }
+            for other_local_part in 0..room.door_group_count {
+                let other_part = room.door_group_offset + other_local_part;
+                self.graph_distance[room_part * graph_size + other_part] = UNREACHABLE_DISTANCE;
+                self.graph_distance[other_part * graph_size + room_part] = UNREACHABLE_DISTANCE;
+            }
         }
     }
 
@@ -1773,7 +1865,7 @@ impl Environment {
                     if after == DoorValidOutcome::Invalid {
                         profile_end(PROFILE_PROPOSAL_DOOR_OUTCOMES, profile);
                         let profile = profile_start();
-                        self.restore_lookahead_candidate(snapshot);
+                        self.restore_lookahead_candidate(common, snapshot);
                         profile_end(PROFILE_PROPOSAL_RESTORE, profile);
                         return Ok(CandidateOutcome::Rejected);
                     }
@@ -1802,7 +1894,7 @@ impl Environment {
                 if after == DoorValidOutcome::Invalid {
                     profile_end(PROFILE_PROPOSAL_CONNECTION_OUTCOMES, profile);
                     let profile = profile_start();
-                    self.restore_lookahead_candidate(snapshot);
+                    self.restore_lookahead_candidate(common, snapshot);
                     profile_end(PROFILE_PROPOSAL_RESTORE, profile);
                     return Ok(CandidateOutcome::Rejected);
                 }
@@ -1817,7 +1909,7 @@ impl Environment {
             let after = self.toilet_outcome(common);
             if after == DoorValidOutcome::Invalid {
                 let profile = profile_start();
-                self.restore_lookahead_candidate(snapshot);
+                self.restore_lookahead_candidate(common, snapshot);
                 profile_end(PROFILE_PROPOSAL_RESTORE, profile);
                 return Ok(CandidateOutcome::Rejected);
             }
@@ -1846,7 +1938,7 @@ impl Environment {
         let door_match = self.door_match_feature(common, &outcomes);
         profile_end(PROFILE_PROPOSAL_DOOR_MATCH, profile);
         let profile = profile_start();
-        self.restore_lookahead_candidate(snapshot);
+        self.restore_lookahead_candidate(common, snapshot);
         profile_end(PROFILE_PROPOSAL_RESTORE, profile);
         Ok(CandidateOutcome::Clean(outcomes, door_match, features))
     }
@@ -1878,7 +1970,7 @@ impl Environment {
         );
         profile_end(PROFILE_PROPOSAL_FEATURES, profile);
         let profile = profile_start();
-        self.restore_lookahead_candidate(snapshot);
+        self.restore_lookahead_candidate(common, snapshot);
         profile_end(PROFILE_PROPOSAL_RESTORE, profile);
         (outcomes, door_match, features)
     }
@@ -1891,7 +1983,7 @@ impl Environment {
         let snapshot = self.apply_lookahead_candidate(candidate, common);
         let outcomes = self.outcomes(common);
         let door_match = self.door_match_feature(common, &outcomes);
-        self.restore_lookahead_candidate(snapshot);
+        self.restore_lookahead_candidate(common, snapshot);
         (outcomes, door_match)
     }
 
@@ -1965,6 +2057,7 @@ impl Environment {
         let connection_variant_idx =
             room_idx.map(|room_idx| common.room[room_idx as usize].connection_variant_idx);
         let mut door_matches = Vec::new();
+        let graph_distance_snapshot = self.graph_distance_snapshot_for_candidate(common, candidate);
         if !self.finished {
             if let Some(room_idx) = room_idx {
                 for door in &common.room[room_idx as usize].doors {
@@ -2003,7 +2096,8 @@ impl Environment {
             door_matches,
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
-            graph_distance: self.graph_distance.clone(),
+            active_room_parts_len: self.active_room_parts.len(),
+            graph_distance_snapshot,
         };
         profile_end(PROFILE_LOOKAHEAD_SNAPSHOT, profile);
         let profile = profile_start();
@@ -2012,7 +2106,7 @@ impl Environment {
         snapshot
     }
 
-    fn restore_lookahead_candidate(&mut self, snapshot: LookaheadSnapshot) {
+    fn restore_lookahead_candidate(&mut self, common: &CommonData, snapshot: LookaheadSnapshot) {
         self.actions.truncate(snapshot.action_len);
         self.finished = snapshot.finished;
         self.frontier = snapshot.frontier;
@@ -2033,7 +2127,9 @@ impl Environment {
         }
         self.room_part_component = snapshot.room_part_component;
         self.scc_dag = snapshot.scc_dag;
-        self.graph_distance = snapshot.graph_distance;
+        self.active_room_parts
+            .truncate(snapshot.active_room_parts_len);
+        self.restore_graph_distance_snapshot(common, snapshot.graph_distance_snapshot);
     }
 
     fn apply_feature_candidate(
@@ -2041,6 +2137,7 @@ impl Environment {
         candidate: Action,
         common: &CommonData,
     ) -> FeatureSnapshot {
+        let graph_distance_snapshot = self.graph_distance_snapshot_for_candidate(common, candidate);
         let frontier = std::mem::take(&mut self.frontier);
         self.frontier = frontier
             .iter()
@@ -2068,13 +2165,19 @@ impl Environment {
                 .map_or(0, |idx| self.connection_variant_unused_count[idx as usize]),
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
-            graph_distance: self.graph_distance.clone(),
+            active_room_parts_len: self.active_room_parts.len(),
+            graph_distance_snapshot,
         };
         self.step_for_features(candidate, common);
         snapshot
     }
 
-    fn restore_feature_candidate(&mut self, candidate: Action, snapshot: FeatureSnapshot) {
+    fn restore_feature_candidate(
+        &mut self,
+        common: &CommonData,
+        candidate: Action,
+        snapshot: FeatureSnapshot,
+    ) {
         self.finished = snapshot.finished;
         self.frontier = snapshot.frontier;
         if candidate.room_idx < self.room_used.len() as RoomIdx {
@@ -2087,7 +2190,9 @@ impl Environment {
         }
         self.room_part_component = snapshot.room_part_component;
         self.scc_dag = snapshot.scc_dag;
-        self.graph_distance = snapshot.graph_distance;
+        self.active_room_parts
+            .truncate(snapshot.active_room_parts_len);
+        self.restore_graph_distance_snapshot(common, snapshot.graph_distance_snapshot);
     }
 
     #[cfg(test)]
@@ -2470,7 +2575,7 @@ impl Environment {
             frontier_window_size,
         );
         let profile = profile_start();
-        self.restore_feature_candidate(candidate, snapshot);
+        self.restore_feature_candidate(common, candidate, snapshot);
         profile_end(PROFILE_FEATURES_APPLY_CANDIDATE, profile);
         features
     }
@@ -3368,6 +3473,7 @@ mod tests {
 
         env.clear(&common);
         assert_eq!(env.scc_dag.component_count, 0);
+        assert!(env.active_room_parts.is_empty());
         assert!(
             env.room_part_component
                 .iter()
@@ -4079,6 +4185,7 @@ mod tests {
         let expected_connection_variant_unused_count = env.connection_variant_unused_count.clone();
         let expected_room_part_component = env.room_part_component.clone();
         let expected_scc_dag = env.scc_dag.clone();
+        let expected_active_room_parts = env.active_room_parts.clone();
         let expected_graph_distance = env.graph_distance.clone();
         let expected_frontier_count =
             env.feature_frontier_count_after_candidate(candidate, &common);
@@ -4105,6 +4212,7 @@ mod tests {
         );
         assert_eq!(env.room_part_component, expected_room_part_component);
         assert_eq!(env.scc_dag, expected_scc_dag);
+        assert_eq!(env.active_room_parts, expected_active_room_parts);
         assert_eq!(env.graph_distance, expected_graph_distance);
         env.step(candidate, &common);
         assert_eq!(
@@ -4171,6 +4279,7 @@ mod tests {
             &common,
         );
         let expected_graph_distance = env.graph_distance.clone();
+        let expected_active_room_parts = env.active_room_parts.clone();
 
         env.outcomes_after_candidate(
             &common,
@@ -4181,6 +4290,7 @@ mod tests {
             },
         );
 
+        assert_eq!(env.active_room_parts, expected_active_room_parts);
         assert_eq!(env.graph_distance, expected_graph_distance);
     }
 
