@@ -83,6 +83,7 @@ class GenerationConfig(StrictBaseModel):
     reward_toilet_balance: ScheduleableFloat
     reward_frontier: ScheduleableFloat
     reward_graph_diameter: ScheduleableFloat
+    reward_save_distance: ScheduleableFloat
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
     frontier_neighbor_count: int
     frontier_window_size: int
@@ -124,6 +125,7 @@ class TrainConfig(StrictBaseModel):
     toilet_balance_weight: float
     avg_frontiers_weight: float
     graph_diameter_weight: float
+    save_distance_weight: float
     proposal_weight: float
     ema_decay: ScheduleableFloat
     pipeline_groups: int
@@ -259,6 +261,10 @@ def validate_config(config: Config) -> None:
         config.generation.reward_graph_diameter,
         "generation.reward_graph_diameter",
     )
+    validate_nonnegative_scheduleable_float(
+        config.generation.reward_save_distance,
+        "generation.reward_save_distance",
+    )
     if config.generation.num_threads is not None and config.generation.num_threads <= 0:
         raise ValueError("generation.num_threads must be greater than zero")
     if (
@@ -284,6 +290,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("train.avg_frontiers_weight must be greater than or equal to zero")
     if config.train.graph_diameter_weight < 0:
         raise ValueError("train.graph_diameter_weight must be greater than or equal to zero")
+    if config.train.save_distance_weight < 0:
+        raise ValueError("train.save_distance_weight must be greater than or equal to zero")
     validate_ema_decay_config(config.train.ema_decay, "train.ema_decay", config.knot_episodes)
     if (
         config.generation.num_threads is not None

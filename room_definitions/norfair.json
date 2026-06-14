@@ -121,6 +121,7 @@
     {
         "room_id": 312,
         "name": "Red Kihunter Shaft Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -595,6 +596,7 @@
     {
         "room_id": 302,
         "name": "Frog Savestation",
+        "save": true,
         "map": [
             [1]
         ],
@@ -635,6 +637,7 @@
     {
         "room_id": 307,
         "name": "Bubble Mountain Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1256,6 +1259,7 @@
     {
         "room_id": 303,
         "name": "Crocomire Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1269,6 +1273,7 @@
     {
         "room_id": 311,
         "name": "Post Crocomire Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1299,6 +1304,7 @@
     {
         "room_id": 310,
         "name": "Lower Norfair Elevator Save Room",
+        "save": true,
         "map": [
             [1]
         ],

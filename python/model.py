@@ -32,6 +32,8 @@ class Predictions:
     avg_frontiers: torch.Tensor
     # Predicted graph diameter across placed room parts:
     graph_diameter: torch.Tensor
+    # Predicted save distance for each global room part:
+    save_distance: torch.Tensor
     # Frontier-local proposal logits for door variants:
     proposal_score: torch.Tensor
     # Optional frontier-local state before global pooling:
@@ -64,6 +66,7 @@ def get_predictions(raw_preds, output_sizes):
         toilet_balance_score=preds[4].squeeze(-1),
         avg_frontiers=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1]]),
         graph_diameter=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1]]),
+        save_distance=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_score=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_state=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_row_snapshot_idx=raw_preds.new_empty([0], dtype=torch.int64),
@@ -369,6 +372,7 @@ class FrontierModel(torch.nn.Module):
         self.toilet_balance_score_output = torch.nn.Linear(embedding_width, 1)
         self.avg_frontiers_output = torch.nn.Linear(embedding_width, 1)
         self.graph_diameter_output = torch.nn.Linear(embedding_width, 1)
+        self.save_distance_output = torch.nn.Linear(embedding_width, self.num_room_parts)
         self.proposal_output = torch.nn.Linear(
             embedding_width,
             output_metadata.num_door_variants,
@@ -750,6 +754,7 @@ class FrontierModel(torch.nn.Module):
         toilet_balance_score = self.toilet_balance_score_output(X)
         avg_frontiers = self.avg_frontiers_output(X).squeeze(-1).to(torch.float32)
         graph_diameter = self.graph_diameter_output(X).squeeze(-1).to(torch.float32)
+        save_distance = self.save_distance_output(X).to(torch.float32)
         preds = get_predictions(
             torch.cat([door, connection, toilet, balance_score, toilet_balance_score], dim=-1),
             self.output_sizes,
@@ -762,6 +767,7 @@ class FrontierModel(torch.nn.Module):
             preds.toilet_balance_score,
             avg_frontiers,
             graph_diameter,
+            save_distance,
             proposal_score,
             proposal_state,
             row_snapshot_idx if return_proposal_state or include_proposal else row_snapshot_idx.new_empty([0]),

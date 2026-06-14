@@ -27,12 +27,20 @@ pub const NUM_DIRS: usize = 4; // left, right, up, down
 
 #[derive(Clone, Deserialize)]
 pub struct Room {
+    #[serde(default)]
+    save: bool,
     map: Vec<Vec<u8>>,
     toilet_crossing_x: Vec<Coord>,
     special_type: Option<SpecialType>,
     doors: Vec<Vec<Door>>,
     connections: Vec<(PartIdx, PartIdx)>,
     missing_connections: Vec<(PartIdx, PartIdx)>,
+}
+
+impl Room {
+    pub fn save(&self) -> bool {
+        self.save
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -168,6 +176,7 @@ pub struct OutputData {
 }
 
 pub struct RoomData {
+    pub save: bool,
     pub geometry_idx: GeometryIdx,
     pub connection_variant_idx: ConnectionVariantIdx,
     pub doors: Vec<RoomDoorData>,
@@ -622,6 +631,7 @@ impl CommonData {
                 });
             }
             room_data.push(RoomData {
+                save: room.save(),
                 geometry_idx,
                 connection_variant_idx,
                 doors: door_data,

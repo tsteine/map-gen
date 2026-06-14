@@ -27,6 +27,7 @@ class GenerateConfig:
     reward_toilet_balance: float
     reward_frontier: float
     reward_graph_diameter: float
+    reward_save_distance: float
     autocast: bool
 
     @property
@@ -136,6 +137,8 @@ class EpisodeOutcomes:
     toilet_crossed_room_idx: torch.Tensor
     avg_frontiers: torch.Tensor
     graph_diameter: torch.Tensor
+    save_distance: torch.Tensor
+    save_distance_mask: torch.Tensor
 
     def to(self, device: torch.device) -> "EpisodeOutcomes":
         return EpisodeOutcomes(
@@ -143,6 +146,8 @@ class EpisodeOutcomes:
             self.toilet_crossed_room_idx.to(device),
             self.avg_frontiers.to(device),
             self.graph_diameter.to(device),
+            self.save_distance.to(device),
+            self.save_distance_mask.to(device),
         )
 
 
@@ -570,6 +575,8 @@ class EnvironmentGroup:
             ),
             avg_frontiers=torch.from_numpy(result.avg_frontiers).to(device),
             graph_diameter=torch.from_numpy(result.graph_diameter).to(device),
+            save_distance=torch.from_numpy(result.save_distance).to(device),
+            save_distance_mask=torch.from_numpy(result.save_distance_mask).to(device),
         )
 
     def get_outcomes_after_candidates(

@@ -1017,6 +1017,46 @@ impl Environment {
             .unwrap_or(0)
     }
 
+    pub fn save_distances(&self, common: &CommonData) -> (Vec<f32>, Vec<u8>) {
+        let graph_size = common.room_part.len();
+        let mut values = vec![0.0; graph_size];
+        let mut mask = vec![0; graph_size];
+        let save_parts: Vec<_> = self
+            .active_room_parts
+            .iter()
+            .copied()
+            .filter(|&room_part| {
+                let (room_idx, _) = common.room_part[room_part as usize];
+                common.room[room_idx as usize].save
+            })
+            .map(usize::from)
+            .collect();
+
+        if save_parts.is_empty() {
+            return (values, mask);
+        }
+
+        for &room_part in &self.active_room_parts {
+            let part = room_part as usize;
+            let nearest_from_save = save_parts
+                .iter()
+                .map(|&save_part| self.graph_distance[save_part * graph_size + part])
+                .filter(|&distance| distance != UNREACHABLE_DISTANCE)
+                .min();
+            let nearest_to_save = save_parts
+                .iter()
+                .map(|&save_part| self.graph_distance[part * graph_size + save_part])
+                .filter(|&distance| distance != UNREACHABLE_DISTANCE)
+                .min();
+            if let (Some(from_save), Some(to_save)) = (nearest_from_save, nearest_to_save) {
+                values[part] = f32::from(from_save) + f32::from(to_save);
+                mask[part] = 1;
+            }
+        }
+
+        (values, mask)
+    }
+
     fn room_part_furthest_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
         fn encode_distance(distance: GraphDistance) -> u8 {
             if distance == UNREACHABLE_DISTANCE {
@@ -3995,6 +4035,127 @@ mod tests {
             &common,
         );
         assert_eq!(env.graph_diameter(), 2);
+    }
+
+    #[test]
+    fn save_distances_sum_nearest_directed_distances_to_save_parts() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "save": true,
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [
+                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    ],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [
+                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
+                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    ],
+                    "connections": [[0, 1], [1, 0]],
+                    "missing_connections": []
+                },
+                {
+                    "save": true,
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [
+                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    ],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 0);
+        env.step_known(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 1,
+                x: 1,
+                y: 0,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 2,
+                x: 2,
+                y: 0,
+            },
+            &common,
+        );
+
+        let (distance, mask) = env.save_distances(&common);
+
+        assert_eq!(distance, vec![0.0, 2.0, 2.0, 0.0]);
+        assert_eq!(mask, vec![1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn save_distances_mask_parts_without_reachable_save() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "save": true,
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 0);
+        env.step_known(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 1,
+                x: 2,
+                y: 0,
+            },
+            &common,
+        );
+
+        let (distance, mask) = env.save_distances(&common);
+
+        assert_eq!(distance, vec![0.0, 0.0]);
+        assert_eq!(mask, vec![1, 0]);
     }
 
     #[test]

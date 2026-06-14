@@ -19,6 +19,7 @@
     {
         "room_id": 8,
         "name": "Landing Site",
+        "save": true,
         "map": [
             [0, 0, 1, 1, 1, 1, 1, 1, 1],
             [0, 0, 1, 1, 1, 1, 1, 1, 1],
@@ -171,6 +172,7 @@
     {
         "room_id": 16,
         "name": "Crateria Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -788,6 +790,7 @@
     {
         "room_id": 320,
         "name": "Caterpillar Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1035,6 +1038,7 @@
     {
         "room_id": 314,
         "name": "Green Brinstar Main Shaft Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1048,6 +1052,7 @@
     {
         "room_id": 315,
         "name": "Etecoon Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1258,6 +1263,7 @@
     {
         "room_id": 318,
         "name": "Big Pink Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1438,6 +1444,7 @@
     {
         "room_id": 300,
         "name": "Kraid Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1586,6 +1593,7 @@
     {
         "room_id": 171,
         "name": "Glass Tunnel Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1789,6 +1797,7 @@
     {
         "room_id": 182,
         "name": "Aqueduct Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -1965,6 +1974,7 @@
     {
         "room_id": 190,
         "name": "Draygon Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -2389,6 +2399,7 @@
     {
         "room_id": 216,
         "name": "Forgotten Highway Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -2641,6 +2652,7 @@
     {
         "room_id": 312,
         "name": "Red Kihunter Shaft Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -3116,6 +3128,7 @@
     {
         "room_id": 302,
         "name": "Frog Savestation",
+        "save": true,
         "map": [
             [1]
         ],
@@ -3156,6 +3169,7 @@
     {
         "room_id": 307,
         "name": "Bubble Mountain Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -3777,6 +3791,7 @@
     {
         "room_id": 303,
         "name": "Crocomire Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -3790,6 +3805,7 @@
     {
         "room_id": 311,
         "name": "Post Crocomire Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -3820,6 +3836,7 @@
     {
         "room_id": 310,
         "name": "Lower Norfair Elevator Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -4076,6 +4093,7 @@
     {
         "room_id": 304,
         "name": "Wrecked Ship Save Room",
+        "save": true,
         "map": [
             [1]
         ],
@@ -4302,6 +4320,7 @@
     {
         "room_id": 237,
         "name": "Lower Tourian Save Room",
+        "save": true,
         "map": [
             [1]
         ],

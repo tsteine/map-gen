@@ -19,6 +19,7 @@
     {
         "room_id": 8,
         "name": "Landing Site",
+        "save": true,
         "map": [
             [0, 0, 1, 1, 1, 1, 1, 1, 1],
             [0, 0, 1, 1, 1, 1, 1, 1, 1],
@@ -170,6 +171,7 @@
     {
         "room_id": 16,
         "name": "Crateria Save Room",
+        "save": true,
         "map": [
             [1]
         ],

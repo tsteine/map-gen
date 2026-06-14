@@ -476,6 +476,7 @@ def create_generate_config(
         reward_toilet_balance=config.generation.reward_toilet_balance,
         reward_frontier=config.generation.reward_frontier,
         reward_graph_diameter=config.generation.reward_graph_diameter,
+        reward_save_distance=config.generation.reward_save_distance,
         autocast=config.model.generation_autocast,
     )
 
@@ -840,6 +841,12 @@ class TrainingSession:
                 graph_diameter=torch.cat([
                     outcomes.graph_diameter for outcomes in outcome_iterations
                 ]),
+                save_distance=torch.cat([
+                    outcomes.save_distance for outcomes in outcome_iterations
+                ]),
+                save_distance_mask=torch.cat([
+                    outcomes.save_distance_mask for outcomes in outcome_iterations
+                ]),
             ),
             DoorMatchCounts(
                 horizontal=torch.sum(
@@ -949,6 +956,13 @@ class TrainingSession:
         min_invalid = torch.min(total_invalid)
         avg_frontiers = torch.mean(episode_outcomes.avg_frontiers.to(torch.float32))
         graph_diameter = torch.mean(episode_outcomes.graph_diameter.to(torch.float32))
+        save_distance_mask = episode_outcomes.save_distance_mask.to(torch.float32)
+        save_distance_mask_count = torch.sum(save_distance_mask)
+        save_distance = (
+            torch.sum(episode_outcomes.save_distance.to(torch.float32) * save_distance_mask)
+            / (save_distance_mask_count + 1e-15)
+        )
+        save_distance_mask_fraction = torch.mean(save_distance_mask)
 
         success = total_invalid == 0
         success_rate = torch.mean(success.to(torch.float32))
@@ -1011,6 +1025,7 @@ class TrainingSession:
         )
         avg_frontiers_loss_pct = 100.0 * loss.avg_frontiers_contribution / loss_denominator
         graph_diameter_loss_pct = 100.0 * loss.graph_diameter_contribution / loss_denominator
+        save_distance_loss_pct = 100.0 * loss.save_distance_contribution / loss_denominator
         proposal_loss_pct = 100.0 * loss.proposal_contribution / loss_denominator
 
         metrics = {
@@ -1029,6 +1044,8 @@ class TrainingSession:
             "avg_frontiers_loss_pct": avg_frontiers_loss_pct,
             "graph_diameter_loss": loss.graph_diameter,
             "graph_diameter_loss_pct": graph_diameter_loss_pct,
+            "save_distance_loss": loss.save_distance,
+            "save_distance_loss_pct": save_distance_loss_pct,
             "proposal_loss": loss.proposal,
             "proposal_loss_pct": proposal_loss_pct,
             "candidate_target_entropy": candidate_diagnostics.target_entropy,
@@ -1042,6 +1059,8 @@ class TrainingSession:
             "avg_invalid": avg_invalid,
             "avg_frontiers": avg_frontiers,
             "graph_diameter": graph_diameter,
+            "save_distance": save_distance,
+            "save_distance_mask_fraction": save_distance_mask_fraction,
             "avg_door": avg_door,
             "avg_conn": avg_conn,
             "avg_toilet": avg_toilet,
@@ -1061,11 +1080,13 @@ class TrainingSession:
             "reward_toilet_balance": step_config.generation.reward_toilet_balance,
             "reward_frontier": step_config.generation.reward_frontier,
             "reward_graph_diameter": step_config.generation.reward_graph_diameter,
+            "reward_save_distance": step_config.generation.reward_save_distance,
             "ema_decay": step_config.train.ema_decay,
             "toilet_weight": step_config.train.toilet_weight,
             "toilet_balance_weight": step_config.train.toilet_balance_weight,
             "avg_frontiers_weight": step_config.train.avg_frontiers_weight,
             "graph_diameter_weight": step_config.train.graph_diameter_weight,
+            "save_distance_weight": step_config.train.save_distance_weight,
             "door_match_left_top1": left_topk[0],
             "door_match_left_top2": left_topk[1],
             "door_match_left_top3": left_topk[2],
@@ -1100,10 +1121,11 @@ class TrainingSession:
 
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
-            "round %s, loss %.4f (door %.4f %.1f%%, conn %.4f %.1f%%, tube %.4f %.1f%%, "
-            "bal %.4f %.1f%%, tube-bal %.4f %.1f%%, diam %.2f %.1f%%, prop %.3f %.1f%%), "
+            "round %s, loss %.4f (d %.4f %.1f%%, c %.4f %.1f%%, t %.4f %.1f%%, "
+            "b %.4f %.1f%%, tb %.4f %.1f%%, d %.2f %.1f%%, "
+            "s %.2f %.1f%%, p %.3f %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
-            "conn %.2f (min %s), tube %.2f, front %.2f, diam %.2f, ss %.3f, "
+            "conn %.2f (min %s), tube %.2f, front %.2f, diam %.2f, save %.2f, ss %.3f, "
             "p %.4f, "
             "frac %.4f",
             round_idx,
@@ -1120,6 +1142,8 @@ class TrainingSession:
             main_toilet_balance_loss_pct,
             loss.graph_diameter,
             graph_diameter_loss_pct,
+            loss.save_distance,
+            save_distance_loss_pct,
             loss.proposal,
             proposal_loss_pct,
             scalar(success_rate),
@@ -1132,6 +1156,7 @@ class TrainingSession:
             scalar(avg_toilet),
             scalar(avg_frontiers),
             scalar(graph_diameter),
+            scalar(save_distance),
             scalar(door_match_ss),
             scalar(candidate_diagnostics.selected_probability),
             schedule_progress,
@@ -1520,6 +1545,7 @@ def build_session(args: Args) -> TrainingSession:
             toilet_balance_weight=config.train.toilet_balance_weight,
             avg_frontiers_weight=config.train.avg_frontiers_weight,
             graph_diameter_weight=config.train.graph_diameter_weight,
+            save_distance_weight=config.train.save_distance_weight,
         ),
         experience=ExperienceStorage(
             len(rooms),
