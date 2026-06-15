@@ -1284,44 +1284,58 @@ impl Environment {
             .unwrap_or(0)
     }
 
-    pub fn save_distances(&self, common: &CommonData) -> (Vec<f32>, Vec<u8>) {
+    fn room_distances(
+        &self,
+        common: &CommonData,
+        is_destination_room: impl Fn(&crate::common::RoomData) -> bool,
+    ) -> (Vec<f32>, Vec<u8>) {
         let graph_size = common.room_part.len();
         let mut values = vec![0.0; graph_size];
         let mut mask = vec![0; graph_size];
-        let save_parts: Vec<_> = self
+        let destination_parts: Vec<_> = self
             .active_room_parts
             .iter()
             .copied()
             .filter(|&room_part| {
                 let (room_idx, _) = common.room_part[room_part as usize];
-                common.room[room_idx as usize].save
+                is_destination_room(&common.room[room_idx as usize])
             })
             .map(usize::from)
             .collect();
 
-        if save_parts.is_empty() {
+        if destination_parts.is_empty() {
             return (values, mask);
         }
 
         for &room_part in &self.active_room_parts {
             let part = room_part as usize;
-            let nearest_from_save = save_parts
+            let nearest_from_destination = destination_parts
                 .iter()
-                .map(|&save_part| self.graph_distance[save_part * graph_size + part])
+                .map(|&destination_part| self.graph_distance[destination_part * graph_size + part])
                 .filter(|&distance| distance != UNREACHABLE_DISTANCE)
                 .min();
-            let nearest_to_save = save_parts
+            let nearest_to_destination = destination_parts
                 .iter()
-                .map(|&save_part| self.graph_distance[part * graph_size + save_part])
+                .map(|&destination_part| self.graph_distance[part * graph_size + destination_part])
                 .filter(|&distance| distance != UNREACHABLE_DISTANCE)
                 .min();
-            if let (Some(from_save), Some(to_save)) = (nearest_from_save, nearest_to_save) {
-                values[part] = f32::from(from_save) + f32::from(to_save);
+            if let (Some(from_destination), Some(to_destination)) =
+                (nearest_from_destination, nearest_to_destination)
+            {
+                values[part] = f32::from(from_destination) + f32::from(to_destination);
                 mask[part] = 1;
             }
         }
 
         (values, mask)
+    }
+
+    pub fn save_distances(&self, common: &CommonData) -> (Vec<f32>, Vec<u8>) {
+        self.room_distances(common, |room| room.save)
+    }
+
+    pub fn refill_distances(&self, common: &CommonData) -> (Vec<f32>, Vec<u8>) {
+        self.room_distances(common, |room| room.refill)
     }
 
     fn room_part_furthest_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {

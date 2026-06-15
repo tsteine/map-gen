@@ -288,6 +288,8 @@ enum WorkerCommand {
         graph_diameter: OutputShard<f32>,
         save_distance: OutputShard<f32>,
         save_distance_mask: OutputShard<u8>,
+        refill_distance: OutputShard<f32>,
+        refill_distance_mask: OutputShard<u8>,
     },
     GetOutcomesAfterCandidates {
         environment_start: usize,
@@ -1027,6 +1029,8 @@ fn worker_loop(
                 graph_diameter,
                 save_distance,
                 save_distance_mask,
+                refill_distance,
+                refill_distance_mask,
             } => {
                 // SAFETY: The main thread guarantees that for the duration of this command,
                 // the output slices remain valid and that no other thread accesses them.
@@ -1038,6 +1042,8 @@ fn worker_loop(
                 let graph_diameter = unsafe { graph_diameter.into_mut_slice() };
                 let save_distance = unsafe { save_distance.into_mut_slice() };
                 let save_distance_mask = unsafe { save_distance_mask.into_mut_slice() };
+                let refill_distance = unsafe { refill_distance.into_mut_slice() };
+                let refill_distance_mask = unsafe { refill_distance_mask.into_mut_slice() };
                 debug_assert_eq!(door_valid.len(), environments.len() * door_outcome_count);
                 debug_assert_eq!(
                     connections_valid.len(),
@@ -1053,6 +1059,14 @@ fn worker_loop(
                 );
                 debug_assert_eq!(
                     save_distance_mask.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
+                    refill_distance.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
+                    refill_distance_mask.len(),
                     environments.len() * common_data.room_part.len()
                 );
 
@@ -1088,6 +1102,12 @@ fn worker_loop(
                         .copy_from_slice(&env_save_distance);
                     save_distance_mask[save_distance_start..save_distance_end]
                         .copy_from_slice(&env_save_distance_mask);
+                    let (env_refill_distance, env_refill_distance_mask) =
+                        env.refill_distances(&common_data);
+                    refill_distance[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_refill_distance);
+                    refill_distance_mask[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_refill_distance_mask);
                     let door_row_start = env_idx * door_outcome_count;
                     for (outcome_idx, outcome) in outcomes.door_valid.iter().enumerate() {
                         door_valid[door_row_start + outcome_idx] = match outcome {
@@ -1498,6 +1518,8 @@ pub struct EpisodeOutcomes {
     graph_diameter: Py<PyArray1<f32>>,
     save_distance: Py<PyArray2<f32>>,
     save_distance_mask: Py<PyArray2<u8>>,
+    refill_distance: Py<PyArray2<f32>>,
+    refill_distance_mask: Py<PyArray2<u8>>,
 }
 
 #[pyclass(module = "map_gen")]
@@ -1580,6 +1602,16 @@ impl EpisodeOutcomes {
     #[getter]
     fn save_distance_mask(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
         self.save_distance_mask.clone_ref(py)
+    }
+
+    #[getter]
+    fn refill_distance(&self, py: Python<'_>) -> Py<PyArray2<f32>> {
+        self.refill_distance.clone_ref(py)
+    }
+
+    #[getter]
+    fn refill_distance_mask(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
+        self.refill_distance_mask.clone_ref(py)
     }
 }
 
@@ -3356,6 +3388,8 @@ impl EnvironmentGroup {
         let room_part_count = self.common_data.room_part.len();
         let mut save_distance = vec![0.0; self.num_environments * room_part_count];
         let mut save_distance_mask = vec![0; self.num_environments * room_part_count];
+        let mut refill_distance = vec![0.0; self.num_environments * room_part_count];
+        let mut refill_distance_mask = vec![0; self.num_environments * room_part_count];
 
         py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
@@ -3401,6 +3435,12 @@ impl EnvironmentGroup {
                     save_distance_mask: OutputShard::from_slice(
                         &mut save_distance_mask[save_distance_start..save_distance_end],
                     ),
+                    refill_distance: OutputShard::from_slice(
+                        &mut refill_distance[save_distance_start..save_distance_end],
+                    ),
+                    refill_distance_mask: OutputShard::from_slice(
+                        &mut refill_distance_mask[save_distance_start..save_distance_end],
+                    ),
                 }) {
                     set_first_error(&mut first_error, err);
                     break;
@@ -3440,6 +3480,20 @@ impl EnvironmentGroup {
             save_distance_mask: pyarray2_from_flat_vec(
                 py,
                 save_distance_mask,
+                self.num_environments,
+                room_part_count,
+            )?
+            .unbind(),
+            refill_distance: pyarray2_from_flat_vec(
+                py,
+                refill_distance,
+                self.num_environments,
+                room_part_count,
+            )?
+            .unbind(),
+            refill_distance_mask: pyarray2_from_flat_vec(
+                py,
+                refill_distance_mask,
                 self.num_environments,
                 room_part_count,
             )?

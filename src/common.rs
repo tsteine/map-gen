@@ -173,7 +173,6 @@ pub struct OutputData {
 
 pub struct RoomData {
     pub save: bool,
-    #[allow(dead_code)]
     pub refill: bool,
     pub geometry_idx: GeometryIdx,
     pub connection_variant_idx: ConnectionVariantIdx,

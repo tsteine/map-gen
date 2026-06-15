@@ -162,6 +162,10 @@ def compute_expected_reward(
         - config.reward_frontier * preds.avg_frontiers.to(torch.float32)
         - config.reward_graph_diameter * preds.graph_diameter.to(torch.float32)
         - config.reward_save_distance * torch.mean(preds.save_distance.to(torch.float32), dim=2)
+        - (
+            config.reward_refill_distance
+            * torch.mean(preds.refill_distance.to(torch.float32), dim=2)
+        )
     )
 
 
@@ -887,6 +891,11 @@ def select_candidate_actions(
                     candidate_count,
                     -1,
                 ),
+                refill_distance=preds.refill_distance.view(
+                    environment_count,
+                    candidate_count,
+                    -1,
+                ),
                 proposal_score=preds.proposal_score,
                 proposal_state=preds.proposal_state,
                 proposal_row_snapshot_idx=preds.proposal_row_snapshot_idx,
@@ -1207,6 +1216,14 @@ def merge_generation_results(
             ]),
             save_distance_mask=torch.cat([
                 episode_outcomes.save_distance_mask
+                for _, episode_outcomes, _, _ in results
+            ]),
+            refill_distance=torch.cat([
+                episode_outcomes.refill_distance
+                for _, episode_outcomes, _, _ in results
+            ]),
+            refill_distance_mask=torch.cat([
+                episode_outcomes.refill_distance_mask
                 for _, episode_outcomes, _, _ in results
             ]),
         ),

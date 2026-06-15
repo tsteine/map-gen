@@ -28,6 +28,7 @@ class GenerateConfig:
     reward_frontier: float
     reward_graph_diameter: float
     reward_save_distance: float
+    reward_refill_distance: float
     autocast: bool
 
     @property
@@ -139,6 +140,8 @@ class EpisodeOutcomes:
     graph_diameter: torch.Tensor
     save_distance: torch.Tensor
     save_distance_mask: torch.Tensor
+    refill_distance: torch.Tensor
+    refill_distance_mask: torch.Tensor
 
     def to(self, device: torch.device) -> "EpisodeOutcomes":
         return EpisodeOutcomes(
@@ -148,6 +151,8 @@ class EpisodeOutcomes:
             self.graph_diameter.to(device),
             self.save_distance.to(device),
             self.save_distance_mask.to(device),
+            self.refill_distance.to(device),
+            self.refill_distance_mask.to(device),
         )
 
 
@@ -585,6 +590,8 @@ class EnvironmentGroup:
             graph_diameter=torch.from_numpy(result.graph_diameter).to(device),
             save_distance=torch.from_numpy(result.save_distance).to(device),
             save_distance_mask=torch.from_numpy(result.save_distance_mask).to(device),
+            refill_distance=torch.from_numpy(result.refill_distance).to(device),
+            refill_distance_mask=torch.from_numpy(result.refill_distance_mask).to(device),
         )
 
     def get_outcomes_after_candidates(

@@ -18,6 +18,7 @@ class LossConfig:
     avg_frontiers_weight: float
     graph_diameter_weight: float
     save_distance_weight: float
+    refill_distance_weight: float
 
 
 @dataclass
@@ -31,6 +32,7 @@ class LossBreakdown:
     avg_frontiers: torch.Tensor
     graph_diameter: torch.Tensor
     save_distance: torch.Tensor
+    refill_distance: torch.Tensor
     door_contribution: torch.Tensor
     connection_contribution: torch.Tensor
     toilet_contribution: torch.Tensor
@@ -39,6 +41,7 @@ class LossBreakdown:
     avg_frontiers_contribution: torch.Tensor
     graph_diameter_contribution: torch.Tensor
     save_distance_contribution: torch.Tensor
+    refill_distance_contribution: torch.Tensor
 
 
 def masked_binary_cross_entropy_loss(preds: torch.Tensor, outcomes: torch.Tensor, mask: torch.Tensor, weight: float) -> torch.Tensor:
@@ -98,6 +101,8 @@ def compute_loss_breakdown(
     graph_diameter_mask: torch.Tensor,
     save_distance_target: torch.Tensor,
     save_distance_mask: torch.Tensor,
+    refill_distance_target: torch.Tensor,
+    refill_distance_mask: torch.Tensor,
     config: LossConfig,
 ) -> LossBreakdown:
     door_loss, door_wt = masked_binary_cross_entropy_loss(
@@ -138,6 +143,12 @@ def compute_loss_breakdown(
         save_distance_mask,
         config.save_distance_weight,
     )
+    refill_distance_loss, refill_distance_wt = masked_mse_loss(
+        preds.refill_distance,
+        refill_distance_target,
+        refill_distance_mask,
+        config.refill_distance_weight,
+    )
     total_weight = (
         door_wt
         + conn_wt
@@ -147,6 +158,7 @@ def compute_loss_breakdown(
         + avg_frontiers_wt
         + graph_diameter_wt
         + save_distance_wt
+        + refill_distance_wt
         + 1e-15
     )
     door_contribution = door_loss / total_weight
@@ -157,6 +169,7 @@ def compute_loss_breakdown(
     avg_frontiers_contribution = avg_frontiers_loss / total_weight
     graph_diameter_contribution = graph_diameter_loss / total_weight
     save_distance_contribution = save_distance_loss / total_weight
+    refill_distance_contribution = refill_distance_loss / total_weight
     mean_loss = (
         door_contribution
         + connection_contribution
@@ -166,6 +179,7 @@ def compute_loss_breakdown(
         + avg_frontiers_contribution
         + graph_diameter_contribution
         + save_distance_contribution
+        + refill_distance_contribution
     )
     return LossBreakdown(
         total=mean_loss,
@@ -177,6 +191,7 @@ def compute_loss_breakdown(
         avg_frontiers=avg_frontiers_loss / (avg_frontiers_wt + 1e-15),
         graph_diameter=graph_diameter_loss / (graph_diameter_wt + 1e-15),
         save_distance=save_distance_loss / (save_distance_wt + 1e-15),
+        refill_distance=refill_distance_loss / (refill_distance_wt + 1e-15),
         door_contribution=door_contribution,
         connection_contribution=connection_contribution,
         toilet_contribution=toilet_contribution,
@@ -185,6 +200,7 @@ def compute_loss_breakdown(
         avg_frontiers_contribution=avg_frontiers_contribution,
         graph_diameter_contribution=graph_diameter_contribution,
         save_distance_contribution=save_distance_contribution,
+        refill_distance_contribution=refill_distance_contribution,
     )
 
 

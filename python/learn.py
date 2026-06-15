@@ -51,6 +51,8 @@ class PreparedTrainBatch:
     graph_diameter: torch.Tensor
     save_distance: torch.Tensor
     save_distance_mask: torch.Tensor
+    refill_distance: torch.Tensor
+    refill_distance_mask: torch.Tensor
     door_matches: DoorMatches
     prefix_count: int
     feature_batches: list[FeatureTrainBatch]
@@ -67,6 +69,7 @@ class MainLossBreakdown:
     avg_frontiers: float
     graph_diameter: float
     save_distance: float
+    refill_distance: float
     proposal: float
     door_contribution: float
     connection_contribution: float
@@ -76,6 +79,7 @@ class MainLossBreakdown:
     avg_frontiers_contribution: float
     graph_diameter_contribution: float
     save_distance_contribution: float
+    refill_distance_contribution: float
     proposal_contribution: float
 
 
@@ -115,6 +119,7 @@ def empty_main_loss_breakdown() -> MainLossBreakdown:
         avg_frontiers=0.0,
         graph_diameter=0.0,
         save_distance=0.0,
+        refill_distance=0.0,
         proposal=0.0,
         door_contribution=0.0,
         connection_contribution=0.0,
@@ -124,6 +129,7 @@ def empty_main_loss_breakdown() -> MainLossBreakdown:
         avg_frontiers_contribution=0.0,
         graph_diameter_contribution=0.0,
         save_distance_contribution=0.0,
+        refill_distance_contribution=0.0,
         proposal_contribution=0.0,
     )
 
@@ -138,6 +144,7 @@ def accumulate_main_loss(target: MainLossBreakdown, source: MainLossBreakdown) -
     target.avg_frontiers += source.avg_frontiers
     target.graph_diameter += source.graph_diameter
     target.save_distance += source.save_distance
+    target.refill_distance += source.refill_distance
     target.proposal += source.proposal
     target.door_contribution += source.door_contribution
     target.connection_contribution += source.connection_contribution
@@ -147,6 +154,7 @@ def accumulate_main_loss(target: MainLossBreakdown, source: MainLossBreakdown) -
     target.avg_frontiers_contribution += source.avg_frontiers_contribution
     target.graph_diameter_contribution += source.graph_diameter_contribution
     target.save_distance_contribution += source.save_distance_contribution
+    target.refill_distance_contribution += source.refill_distance_contribution
     target.proposal_contribution += source.proposal_contribution
 
 
@@ -161,6 +169,7 @@ def average_main_loss(total_loss: MainLossBreakdown, count: int) -> MainLossBrea
         avg_frontiers=total_loss.avg_frontiers / count,
         graph_diameter=total_loss.graph_diameter / count,
         save_distance=total_loss.save_distance / count,
+        refill_distance=total_loss.refill_distance / count,
         proposal=total_loss.proposal / count,
         door_contribution=total_loss.door_contribution / count,
         connection_contribution=total_loss.connection_contribution / count,
@@ -170,6 +179,7 @@ def average_main_loss(total_loss: MainLossBreakdown, count: int) -> MainLossBrea
         avg_frontiers_contribution=total_loss.avg_frontiers_contribution / count,
         graph_diameter_contribution=total_loss.graph_diameter_contribution / count,
         save_distance_contribution=total_loss.save_distance_contribution / count,
+        refill_distance_contribution=total_loss.refill_distance_contribution / count,
         proposal_contribution=total_loss.proposal_contribution / count,
     )
 
@@ -394,6 +404,8 @@ def prepare_feature_batch(
     graph_diameter: torch.Tensor,
     save_distance: torch.Tensor,
     save_distance_mask: torch.Tensor,
+    refill_distance: torch.Tensor,
+    refill_distance_mask: torch.Tensor,
     proposal_data: ProposalData | None,
     env,
     num_rooms: int,
@@ -417,6 +429,8 @@ def prepare_feature_batch(
         graph_diameter,
         save_distance,
         save_distance_mask,
+        refill_distance,
+        refill_distance_mask,
         door_matches,
         prefix_count=prefix_count,
         feature_batches=feature_batches,
@@ -453,6 +467,12 @@ def prepare_train_batch_task(
         save_distance_mask = fresh_outcomes.save_distance_mask[
             task.start:task.start + context.config.train.batch_size
         ]
+        refill_distance = fresh_outcomes.refill_distance[
+            task.start:task.start + context.config.train.batch_size
+        ]
+        refill_distance_mask = fresh_outcomes.refill_distance_mask[
+            task.start:task.start + context.config.train.batch_size
+        ]
         train_proposal_data = fresh_proposal_data.slice(
             task.start,
             task.start + context.config.train.batch_size,
@@ -468,6 +488,8 @@ def prepare_train_batch_task(
             graph_diameter,
             save_distance,
             save_distance_mask,
+            refill_distance,
+            refill_distance_mask,
             train_proposal_data,
             env,
             context.num_rooms,
@@ -500,6 +522,8 @@ def prepare_train_batch_task(
         replay_outcomes.graph_diameter,
         replay_outcomes.save_distance,
         replay_outcomes.save_distance_mask,
+        replay_outcomes.refill_distance,
+        replay_outcomes.refill_distance_mask,
         replay_door_matches,
         prefix_count=prefix_count,
         feature_batches=feature_batches,
@@ -675,6 +699,11 @@ def train_feature_batch_backward(
         device=context.device,
         dtype=torch.bool,
     ).unsqueeze(1)
+    refill_distance_target = prepared_batch.refill_distance.to(context.device).unsqueeze(1)
+    refill_distance_mask = prepared_batch.refill_distance_mask.to(
+        device=context.device,
+        dtype=torch.bool,
+    ).unsqueeze(1)
     mask = torch.ones(
         [batch_size, 1, 1],
         dtype=torch.bool,
@@ -712,6 +741,8 @@ def train_feature_batch_backward(
             graph_diameter_mask,
             save_distance_target,
             save_distance_mask,
+            refill_distance_target,
+            refill_distance_mask,
             context.loss_config,
         )
         backward_loss = prefix_loss.total * prefix_weight
@@ -724,6 +755,7 @@ def train_feature_batch_backward(
         total_loss.avg_frontiers += prefix_loss.avg_frontiers.item() * prefix_weight
         total_loss.graph_diameter += prefix_loss.graph_diameter.item() * prefix_weight
         total_loss.save_distance += prefix_loss.save_distance.item() * prefix_weight
+        total_loss.refill_distance += prefix_loss.refill_distance.item() * prefix_weight
         total_loss.door_contribution += prefix_loss.door_contribution.item() * prefix_weight
         total_loss.connection_contribution += (
             prefix_loss.connection_contribution.item() * prefix_weight
@@ -745,6 +777,9 @@ def train_feature_batch_backward(
         )
         total_loss.save_distance_contribution += (
             prefix_loss.save_distance_contribution.item() * prefix_weight
+        )
+        total_loss.refill_distance_contribution += (
+            prefix_loss.refill_distance_contribution.item() * prefix_weight
         )
         if include_proposal:
             proposal_score = proposal_scores_for_frontier(
