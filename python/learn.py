@@ -259,21 +259,6 @@ def compute_candidate_diagnostics(proposal_data: ProposalData) -> CandidateDiagn
     return CandidateDiagnostics(target_entropy, uniform_kl, selected_probability)
 
 
-def select_batch(
-    episode_data: EpisodeData,
-    outcomes: PreliminaryOutcomes,
-    toilet_crossed_room_idx: torch.Tensor,
-    start: int,
-    batch_size: int,
-) -> tuple[EpisodeData, PreliminaryOutcomes, torch.Tensor]:
-    end = start + batch_size
-    return (
-        episode_data.slice(start, end),
-        outcomes.slice(start, end),
-        toilet_crossed_room_idx[start:end],
-    )
-
-
 def iter_train_batch_tasks(config: Config, experience: ExperienceStorage) -> list[TrainBatchTask]:
     tasks = []
     task_idx = 0
@@ -426,56 +411,25 @@ def prepare_train_batch_task(
     if task.kind == "fresh":
         if task.start is None:
             raise ValueError("fresh train batch task requires a start index")
-        train_episode_data, train_outcomes, toilet_crossed_room_idx = select_batch(
-            fresh_episode_data,
-            fresh_outcomes.validity,
-            fresh_outcomes.toilet_crossed_room_idx,
-            task.start,
-            context.config.train.batch_size,
-        )
-        avg_frontiers = fresh_outcomes.avg_frontiers[
-            task.start:task.start + context.config.train.batch_size
-        ]
-        graph_diameter = fresh_outcomes.graph_diameter[
-            task.start:task.start + context.config.train.batch_size
-        ]
-        save_distance = fresh_outcomes.save_distance[
-            task.start:task.start + context.config.train.batch_size
-        ]
-        save_distance_mask = fresh_outcomes.save_distance_mask[
-            task.start:task.start + context.config.train.batch_size
-        ]
-        refill_distance = fresh_outcomes.refill_distance[
-            task.start:task.start + context.config.train.batch_size
-        ]
-        refill_distance_mask = fresh_outcomes.refill_distance_mask[
-            task.start:task.start + context.config.train.batch_size
-        ]
-        missing_connect_distance = fresh_outcomes.missing_connect_distance[
-            task.start:task.start + context.config.train.batch_size
-        ]
-        missing_connect_distance_mask = fresh_outcomes.missing_connect_distance_mask[
-            task.start:task.start + context.config.train.batch_size
-        ]
-        train_proposal_data = fresh_proposal_data.slice(
-            task.start,
-            task.start + context.config.train.batch_size,
-        )
+        end = task.start + context.config.train.batch_size
+        train_episode_data = fresh_episode_data.slice(task.start, end)
+        train_outcomes = fresh_outcomes.slice(task.start, end)
+        train_proposal_data = fresh_proposal_data.slice(task.start, end)
         return prepare_feature_batch(
             context.config,
             context.device,
             task.kind,
             train_episode_data,
-            train_outcomes,
-            toilet_crossed_room_idx,
-            avg_frontiers,
-            graph_diameter,
-            save_distance,
-            save_distance_mask,
-            refill_distance,
-            refill_distance_mask,
-            missing_connect_distance,
-            missing_connect_distance_mask,
+            train_outcomes.validity,
+            train_outcomes.toilet_crossed_room_idx,
+            train_outcomes.avg_frontiers,
+            train_outcomes.graph_diameter,
+            train_outcomes.save_distance,
+            train_outcomes.save_distance_mask,
+            train_outcomes.refill_distance,
+            train_outcomes.refill_distance_mask,
+            train_outcomes.missing_connect_distance,
+            train_outcomes.missing_connect_distance_mask,
             train_proposal_data,
             env,
             context.episode_length,

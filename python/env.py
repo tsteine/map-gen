@@ -171,6 +171,20 @@ class EpisodeOutcomes:
             self.missing_connect_distance_mask.to(device),
         )
 
+    def slice(self, start: int, end: int) -> "EpisodeOutcomes":
+        return EpisodeOutcomes(
+            self.validity.slice(start, end),
+            self.toilet_crossed_room_idx[start:end],
+            self.avg_frontiers[start:end],
+            self.graph_diameter[start:end],
+            self.save_distance[start:end],
+            self.save_distance_mask[start:end],
+            self.refill_distance[start:end],
+            self.refill_distance_mask[start:end],
+            self.missing_connect_distance[start:end],
+            self.missing_connect_distance_mask[start:end],
+        )
+
 
 @dataclass
 class SparseFeatureRequirements:
