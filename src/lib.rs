@@ -5,7 +5,7 @@ mod engine;
 mod environment;
 mod scc_dag;
 
-use engine::{CandidatesWithOutcomes, Engine, EnvironmentGroup, EpisodeOutcomes};
+use engine::{CandidateOutputRequirements, Engine, EnvironmentGroup, EpisodeOutcomes};
 
 #[pyfunction]
 fn set_profile_enabled(enabled: bool) {
@@ -26,7 +26,7 @@ fn profile_report() -> Vec<(String, u64, u64)> {
 fn map_gen(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Engine>()?;
     m.add_class::<EnvironmentGroup>()?;
-    m.add_class::<CandidatesWithOutcomes>()?;
+    m.add_class::<CandidateOutputRequirements>()?;
     m.add_class::<EpisodeOutcomes>()?;
     m.add_function(wrap_pyfunction!(set_profile_enabled, m)?)?;
     m.add_function(wrap_pyfunction!(reset_profile, m)?)?;

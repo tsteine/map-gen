@@ -52,8 +52,12 @@ class Actions:
         selected_room_y = torch.gather(self.room_y, 1, index.unsqueeze(1)).squeeze(1)
         return Actions(selected_room_idx, selected_room_x, selected_room_y)
 
-    def to(self, device: torch.device) -> "Actions":
-        return Actions(self.room_idx.to(device), self.room_x.to(device), self.room_y.to(device))
+    def to(self, device: torch.device, non_blocking: bool = False) -> "Actions":
+        return Actions(
+            self.room_idx.to(device, non_blocking=non_blocking),
+            self.room_x.to(device, non_blocking=non_blocking),
+            self.room_y.to(device, non_blocking=non_blocking),
+        )
 
     def slice(self, start: int, end: int) -> "Actions":
         return Actions(
@@ -124,12 +128,12 @@ class PreliminaryOutcomes:
     # door count sentinel.
     door_match: torch.Tensor
 
-    def to(self, device: torch.device) -> "PreliminaryOutcomes":
+    def to(self, device: torch.device, non_blocking: bool = False) -> "PreliminaryOutcomes":
         return PreliminaryOutcomes(
-            self.door_invalid.to(device),
-            self.connection_invalid.to(device),
-            self.toilet_invalid.to(device),
-            self.door_match.to(device),
+            self.door_invalid.to(device, non_blocking=non_blocking),
+            self.connection_invalid.to(device, non_blocking=non_blocking),
+            self.toilet_invalid.to(device, non_blocking=non_blocking),
+            self.door_match.to(device, non_blocking=non_blocking),
         )
 
 
@@ -189,11 +193,125 @@ class CandidateStats:
     evaluated_counts: torch.Tensor
     rejected_counts: torch.Tensor
 
-    def to(self, device: torch.device) -> "CandidateStats":
+    def to(self, device: torch.device, non_blocking: bool = False) -> "CandidateStats":
         return CandidateStats(
-            self.clean_counts.to(device),
-            self.evaluated_counts.to(device),
-            self.rejected_counts.to(device),
+            self.clean_counts.to(device, non_blocking=non_blocking),
+            self.evaluated_counts.to(device, non_blocking=non_blocking),
+            self.rejected_counts.to(device, non_blocking=non_blocking),
+        )
+
+
+class CandidateSlot:
+    def __init__(self, env: "EnvironmentGroup", pin_memory: bool):
+        door_count, connection_count = env.engine.get_output_sizes()
+        self.environment_capacity = 0
+        self.candidate_capacity = 0
+        self.door_count = door_count
+        self.connection_count = connection_count
+        self.pin_memory = pin_memory
+        self.room_idx = None
+        self.room_x = None
+        self.room_y = None
+        self.proposal_frontier_idx = None
+        self.proposal_door_variant_idx = None
+        self.pre_door_invalid = None
+        self.pre_connection_invalid = None
+        self.pre_toilet_invalid = None
+        self.door_invalid = None
+        self.connection_invalid = None
+        self.toilet_invalid = None
+        self.door_match = None
+        self.clean_counts = None
+        self.evaluated_counts = None
+        self.rejected_counts = None
+
+    def _empty(self, shape, dtype):
+        return torch.empty(shape, dtype=dtype, pin_memory=self.pin_memory)
+
+    def ensure(self, environment_count: int, candidate_count: int):
+        if (
+            self.room_idx is not None
+            and self.environment_capacity >= environment_count
+            and self.candidate_capacity >= candidate_count
+        ):
+            return
+        self.environment_capacity = max(self.environment_capacity, environment_count)
+        self.candidate_capacity = max(self.candidate_capacity, candidate_count)
+        candidate_shape = (self.environment_capacity, self.candidate_capacity)
+        self.room_idx = self._empty(candidate_shape, torch.uint8)
+        self.room_x = self._empty(candidate_shape, torch.int8)
+        self.room_y = self._empty(candidate_shape, torch.int8)
+        self.proposal_frontier_idx = self._empty(candidate_shape, torch.int16)
+        self.proposal_door_variant_idx = self._empty(candidate_shape, torch.int16)
+        self.pre_door_invalid = self._empty(
+            (self.environment_capacity, self.door_count),
+            torch.int8,
+        )
+        self.pre_connection_invalid = self._empty(
+            (self.environment_capacity, self.connection_count),
+            torch.int8,
+        )
+        self.pre_toilet_invalid = self._empty((self.environment_capacity,), torch.int8)
+        self.door_invalid = self._empty(
+            (*candidate_shape, self.door_count),
+            torch.int8,
+        )
+        self.connection_invalid = self._empty(
+            (*candidate_shape, self.connection_count),
+            torch.int8,
+        )
+        self.toilet_invalid = self._empty(candidate_shape, torch.int8)
+        self.door_match = self._empty((*candidate_shape, self.door_count), torch.int16)
+        self.clean_counts = self._empty((self.environment_capacity,), torch.int64)
+        self.evaluated_counts = self._empty((self.environment_capacity,), torch.int64)
+        self.rejected_counts = self._empty((self.environment_capacity,), torch.int64)
+
+    def actions(self, environment_count: int, candidate_count: int) -> Actions:
+        return Actions(
+            self.room_idx[:environment_count, :candidate_count],
+            self.room_x[:environment_count, :candidate_count],
+            self.room_y[:environment_count, :candidate_count],
+        )
+
+    def proposal_frontiers(
+        self,
+        environment_count: int,
+        candidate_count: int,
+    ) -> torch.Tensor:
+        return self.proposal_frontier_idx[:environment_count, :candidate_count]
+
+    def proposal_door_variants(
+        self,
+        environment_count: int,
+        candidate_count: int,
+    ) -> torch.Tensor:
+        return self.proposal_door_variant_idx[:environment_count, :candidate_count]
+
+    def reward_outcomes(self, environment_count: int) -> PreliminaryOutcomes:
+        return PreliminaryOutcomes(
+            self.pre_door_invalid[:environment_count],
+            self.pre_connection_invalid[:environment_count],
+            self.pre_toilet_invalid[:environment_count],
+            self.door_match.new_empty((environment_count, 0)),
+        )
+
+    def post_candidate_outcomes(
+        self,
+        environment_count: int,
+        candidate_count: int,
+    ) -> PreliminaryOutcomes:
+        return PreliminaryOutcomes(
+            self.door_invalid[:environment_count, :candidate_count],
+            self.connection_invalid[:environment_count, :candidate_count],
+            self.toilet_invalid[:environment_count, :candidate_count],
+            self.door_match[:environment_count, :candidate_count],
+        )
+
+    def stats(self, environment_count: int) -> CandidateStats:
+        return CandidateStats(
+            self.clean_counts[:environment_count],
+            self.evaluated_counts[:environment_count],
+            self.rejected_counts[:environment_count],
         )
 
 
@@ -438,12 +556,17 @@ class EnvironmentGroup:
             room_y=torch.from_numpy(room_y).to(device),
         )
 
-    def get_candidates_with_outcomes(
+    def candidate_output_count(self, recommended_candidates: int) -> int:
+        return self.env.get_candidate_output_requirements(
+            recommended_candidates,
+        ).candidate_count
+
+    def extract_candidates_with_outcomes(
         self,
+        candidate_slot: CandidateSlot,
         recommended_candidates: int,
         proposal_temperature: torch.Tensor,
         proposal_scores: torch.Tensor | None,
-        device: torch.device,
     ) -> tuple[
         Actions,
         torch.Tensor,
@@ -453,13 +576,30 @@ class EnvironmentGroup:
         SparseFeatureRequirements,
         CandidateStats,
     ]:
-        result = self.env.get_candidates_with_outcomes(
+        candidate_count = self.candidate_output_count(recommended_candidates)
+        candidate_slot.ensure(self.num_envs, candidate_count)
+        result = self.env.pack_candidates_with_outcomes_into(
             recommended_candidates,
             0,
             proposal_temperature.contiguous().cpu().numpy(),
             None if proposal_scores is None else proposal_scores.contiguous().cpu().numpy(),
+            candidate_slot.room_idx[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.room_x[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.room_y[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.proposal_frontier_idx[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.proposal_door_variant_idx[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.pre_door_invalid[:self.num_envs].numpy(),
+            candidate_slot.pre_connection_invalid[:self.num_envs].numpy(),
+            candidate_slot.pre_toilet_invalid[:self.num_envs].numpy(),
+            candidate_slot.door_invalid[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.connection_invalid[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.toilet_invalid[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.door_match[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.clean_counts[:self.num_envs].numpy(),
+            candidate_slot.evaluated_counts[:self.num_envs].numpy(),
+            candidate_slot.rejected_counts[:self.num_envs].numpy(),
         )
-        return self._candidate_result(result, device)
+        return self._candidate_slot_result(candidate_slot, candidate_count, result)
 
     def get_proposal_candidate_mask(
         self,
@@ -473,12 +613,12 @@ class EnvironmentGroup:
             result.door_variant_count,
         )
 
-    def get_candidates_from_proposals(
+    def extract_candidates_from_proposals(
         self,
+        candidate_slot: CandidateSlot,
         sampled_frontier_idx: torch.Tensor,
         sampled_door_variant_idx: torch.Tensor,
         recommended_candidates: int,
-        device: torch.device,
     ) -> tuple[
         Actions,
         torch.Tensor,
@@ -488,17 +628,35 @@ class EnvironmentGroup:
         SparseFeatureRequirements,
         CandidateStats,
     ]:
-        result = self.env.get_candidates_from_proposals(
+        candidate_count = self.candidate_output_count(recommended_candidates)
+        candidate_slot.ensure(self.num_envs, candidate_count)
+        result = self.env.pack_candidates_from_proposals_into(
             sampled_frontier_idx.contiguous().cpu().numpy(),
             sampled_door_variant_idx.contiguous().cpu().numpy(),
             recommended_candidates,
+            candidate_slot.room_idx[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.room_x[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.room_y[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.proposal_frontier_idx[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.proposal_door_variant_idx[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.pre_door_invalid[:self.num_envs].numpy(),
+            candidate_slot.pre_connection_invalid[:self.num_envs].numpy(),
+            candidate_slot.pre_toilet_invalid[:self.num_envs].numpy(),
+            candidate_slot.door_invalid[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.connection_invalid[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.toilet_invalid[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.door_match[:self.num_envs, :candidate_count].numpy(),
+            candidate_slot.clean_counts[:self.num_envs].numpy(),
+            candidate_slot.evaluated_counts[:self.num_envs].numpy(),
+            candidate_slot.rejected_counts[:self.num_envs].numpy(),
         )
-        return self._candidate_result(result, device)
+        return self._candidate_slot_result(candidate_slot, candidate_count, result)
 
-    @staticmethod
-    def _candidate_result(
-        result,
-        device: torch.device,
+    def _candidate_slot_result(
+        self,
+        candidate_slot: CandidateSlot,
+        candidate_count: int,
+        feature_requirements,
     ) -> tuple[
         Actions,
         torch.Tensor,
@@ -509,47 +667,16 @@ class EnvironmentGroup:
         CandidateStats,
     ]:
         return (
-            Actions(
-                room_idx=torch.from_numpy(result.room_idx).to(device),
-                room_x=torch.from_numpy(result.room_x).to(device),
-                room_y=torch.from_numpy(result.room_y).to(device),
-            ),
-            torch.from_numpy(result.proposal_frontier_idx).to(device),
-            torch.from_numpy(result.proposal_door_variant_idx).to(device),
-            PreliminaryOutcomes(
-                door_invalid=torch.from_numpy(result.pre_door_valid).to(device),
-                connection_invalid=torch.from_numpy(result.pre_connections_valid).to(device),
-                toilet_invalid=torch.from_numpy(result.pre_toilet_valid).to(device),
-                door_match=torch.empty(
-                    [result.pre_door_valid.shape[0], 0],
-                    dtype=torch.int16,
-                    device=device,
-                ),
-            ),
-            PreliminaryOutcomes(
-                door_invalid=torch.from_numpy(result.door_valid).to(device),
-                connection_invalid=torch.from_numpy(result.connections_valid).to(device),
-                toilet_invalid=torch.from_numpy(result.toilet_valid).to(device),
-                door_match=torch.from_numpy(result.door_match).to(device),
-            ),
+            candidate_slot.actions(self.num_envs, candidate_count),
+            candidate_slot.proposal_frontiers(self.num_envs, candidate_count),
+            candidate_slot.proposal_door_variants(self.num_envs, candidate_count),
+            candidate_slot.reward_outcomes(self.num_envs),
+            candidate_slot.post_candidate_outcomes(self.num_envs, candidate_count),
             SparseFeatureRequirements(
-                result.sparse_row_count,
-                result.worker_sparse_row_counts,
+                feature_requirements.sparse_row_count,
+                feature_requirements.worker_sparse_row_counts,
             ),
-            CandidateStats(
-                clean_counts=torch.from_numpy(result.clean_counts).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                evaluated_counts=torch.from_numpy(result.evaluated_counts).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-                rejected_counts=torch.from_numpy(result.rejected_counts).to(
-                    device=device,
-                    dtype=torch.int64,
-                ),
-            ),
+            candidate_slot.stats(self.num_envs),
         )
 
     def get_outcomes(self, device: torch.device, verify_consistency: bool) -> EpisodeOutcomes:

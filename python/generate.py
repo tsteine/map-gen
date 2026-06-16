@@ -3,6 +3,7 @@ from __future__ import annotations
 from env import (
     Actions,
     CandidateStats,
+    CandidateSlot,
     DoorMatchCounts,
     Engine,
     EnvironmentGroup,
@@ -195,6 +196,22 @@ def transfer_features(
     return result
 
 
+def transfer_candidate_batch(
+    candidate_batch: "CandidateBatch",
+    device: torch.device,
+    transfer_stream: torch.cuda.Stream | None = None,
+) -> "CandidateBatch":
+    if transfer_stream is None or device.type != "cuda":
+        return candidate_batch.to(device)
+    current_stream = torch.cuda.current_stream(device)
+    with torch.cuda.device(device), torch.cuda.stream(transfer_stream):
+        result = candidate_batch.to(device, non_blocking=True)
+        ready = torch.cuda.Event()
+        ready.record(transfer_stream)
+    current_stream.wait_event(ready)
+    return result
+
+
 
 @dataclass
 class GenerationGroup:
@@ -202,6 +219,7 @@ class GenerationGroup:
     config: GenerateConfig
     step: int
     feature_slot: SparseFeatureSlot
+    candidate_slot: CandidateSlot
     previous_lookahead_outcomes: PreliminaryOutcomes | None
     previous_proposal_scores: SparseProposalCache | None
 
@@ -225,15 +243,15 @@ class CandidateBatch:
     feature_requirements: SparseFeatureRequirements
     stats: CandidateStats
 
-    def to(self, device: torch.device) -> "CandidateBatch":
+    def to(self, device: torch.device, non_blocking: bool = False) -> "CandidateBatch":
         return CandidateBatch(
-            self.candidates.to(device),
-            self.proposal_frontier_idx.to(device),
-            self.proposal_door_variant_idx.to(device),
-            self.reward_outcomes.to(device),
-            self.post_candidate_outcomes.to(device),
+            self.candidates.to(device, non_blocking=non_blocking),
+            self.proposal_frontier_idx.to(device, non_blocking=non_blocking),
+            self.proposal_door_variant_idx.to(device, non_blocking=non_blocking),
+            self.reward_outcomes.to(device, non_blocking=non_blocking),
+            self.post_candidate_outcomes.to(device, non_blocking=non_blocking),
             self.feature_requirements,
-            self.stats.to(device),
+            self.stats.to(device, non_blocking=non_blocking),
         )
 
 
@@ -299,7 +317,7 @@ def create_generation_environment_groups(
     ]
 
 
-def get_initial_candidate_batch(group: GenerationGroup, device: torch.device) -> CandidateBatch:
+def get_initial_candidate_batch(group: GenerationGroup) -> CandidateBatch:
     (
         candidates,
         proposal_frontier_idx,
@@ -308,11 +326,11 @@ def get_initial_candidate_batch(group: GenerationGroup, device: torch.device) ->
         post_candidate_outcomes,
         feature_requirements,
         stats,
-    ) = group.env.get_candidates_with_outcomes(
+    ) = group.env.extract_candidates_with_outcomes(
+        group.candidate_slot,
         group.config.recommended_candidates,
         group.config.proposal_temperature,
         None,
-        device,
     )
     return CandidateBatch(
         candidates,
@@ -329,7 +347,6 @@ def get_shortlist_candidate_batch(
     group: GenerationGroup,
     sampled_frontier_idx: torch.Tensor,
     sampled_door_variant_idx: torch.Tensor,
-    device: torch.device,
 ) -> CandidateBatch:
     (
         candidates,
@@ -339,11 +356,11 @@ def get_shortlist_candidate_batch(
         post_candidate_outcomes,
         feature_requirements,
         stats,
-    ) = group.env.get_candidates_from_proposals(
+    ) = group.env.extract_candidates_from_proposals(
+        group.candidate_slot,
         sampled_frontier_idx,
         sampled_door_variant_idx,
         group.config.recommended_candidates,
-        device,
     )
     return CandidateBatch(
         candidates,
@@ -562,7 +579,7 @@ def prepare_candidate_features(
 def prepare_initial_generation_step(
     group: GenerationGroup,
 ) -> PreparedGenerationStep:
-    candidate_batch = get_initial_candidate_batch(group, torch.device("cpu"))
+    candidate_batch = get_initial_candidate_batch(group)
     return prepare_candidate_features(
         group.env,
         group.config,
@@ -580,7 +597,6 @@ def prepare_shortlist_generation_step(
         group,
         sampled_frontier_idx,
         sampled_door_variant_idx,
-        torch.device("cpu"),
     )
     return prepare_candidate_features(
         group.env,
@@ -1035,6 +1051,7 @@ def run_generation_groups(
             config,
             0,
             SparseFeatureSlot(env, pin_memory=device.type == "cuda"),
+            CandidateSlot(env, pin_memory=device.type == "cuda"),
             None,
             None,
         )
@@ -1112,7 +1129,11 @@ def run_generation_groups(
                 prepared_step = step.future.result()
                 profiler.add("python.wait_candidate_features", profile_time)
                 profile_time = profile_start(profile)
-                candidate_batch = prepared_step.candidate_batch.to(device)
+                candidate_batch = transfer_candidate_batch(
+                    prepared_step.candidate_batch,
+                    device,
+                    transfer_stream,
+                )
                 profiler.add("python.transfer_candidate_batch", profile_time)
                 candidates = candidate_batch.candidates
                 if prepared_step.features is None:

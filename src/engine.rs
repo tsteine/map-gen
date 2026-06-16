@@ -1512,6 +1512,16 @@ fn check_dim(name: &str, actual: usize, expected: usize) -> PyResult<()> {
     }
 }
 
+fn check_shape(name: &str, actual: &[usize], expected: &[usize]) -> PyResult<()> {
+    if actual != expected {
+        Err(PyValueError::new_err(format!(
+            "{name} has wrong shape: expected {expected:?}, got {actual:?}"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 fn max_feature_frontier_count(features: &[Features]) -> usize {
     features
         .iter()
@@ -1536,31 +1546,6 @@ pub struct EnvironmentGroup {
     frontier_neighbor_count: usize,
     frontier_window_size: usize,
     action_count: usize,
-}
-
-#[pyclass(module = "map_gen")]
-pub struct CandidatesWithOutcomes {
-    room_idx: Py<PyArray2<RoomIdx>>,
-    room_x: Py<PyArray2<Coord>>,
-    room_y: Py<PyArray2<Coord>>,
-    proposal_frontier_idx: Py<PyArray2<FrontierIdx>>,
-    proposal_door_variant_idx: Py<PyArray2<DoorVariantIdx>>,
-    pre_door_valid: Py<PyArray2<i8>>,
-    pre_connections_valid: Py<PyArray2<i8>>,
-    pre_toilet_valid: Py<PyArray1<i8>>,
-    door_valid: Py<PyArray3<i8>>,
-    connections_valid: Py<PyArray3<i8>>,
-    toilet_valid: Py<PyArray2<i8>>,
-    door_match: Py<PyArray3<i16>>,
-    clean_counts: Py<PyArray1<usize>>,
-    evaluated_counts: Py<PyArray1<usize>>,
-    rejected_counts: Py<PyArray1<usize>>,
-    #[pyo3(get)]
-    feature_frontier_count: usize,
-    #[pyo3(get)]
-    sparse_row_count: usize,
-    #[pyo3(get)]
-    worker_sparse_row_counts: Vec<usize>,
 }
 
 #[pyclass(module = "map_gen")]
@@ -1594,6 +1579,12 @@ pub struct SparseFeatureRequirements {
     sparse_row_count: usize,
     #[pyo3(get)]
     worker_sparse_row_counts: Vec<usize>,
+}
+
+#[pyclass(module = "map_gen")]
+pub struct CandidateOutputRequirements {
+    #[pyo3(get)]
+    candidate_count: usize,
 }
 
 #[pymethods]
@@ -1656,84 +1647,6 @@ impl EpisodeOutcomes {
     #[getter]
     fn missing_connect_distance_mask(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
         self.missing_connect_distance_mask.clone_ref(py)
-    }
-}
-
-#[pymethods]
-impl CandidatesWithOutcomes {
-    #[getter]
-    fn room_idx(&self, py: Python<'_>) -> Py<PyArray2<RoomIdx>> {
-        self.room_idx.clone_ref(py)
-    }
-
-    #[getter]
-    fn room_x(&self, py: Python<'_>) -> Py<PyArray2<Coord>> {
-        self.room_x.clone_ref(py)
-    }
-
-    #[getter]
-    fn room_y(&self, py: Python<'_>) -> Py<PyArray2<Coord>> {
-        self.room_y.clone_ref(py)
-    }
-
-    #[getter]
-    fn proposal_frontier_idx(&self, py: Python<'_>) -> Py<PyArray2<FrontierIdx>> {
-        self.proposal_frontier_idx.clone_ref(py)
-    }
-
-    #[getter]
-    fn proposal_door_variant_idx(&self, py: Python<'_>) -> Py<PyArray2<DoorVariantIdx>> {
-        self.proposal_door_variant_idx.clone_ref(py)
-    }
-
-    #[getter]
-    fn pre_door_valid(&self, py: Python<'_>) -> Py<PyArray2<i8>> {
-        self.pre_door_valid.clone_ref(py)
-    }
-
-    #[getter]
-    fn pre_connections_valid(&self, py: Python<'_>) -> Py<PyArray2<i8>> {
-        self.pre_connections_valid.clone_ref(py)
-    }
-
-    #[getter]
-    fn pre_toilet_valid(&self, py: Python<'_>) -> Py<PyArray1<i8>> {
-        self.pre_toilet_valid.clone_ref(py)
-    }
-
-    #[getter]
-    fn door_valid(&self, py: Python<'_>) -> Py<PyArray3<i8>> {
-        self.door_valid.clone_ref(py)
-    }
-
-    #[getter]
-    fn connections_valid(&self, py: Python<'_>) -> Py<PyArray3<i8>> {
-        self.connections_valid.clone_ref(py)
-    }
-
-    #[getter]
-    fn toilet_valid(&self, py: Python<'_>) -> Py<PyArray2<i8>> {
-        self.toilet_valid.clone_ref(py)
-    }
-
-    #[getter]
-    fn door_match(&self, py: Python<'_>) -> Py<PyArray3<i16>> {
-        self.door_match.clone_ref(py)
-    }
-
-    #[getter]
-    fn clean_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.clean_counts.clone_ref(py)
-    }
-
-    #[getter]
-    fn evaluated_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.evaluated_counts.clone_ref(py)
-    }
-
-    #[getter]
-    fn rejected_counts(&self, py: Python<'_>) -> Py<PyArray1<usize>> {
-        self.rejected_counts.clone_ref(py)
     }
 }
 
@@ -2579,13 +2492,42 @@ impl EnvironmentGroup {
         })
     }
 
-    fn get_candidates_from_proposals<'py>(
+    fn get_candidate_output_requirements(
+        &self,
+        recommended_candidates: usize,
+    ) -> CandidateOutputRequirements {
+        CandidateOutputRequirements {
+            candidate_count: if self.action_count == 0 {
+                1
+            } else {
+                recommended_candidates
+            },
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn pack_candidates_from_proposals_into<'py>(
         &mut self,
         py: Python<'py>,
         sampled_frontier_idx: PyReadonlyArray2<'py, FrontierIdx>,
         sampled_door_variant_idx: PyReadonlyArray2<'py, DoorVariantIdx>,
         mut recommended_candidates: usize,
-    ) -> PyResult<CandidatesWithOutcomes> {
+        mut room_idx: PyReadwriteArray2<'py, RoomIdx>,
+        mut room_x: PyReadwriteArray2<'py, Coord>,
+        mut room_y: PyReadwriteArray2<'py, Coord>,
+        mut proposal_frontier_idx: PyReadwriteArray2<'py, FrontierIdx>,
+        mut proposal_door_variant_idx: PyReadwriteArray2<'py, DoorVariantIdx>,
+        mut pre_door_valid: PyReadwriteArray2<'py, i8>,
+        mut pre_connections_valid: PyReadwriteArray2<'py, i8>,
+        mut pre_toilet_valid: PyReadwriteArray1<'py, i8>,
+        mut door_valid: PyReadwriteArray3<'py, i8>,
+        mut connections_valid: PyReadwriteArray3<'py, i8>,
+        mut toilet_valid: PyReadwriteArray2<'py, i8>,
+        mut door_match: PyReadwriteArray3<'py, i16>,
+        mut clean_counts: PyReadwriteArray1<'py, i64>,
+        mut evaluated_counts: PyReadwriteArray1<'py, i64>,
+        mut rejected_counts: PyReadwriteArray1<'py, i64>,
+    ) -> PyResult<SparseFeatureRequirements> {
         if self.action_count == 0 {
             recommended_candidates = 1;
         }
@@ -2606,36 +2548,163 @@ impl EnvironmentGroup {
             .as_slice()
             .map_err(|_| PyValueError::new_err("sampled_door_variant_idx must be contiguous"))?;
         let (door_outcome_count, connection_outcome_count) = output_sizes(&self.common_data);
-        let output_len = self.num_environments * recommended_candidates;
-        let pre_door_output_len = self.num_environments * door_outcome_count;
-        let pre_connection_output_len = self.num_environments * connection_outcome_count;
-        let door_output_len = output_len * door_outcome_count;
-        let connection_output_len = output_len * connection_outcome_count;
-        let door_match_output_len = output_len * door_outcome_count;
         let dummy_candidate = Action {
             room_idx: self.common_data.room.len() as RoomIdx,
             x: 0,
             y: 0,
         };
 
-        let mut room_idx = vec![dummy_candidate.room_idx; output_len];
-        let mut room_x = vec![dummy_candidate.x; output_len];
-        let mut room_y = vec![dummy_candidate.y; output_len];
-        let mut proposal_frontier_idx = vec![-1; output_len];
-        let mut proposal_door_variant_idx = vec![-1; output_len];
-        let mut pre_door_valid = vec![DoorValidOutcome::Unknown as i8; pre_door_output_len];
-        let mut pre_connections_valid =
-            vec![DoorValidOutcome::Unknown as i8; pre_connection_output_len];
-        let mut pre_toilet_valid = vec![DoorValidOutcome::Unknown as i8; self.num_environments];
-        let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
-        let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
-        let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; output_len];
-        let mut door_match = vec![-1; door_match_output_len];
-        let mut clean_counts = vec![0; self.num_environments];
-        let mut evaluated_counts = vec![0; self.num_environments];
-        let mut rejected_counts = vec![0; self.num_environments];
+        check_shape(
+            "room_idx",
+            room_idx.as_array().shape(),
+            &[self.num_environments, recommended_candidates],
+        )?;
+        check_shape(
+            "room_x",
+            room_x.as_array().shape(),
+            &[self.num_environments, recommended_candidates],
+        )?;
+        check_shape(
+            "room_y",
+            room_y.as_array().shape(),
+            &[self.num_environments, recommended_candidates],
+        )?;
+        check_shape(
+            "proposal_frontier_idx",
+            proposal_frontier_idx.as_array().shape(),
+            &[self.num_environments, recommended_candidates],
+        )?;
+        check_shape(
+            "proposal_door_variant_idx",
+            proposal_door_variant_idx.as_array().shape(),
+            &[self.num_environments, recommended_candidates],
+        )?;
+        check_shape(
+            "pre_door_valid",
+            pre_door_valid.as_array().shape(),
+            &[self.num_environments, door_outcome_count],
+        )?;
+        check_shape(
+            "pre_connections_valid",
+            pre_connections_valid.as_array().shape(),
+            &[self.num_environments, connection_outcome_count],
+        )?;
+        check_shape(
+            "pre_toilet_valid",
+            pre_toilet_valid.as_array().shape(),
+            &[self.num_environments],
+        )?;
+        check_shape(
+            "door_valid",
+            door_valid.as_array().shape(),
+            &[
+                self.num_environments,
+                recommended_candidates,
+                door_outcome_count,
+            ],
+        )?;
+        check_shape(
+            "connections_valid",
+            connections_valid.as_array().shape(),
+            &[
+                self.num_environments,
+                recommended_candidates,
+                connection_outcome_count,
+            ],
+        )?;
+        check_shape(
+            "toilet_valid",
+            toilet_valid.as_array().shape(),
+            &[self.num_environments, recommended_candidates],
+        )?;
+        check_shape(
+            "door_match",
+            door_match.as_array().shape(),
+            &[
+                self.num_environments,
+                recommended_candidates,
+                door_outcome_count,
+            ],
+        )?;
+        check_shape(
+            "clean_counts",
+            clean_counts.as_array().shape(),
+            &[self.num_environments],
+        )?;
+        check_shape(
+            "evaluated_counts",
+            evaluated_counts.as_array().shape(),
+            &[self.num_environments],
+        )?;
+        check_shape(
+            "rejected_counts",
+            rejected_counts.as_array().shape(),
+            &[self.num_environments],
+        )?;
 
-        let (feature_frontier_count, sparse_row_count, worker_sparse_row_counts) =
+        let room_idx = room_idx
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("room_idx must be contiguous"))?;
+        let room_x = room_x
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("room_x must be contiguous"))?;
+        let room_y = room_y
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("room_y must be contiguous"))?;
+        let proposal_frontier_idx = proposal_frontier_idx
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("proposal_frontier_idx must be contiguous"))?;
+        let proposal_door_variant_idx = proposal_door_variant_idx
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("proposal_door_variant_idx must be contiguous"))?;
+        let pre_door_valid = pre_door_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("pre_door_valid must be contiguous"))?;
+        let pre_connections_valid = pre_connections_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("pre_connections_valid must be contiguous"))?;
+        let pre_toilet_valid = pre_toilet_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("pre_toilet_valid must be contiguous"))?;
+        let door_valid = door_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("door_valid must be contiguous"))?;
+        let connections_valid = connections_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("connections_valid must be contiguous"))?;
+        let toilet_valid = toilet_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("toilet_valid must be contiguous"))?;
+        let door_match = door_match
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("door_match must be contiguous"))?;
+        let stats_clean_counts = clean_counts
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("clean_counts must be contiguous"))?;
+        let stats_evaluated_counts = evaluated_counts
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("evaluated_counts must be contiguous"))?;
+        let stats_rejected_counts = rejected_counts
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("rejected_counts must be contiguous"))?;
+
+        room_idx.fill(dummy_candidate.room_idx);
+        room_x.fill(dummy_candidate.x);
+        room_y.fill(dummy_candidate.y);
+        proposal_frontier_idx.fill(-1);
+        proposal_door_variant_idx.fill(-1);
+        pre_door_valid.fill(DoorValidOutcome::Unknown as i8);
+        pre_connections_valid.fill(DoorValidOutcome::Unknown as i8);
+        pre_toilet_valid.fill(DoorValidOutcome::Unknown as i8);
+        door_valid.fill(DoorValidOutcome::Unknown as i8);
+        connections_valid.fill(DoorValidOutcome::Unknown as i8);
+        toilet_valid.fill(DoorValidOutcome::Unknown as i8);
+        door_match.fill(-1);
+        let mut worker_clean_counts = vec![0; self.num_environments];
+        let mut worker_evaluated_counts = vec![0; self.num_environments];
+        let mut worker_rejected_counts = vec![0; self.num_environments];
+
+        let (_feature_frontier_count, sparse_row_count, worker_sparse_row_counts) =
             py.detach(|| {
                 let mut sent_workers = Vec::with_capacity(self.workers.len());
                 let mut first_error = None;
@@ -2703,13 +2772,13 @@ impl EnvironmentGroup {
                             &mut door_match[door_match_output_start..door_match_output_end],
                         ),
                         clean_counts: OutputShard::from_slice(
-                            &mut clean_counts[worker.start..worker.end()],
+                            &mut worker_clean_counts[worker.start..worker.end()],
                         ),
                         evaluated_counts: OutputShard::from_slice(
-                            &mut evaluated_counts[worker.start..worker.end()],
+                            &mut worker_evaluated_counts[worker.start..worker.end()],
                         ),
                         rejected_counts: OutputShard::from_slice(
-                            &mut rejected_counts[worker.start..worker.end()],
+                            &mut worker_rejected_counts[worker.start..worker.end()],
                         ),
                     }) {
                         set_first_error(&mut first_error, err);
@@ -2720,8 +2789,6 @@ impl EnvironmentGroup {
 
                 collect_feature_info(&self.workers, sent_workers, first_error)
             })?;
-        let feature_frontier_count =
-            feature_frontier_count * usize::from(self.features.has_frontier_features());
         let sparse_row_count =
             sparse_row_count * usize::from(self.features.has_frontier_features());
         let worker_sparse_row_counts = worker_sparse_row_counts
@@ -2729,105 +2796,55 @@ impl EnvironmentGroup {
             .map(|count| count * usize::from(self.features.has_frontier_features()))
             .collect::<Vec<_>>();
 
-        Ok(CandidatesWithOutcomes {
-            room_idx: pyarray2_from_flat_vec(
-                py,
-                room_idx,
-                self.num_environments,
-                recommended_candidates,
-            )?
-            .unbind(),
-            room_x: pyarray2_from_flat_vec(
-                py,
-                room_x,
-                self.num_environments,
-                recommended_candidates,
-            )?
-            .unbind(),
-            room_y: pyarray2_from_flat_vec(
-                py,
-                room_y,
-                self.num_environments,
-                recommended_candidates,
-            )?
-            .unbind(),
-            proposal_frontier_idx: pyarray2_from_flat_vec(
-                py,
-                proposal_frontier_idx,
-                self.num_environments,
-                recommended_candidates,
-            )?
-            .unbind(),
-            proposal_door_variant_idx: pyarray2_from_flat_vec(
-                py,
-                proposal_door_variant_idx,
-                self.num_environments,
-                recommended_candidates,
-            )?
-            .unbind(),
-            pre_door_valid: pyarray2_from_flat_vec(
-                py,
-                pre_door_valid,
-                self.num_environments,
-                door_outcome_count,
-            )?
-            .unbind(),
-            pre_connections_valid: pyarray2_from_flat_vec(
-                py,
-                pre_connections_valid,
-                self.num_environments,
-                connection_outcome_count,
-            )?
-            .unbind(),
-            pre_toilet_valid: pre_toilet_valid.into_pyarray(py).unbind(),
-            door_valid: pyarray3_from_flat_vec(
-                py,
-                door_valid,
-                self.num_environments,
-                recommended_candidates,
-                door_outcome_count,
-            )?
-            .unbind(),
-            connections_valid: pyarray3_from_flat_vec(
-                py,
-                connections_valid,
-                self.num_environments,
-                recommended_candidates,
-                connection_outcome_count,
-            )?
-            .unbind(),
-            toilet_valid: pyarray2_from_flat_vec(
-                py,
-                toilet_valid,
-                self.num_environments,
-                recommended_candidates,
-            )?
-            .unbind(),
-            door_match: pyarray3_from_flat_vec(
-                py,
-                door_match,
-                self.num_environments,
-                recommended_candidates,
-                door_outcome_count,
-            )?
-            .unbind(),
-            clean_counts: clean_counts.into_pyarray(py).unbind(),
-            evaluated_counts: evaluated_counts.into_pyarray(py).unbind(),
-            rejected_counts: rejected_counts.into_pyarray(py).unbind(),
-            feature_frontier_count,
+        for (out, count) in stats_clean_counts
+            .iter_mut()
+            .zip(worker_clean_counts.into_iter())
+        {
+            *out = count as i64;
+        }
+        for (out, count) in stats_evaluated_counts
+            .iter_mut()
+            .zip(worker_evaluated_counts.into_iter())
+        {
+            *out = count as i64;
+        }
+        for (out, count) in stats_rejected_counts
+            .iter_mut()
+            .zip(worker_rejected_counts.into_iter())
+        {
+            *out = count as i64;
+        }
+
+        Ok(SparseFeatureRequirements {
             sparse_row_count,
             worker_sparse_row_counts,
         })
     }
 
-    fn get_candidates_with_outcomes<'py>(
+    #[allow(clippy::too_many_arguments)]
+    fn pack_candidates_with_outcomes_into<'py>(
         &mut self,
         py: Python<'py>,
         mut recommended_candidates: usize,
         mut exploration_candidates: usize,
         proposal_temperature: PyReadonlyArray1<'py, f32>,
         proposal_scores: Option<PyReadonlyArray3<'py, f32>>,
-    ) -> PyResult<CandidatesWithOutcomes> {
+        mut room_idx: PyReadwriteArray2<'py, RoomIdx>,
+        mut room_x: PyReadwriteArray2<'py, Coord>,
+        mut room_y: PyReadwriteArray2<'py, Coord>,
+        mut proposal_frontier_idx: PyReadwriteArray2<'py, FrontierIdx>,
+        mut proposal_door_variant_idx: PyReadwriteArray2<'py, DoorVariantIdx>,
+        mut pre_door_valid: PyReadwriteArray2<'py, i8>,
+        mut pre_connections_valid: PyReadwriteArray2<'py, i8>,
+        mut pre_toilet_valid: PyReadwriteArray1<'py, i8>,
+        mut door_valid: PyReadwriteArray3<'py, i8>,
+        mut connections_valid: PyReadwriteArray3<'py, i8>,
+        mut toilet_valid: PyReadwriteArray2<'py, i8>,
+        mut door_match: PyReadwriteArray3<'py, i16>,
+        mut clean_counts: PyReadwriteArray1<'py, i64>,
+        mut evaluated_counts: PyReadwriteArray1<'py, i64>,
+        mut rejected_counts: PyReadwriteArray1<'py, i64>,
+    ) -> PyResult<SparseFeatureRequirements> {
         if self.action_count == 0 {
             recommended_candidates = 0;
             exploration_candidates = 1;
@@ -2869,33 +2886,155 @@ impl EnvironmentGroup {
             })
             .transpose()?;
         let (door_outcome_count, connection_outcome_count) = output_sizes(&self.common_data);
-        let output_len = self.num_environments * max_candidates;
-        let pre_door_output_len = self.num_environments * door_outcome_count;
-        let pre_connection_output_len = self.num_environments * connection_outcome_count;
-        let door_output_len = output_len * door_outcome_count;
-        let connection_output_len = output_len * connection_outcome_count;
-        let door_match_output_len = output_len * door_outcome_count;
         let dummy_candidate = Action {
             room_idx: self.common_data.room.len() as RoomIdx, // an invalid room index to indicate no-op
             x: 0,
             y: 0,
         };
 
-        let mut room_idx = vec![dummy_candidate.room_idx; output_len];
-        let mut room_x = vec![dummy_candidate.x; output_len];
-        let mut room_y = vec![dummy_candidate.y; output_len];
-        let mut proposal_frontier_idx = vec![-1; output_len];
-        let mut proposal_door_variant_idx = vec![-1; output_len];
-        let mut pre_door_valid = vec![DoorValidOutcome::Unknown as i8; pre_door_output_len];
-        let mut pre_connections_valid =
-            vec![DoorValidOutcome::Unknown as i8; pre_connection_output_len];
-        let mut pre_toilet_valid = vec![DoorValidOutcome::Unknown as i8; self.num_environments];
-        let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
-        let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
-        let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; output_len];
-        let mut door_match = vec![-1; door_match_output_len];
+        check_shape(
+            "room_idx",
+            room_idx.as_array().shape(),
+            &[self.num_environments, max_candidates],
+        )?;
+        check_shape(
+            "room_x",
+            room_x.as_array().shape(),
+            &[self.num_environments, max_candidates],
+        )?;
+        check_shape(
+            "room_y",
+            room_y.as_array().shape(),
+            &[self.num_environments, max_candidates],
+        )?;
+        check_shape(
+            "proposal_frontier_idx",
+            proposal_frontier_idx.as_array().shape(),
+            &[self.num_environments, max_candidates],
+        )?;
+        check_shape(
+            "proposal_door_variant_idx",
+            proposal_door_variant_idx.as_array().shape(),
+            &[self.num_environments, max_candidates],
+        )?;
+        check_shape(
+            "pre_door_valid",
+            pre_door_valid.as_array().shape(),
+            &[self.num_environments, door_outcome_count],
+        )?;
+        check_shape(
+            "pre_connections_valid",
+            pre_connections_valid.as_array().shape(),
+            &[self.num_environments, connection_outcome_count],
+        )?;
+        check_shape(
+            "pre_toilet_valid",
+            pre_toilet_valid.as_array().shape(),
+            &[self.num_environments],
+        )?;
+        check_shape(
+            "door_valid",
+            door_valid.as_array().shape(),
+            &[self.num_environments, max_candidates, door_outcome_count],
+        )?;
+        check_shape(
+            "connections_valid",
+            connections_valid.as_array().shape(),
+            &[
+                self.num_environments,
+                max_candidates,
+                connection_outcome_count,
+            ],
+        )?;
+        check_shape(
+            "toilet_valid",
+            toilet_valid.as_array().shape(),
+            &[self.num_environments, max_candidates],
+        )?;
+        check_shape(
+            "door_match",
+            door_match.as_array().shape(),
+            &[self.num_environments, max_candidates, door_outcome_count],
+        )?;
+        check_shape(
+            "clean_counts",
+            clean_counts.as_array().shape(),
+            &[self.num_environments],
+        )?;
+        check_shape(
+            "evaluated_counts",
+            evaluated_counts.as_array().shape(),
+            &[self.num_environments],
+        )?;
+        check_shape(
+            "rejected_counts",
+            rejected_counts.as_array().shape(),
+            &[self.num_environments],
+        )?;
 
-        let (feature_frontier_count, sparse_row_count, worker_sparse_row_counts) =
+        let room_idx = room_idx
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("room_idx must be contiguous"))?;
+        let room_x = room_x
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("room_x must be contiguous"))?;
+        let room_y = room_y
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("room_y must be contiguous"))?;
+        let proposal_frontier_idx = proposal_frontier_idx
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("proposal_frontier_idx must be contiguous"))?;
+        let proposal_door_variant_idx = proposal_door_variant_idx
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("proposal_door_variant_idx must be contiguous"))?;
+        let pre_door_valid = pre_door_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("pre_door_valid must be contiguous"))?;
+        let pre_connections_valid = pre_connections_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("pre_connections_valid must be contiguous"))?;
+        let pre_toilet_valid = pre_toilet_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("pre_toilet_valid must be contiguous"))?;
+        let door_valid = door_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("door_valid must be contiguous"))?;
+        let connections_valid = connections_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("connections_valid must be contiguous"))?;
+        let toilet_valid = toilet_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("toilet_valid must be contiguous"))?;
+        let door_match = door_match
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("door_match must be contiguous"))?;
+        let clean_counts = clean_counts
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("clean_counts must be contiguous"))?;
+        let evaluated_counts = evaluated_counts
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("evaluated_counts must be contiguous"))?;
+        let rejected_counts = rejected_counts
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("rejected_counts must be contiguous"))?;
+
+        room_idx.fill(dummy_candidate.room_idx);
+        room_x.fill(dummy_candidate.x);
+        room_y.fill(dummy_candidate.y);
+        proposal_frontier_idx.fill(-1);
+        proposal_door_variant_idx.fill(-1);
+        pre_door_valid.fill(DoorValidOutcome::Unknown as i8);
+        pre_connections_valid.fill(DoorValidOutcome::Unknown as i8);
+        pre_toilet_valid.fill(DoorValidOutcome::Unknown as i8);
+        door_valid.fill(DoorValidOutcome::Unknown as i8);
+        connections_valid.fill(DoorValidOutcome::Unknown as i8);
+        toilet_valid.fill(DoorValidOutcome::Unknown as i8);
+        door_match.fill(-1);
+        clean_counts.fill(0);
+        evaluated_counts.fill(0);
+        rejected_counts.fill(0);
+
+        let (_feature_frontier_count, sparse_row_count, worker_sparse_row_counts) =
             py.detach(|| {
                 let mut sent_workers = Vec::with_capacity(self.workers.len());
                 let mut first_error = None;
@@ -2977,8 +3116,6 @@ impl EnvironmentGroup {
 
                 collect_feature_info(&self.workers, sent_workers, first_error)
             })?;
-        let feature_frontier_count =
-            feature_frontier_count * usize::from(self.features.has_frontier_features());
         let sparse_row_count =
             sparse_row_count * usize::from(self.features.has_frontier_features());
         let worker_sparse_row_counts = worker_sparse_row_counts
@@ -2986,77 +3123,7 @@ impl EnvironmentGroup {
             .map(|count| count * usize::from(self.features.has_frontier_features()))
             .collect::<Vec<_>>();
 
-        Ok(CandidatesWithOutcomes {
-            room_idx: pyarray2_from_flat_vec(py, room_idx, self.num_environments, max_candidates)?
-                .unbind(),
-            room_x: pyarray2_from_flat_vec(py, room_x, self.num_environments, max_candidates)?
-                .unbind(),
-            room_y: pyarray2_from_flat_vec(py, room_y, self.num_environments, max_candidates)?
-                .unbind(),
-            proposal_frontier_idx: pyarray2_from_flat_vec(
-                py,
-                proposal_frontier_idx,
-                self.num_environments,
-                max_candidates,
-            )?
-            .unbind(),
-            proposal_door_variant_idx: pyarray2_from_flat_vec(
-                py,
-                proposal_door_variant_idx,
-                self.num_environments,
-                max_candidates,
-            )?
-            .unbind(),
-            pre_door_valid: pyarray2_from_flat_vec(
-                py,
-                pre_door_valid,
-                self.num_environments,
-                door_outcome_count,
-            )?
-            .unbind(),
-            pre_connections_valid: pyarray2_from_flat_vec(
-                py,
-                pre_connections_valid,
-                self.num_environments,
-                connection_outcome_count,
-            )?
-            .unbind(),
-            pre_toilet_valid: pre_toilet_valid.into_pyarray(py).unbind(),
-            door_valid: pyarray3_from_flat_vec(
-                py,
-                door_valid,
-                self.num_environments,
-                max_candidates,
-                door_outcome_count,
-            )?
-            .unbind(),
-            connections_valid: pyarray3_from_flat_vec(
-                py,
-                connections_valid,
-                self.num_environments,
-                max_candidates,
-                connection_outcome_count,
-            )?
-            .unbind(),
-            toilet_valid: pyarray2_from_flat_vec(
-                py,
-                toilet_valid,
-                self.num_environments,
-                max_candidates,
-            )?
-            .unbind(),
-            door_match: pyarray3_from_flat_vec(
-                py,
-                door_match,
-                self.num_environments,
-                max_candidates,
-                door_outcome_count,
-            )?
-            .unbind(),
-            clean_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            evaluated_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            rejected_counts: vec![0; self.num_environments].into_pyarray(py).unbind(),
-            feature_frontier_count,
+        Ok(SparseFeatureRequirements {
             sparse_row_count,
             worker_sparse_row_counts,
         })
@@ -3777,14 +3844,12 @@ impl EnvironmentGroup {
                             room_part_furthest_destination: OutputShard::from_slice(
                                 &mut room_part_furthest_destination[snapshot_start
                                     * room_part_furthest_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * room_part_furthest_width],
+                                    ..(snapshot_start + snapshot_count) * room_part_furthest_width],
                             ),
                             room_part_furthest_source: OutputShard::from_slice(
                                 &mut room_part_furthest_source[snapshot_start
                                     * room_part_furthest_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * room_part_furthest_width],
+                                    ..(snapshot_start + snapshot_count) * room_part_furthest_width],
                             ),
                             room_part_save_distance: OutputShard::from_slice(
                                 &mut room_part_save_distance[snapshot_start
@@ -3813,7 +3878,8 @@ impl EnvironmentGroup {
                             toilet_crossed_room_idx: OutputShard::from_slice(
                                 &mut toilet_crossed_room_idx[snapshot_start
                                     * toilet_crossed_room_width
-                                    ..(snapshot_start + snapshot_count) * toilet_crossed_room_width],
+                                    ..(snapshot_start + snapshot_count)
+                                        * toilet_crossed_room_width],
                             ),
                             inventory_count: inventory_width,
                             room_count: room_width,
