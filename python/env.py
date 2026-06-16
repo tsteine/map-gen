@@ -541,6 +541,9 @@ class EnvironmentGroup:
             actions.room_y.contiguous().cpu().numpy(),
         )
 
+    def step_initial(self):
+        self.env.step_initial()
+
     def step_known(self, actions: Actions):
         self.env.step_known(
             actions.room_idx.contiguous().cpu().numpy(),
@@ -555,51 +558,6 @@ class EnvironmentGroup:
             room_x=torch.from_numpy(room_x).to(device),
             room_y=torch.from_numpy(room_y).to(device),
         )
-
-    def candidate_output_count(self, recommended_candidates: int) -> int:
-        return self.env.get_candidate_output_requirements(
-            recommended_candidates,
-        ).candidate_count
-
-    def extract_candidates_with_outcomes(
-        self,
-        candidate_slot: CandidateSlot,
-        recommended_candidates: int,
-        proposal_temperature: torch.Tensor,
-        proposal_scores: torch.Tensor | None,
-    ) -> tuple[
-        Actions,
-        torch.Tensor,
-        torch.Tensor,
-        PreliminaryOutcomes,
-        PreliminaryOutcomes,
-        SparseFeatureRequirements,
-        CandidateStats,
-    ]:
-        candidate_count = self.candidate_output_count(recommended_candidates)
-        candidate_slot.ensure(self.num_envs, candidate_count)
-        result = self.env.pack_candidates_with_outcomes_into(
-            recommended_candidates,
-            0,
-            proposal_temperature.contiguous().cpu().numpy(),
-            None if proposal_scores is None else proposal_scores.contiguous().cpu().numpy(),
-            candidate_slot.room_idx[:self.num_envs, :candidate_count].numpy(),
-            candidate_slot.room_x[:self.num_envs, :candidate_count].numpy(),
-            candidate_slot.room_y[:self.num_envs, :candidate_count].numpy(),
-            candidate_slot.proposal_frontier_idx[:self.num_envs, :candidate_count].numpy(),
-            candidate_slot.proposal_door_variant_idx[:self.num_envs, :candidate_count].numpy(),
-            candidate_slot.pre_door_invalid[:self.num_envs].numpy(),
-            candidate_slot.pre_connection_invalid[:self.num_envs].numpy(),
-            candidate_slot.pre_toilet_invalid[:self.num_envs].numpy(),
-            candidate_slot.door_invalid[:self.num_envs, :candidate_count].numpy(),
-            candidate_slot.connection_invalid[:self.num_envs, :candidate_count].numpy(),
-            candidate_slot.toilet_invalid[:self.num_envs, :candidate_count].numpy(),
-            candidate_slot.door_match[:self.num_envs, :candidate_count].numpy(),
-            candidate_slot.clean_counts[:self.num_envs].numpy(),
-            candidate_slot.evaluated_counts[:self.num_envs].numpy(),
-            candidate_slot.rejected_counts[:self.num_envs].numpy(),
-        )
-        return self._candidate_slot_result(candidate_slot, candidate_count, result)
 
     def get_proposal_candidate_mask(
         self,
@@ -628,7 +586,7 @@ class EnvironmentGroup:
         SparseFeatureRequirements,
         CandidateStats,
     ]:
-        candidate_count = self.candidate_output_count(recommended_candidates)
+        candidate_count = recommended_candidates
         candidate_slot.ensure(self.num_envs, candidate_count)
         result = self.env.pack_candidates_from_proposals_into(
             sampled_frontier_idx.contiguous().cpu().numpy(),

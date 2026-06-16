@@ -378,10 +378,10 @@ def prepare_feature_batches(
             proposal_selected_candidate = None
             proposal_target_logits = None
             if proposal_data is not None and step + 1 < episode_length:
-                proposal_frontier_idx = proposal_data.frontier_idx[:, step + 1]
-                proposal_door_variant_idx = proposal_data.door_variant_idx[:, step + 1]
-                proposal_selected_candidate = proposal_data.selected_candidate[:, step + 1]
-                proposal_target_logits = proposal_data.target_logits[:, step + 1]
+                proposal_frontier_idx = proposal_data.frontier_idx[:, step]
+                proposal_door_variant_idx = proposal_data.door_variant_idx[:, step]
+                proposal_selected_candidate = proposal_data.selected_candidate[:, step]
+                proposal_target_logits = proposal_data.target_logits[:, step]
             feature_slot = SparseFeatureSlot(env, pin_memory=pin_memory)
             feature_batches.append(
                 FeatureTrainBatch(

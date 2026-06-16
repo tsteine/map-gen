@@ -317,32 +317,6 @@ def create_generation_environment_groups(
     ]
 
 
-def get_initial_candidate_batch(group: GenerationGroup) -> CandidateBatch:
-    (
-        candidates,
-        proposal_frontier_idx,
-        proposal_door_variant_idx,
-        reward_outcomes,
-        post_candidate_outcomes,
-        feature_requirements,
-        stats,
-    ) = group.env.extract_candidates_with_outcomes(
-        group.candidate_slot,
-        group.config.recommended_candidates,
-        group.config.proposal_temperature,
-        None,
-    )
-    return CandidateBatch(
-        candidates,
-        proposal_frontier_idx,
-        proposal_door_variant_idx,
-        reward_outcomes,
-        post_candidate_outcomes,
-        feature_requirements,
-        stats,
-    )
-
-
 def get_shortlist_candidate_batch(
     group: GenerationGroup,
     sampled_frontier_idx: torch.Tensor,
@@ -576,18 +550,6 @@ def prepare_candidate_features(
     )
 
 
-def prepare_initial_generation_step(
-    group: GenerationGroup,
-) -> PreparedGenerationStep:
-    candidate_batch = get_initial_candidate_batch(group)
-    return prepare_candidate_features(
-        group.env,
-        group.config,
-        candidate_batch,
-        group.feature_slot,
-    )
-
-
 def prepare_shortlist_generation_step(
     group: GenerationGroup,
     sampled_frontier_idx: torch.Tensor,
@@ -810,25 +772,8 @@ def start_generation_step(
     group: GenerationGroup,
     executor: ThreadPoolExecutor,
     pending_proposals: deque[PendingProposalStep],
-    pending_candidates: deque[PendingCandidateStep],
 ) -> None:
     if group.step >= group.config.episode_length:
-        return
-    if group.step == 0:
-        pending_candidates.append(
-            PendingCandidateStep(
-                group,
-                executor.submit(
-                    prepare_initial_generation_step,
-                    group,
-                ),
-                torch.zeros(
-                    [group.config.temperature.shape[0]],
-                    dtype=torch.bool,
-                    device=torch.device("cpu"),
-                ),
-            )
-        )
         return
     pending_proposals.append(
         PendingProposalStep(
@@ -1031,6 +976,28 @@ def merge_generation_results(
     )
 
 
+def empty_proposal_data(
+    environment_count: int,
+    max_candidates: int,
+    device: torch.device,
+) -> ProposalData:
+    return ProposalData(
+        torch.empty((environment_count, 0), dtype=torch.int16, device=device),
+        torch.empty((environment_count, 0, max_candidates), dtype=torch.int16, device=device),
+        torch.empty((environment_count, 0), dtype=torch.int64, device=device),
+        torch.empty((environment_count, 0, max_candidates), dtype=torch.float32, device=device),
+    )
+
+
+def bootstrap_lookahead_outcomes(outcomes: PreliminaryOutcomes) -> PreliminaryOutcomes:
+    return PreliminaryOutcomes(
+        outcomes.door_invalid,
+        outcomes.connection_invalid,
+        outcomes.toilet_invalid,
+        torch.full_like(outcomes.door_invalid, -1, dtype=torch.int16),
+    )
+
+
 def run_generation_groups(
     envs: list[EnvironmentGroup],
     model,
@@ -1077,13 +1044,19 @@ def run_generation_groups(
         with torch.no_grad():
             for group in groups:
                 group.env.clear()
-                group.previous_lookahead_outcomes = None
+                group.env.step_initial()
+                group.step = 1
+                group.previous_lookahead_outcomes = bootstrap_lookahead_outcomes(
+                    group.env.get_outcomes(
+                        torch.device("cpu"),
+                        verify_consistency=False,
+                    ).validity
+                )
                 group.previous_proposal_scores = None
                 start_generation_step(
                     group,
                     executor,
                     pending_proposals,
-                    pending_candidates,
                 )
             while pending_proposals or pending_candidates:
                 proposal_step = pop_ready_proposal_step(pending_proposals)
@@ -1249,7 +1222,6 @@ def run_generation_groups(
                         step.group,
                         executor,
                         pending_proposals,
-                        pending_candidates,
                     )
         results = []
         for group_index, group in enumerate(groups):
@@ -1272,11 +1244,19 @@ def run_generation_groups(
                 ),
                 episode_outcomes,
                 door_match_counts,
-                ProposalData(
-                    torch.stack(group_proposal_frontier_idx[group_index], dim=1),
-                    torch.stack(group_proposal_door_variant_idx[group_index], dim=1),
-                    torch.stack(group_selected_candidate[group_index], dim=1),
-                    torch.stack(group_proposal_target_logits[group_index], dim=1),
+                (
+                    ProposalData(
+                        torch.stack(group_proposal_frontier_idx[group_index], dim=1),
+                        torch.stack(group_proposal_door_variant_idx[group_index], dim=1),
+                        torch.stack(group_selected_candidate[group_index], dim=1),
+                        torch.stack(group_proposal_target_logits[group_index], dim=1),
+                    )
+                    if group_proposal_frontier_idx[group_index]
+                    else empty_proposal_data(
+                        group.config.temperature.shape[0],
+                        group.config.max_candidates,
+                        device,
+                    )
                 ),
             ))
             profiler.add("python.finish_group", profile_time)
