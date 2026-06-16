@@ -11,6 +11,7 @@ from env import (
     EpisodeData,
     EpisodeOutcomes,
     SparseFeatures,
+    SparseFeatureSlot,
     PreliminaryOutcomes,
     ProposalData,
 )
@@ -316,6 +317,7 @@ def prepare_feature_batches(
     env,
     num_rooms: int,
     episode_length: int,
+    pin_memory: bool,
 ) -> tuple[int, list[FeatureTrainBatch]]:
     offset = torch.randint(0, config.train.sample_period, [1]).item()
     train_actions = train_episode_data.actions
@@ -380,10 +382,11 @@ def prepare_feature_batches(
                 proposal_door_variant_idx = proposal_data.door_variant_idx[:, step + 1]
                 proposal_selected_candidate = proposal_data.selected_candidate[:, step + 1]
                 proposal_target_logits = proposal_data.target_logits[:, step + 1]
+            feature_slot = SparseFeatureSlot(env, pin_memory=pin_memory)
             feature_batches.append(
                 FeatureTrainBatch(
-                    env.get_sparse_features(
-                        torch.device("cpu"),
+                    env.extract_sparse_features(
+                        feature_slot,
                         log_temperature,
                         config.features.temperature,
                         log_recommended_candidates,
@@ -434,6 +437,7 @@ def prepare_feature_batch(
         env,
         num_rooms,
         episode_length,
+        device.type == "cuda",
     )
     door_matches = env.get_door_matches(device)
     return PreparedTrainBatch(
@@ -534,6 +538,7 @@ def prepare_train_batch_task(
         env,
         context.num_rooms,
         context.episode_length,
+        context.device.type == "cuda",
     )
     replay_door_matches = env.get_door_matches(context.device)
     env.finish()
