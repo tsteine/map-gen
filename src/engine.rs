@@ -24,52 +24,80 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const PROFILE_METRIC_COUNT: usize = 43;
-const PROFILE_METRIC_NAMES: [&str; PROFILE_METRIC_COUNT] = [
-    "worker.clear",
-    "worker.finish",
-    "worker.step",
-    "worker.get_candidates_with_outcomes",
-    "worker.get_actions",
-    "worker.get_outcomes",
-    "worker.get_door_match_counts",
-    "worker.get_door_matches",
-    "worker.get_features",
-    "worker.get_features_after_candidates.unused",
-    "worker.get_sparse_features_after_candidates.unused",
-    "worker.get_feature_frontier_count_after_candidates.unused",
-    "worker.pack_features",
-    "env.step.push_action",
-    "env.step.mark_room_used",
-    "env.step.components_edges",
-    "env.step.occupancy",
-    "env.step.match_existing_frontiers",
-    "env.step.build_new_frontier_candidates",
-    "env.step.filter_existing_frontiers",
-    "worker.step_known",
-    "worker.get_proposal_candidate_mask",
-    "worker.get_candidates_from_proposals",
-    "env.proposal.pre_outcomes",
-    "env.proposal.sort_frontiers",
-    "env.proposal.resolve_action",
-    "env.proposal.apply_lookahead",
-    "env.proposal.door_outcomes",
-    "env.proposal.connection_outcomes",
-    "env.proposal.features",
-    "env.proposal.door_match",
-    "env.proposal.restore",
-    "env.proposal.fallback_recompute",
-    "env.lookahead.snapshot",
-    "env.lookahead.step",
-    "env.features.setup",
-    "env.features.sort_frontiers",
-    "env.features.connection_reachability",
-    "env.features.frontier_neighbor",
-    "env.features.frontier_neighbor_flags",
-    "env.features.room_position_clone",
-    "env.features.output",
-    "env.features.apply_candidate",
-];
+macro_rules! profile_metrics {
+    ($($variant:ident => $name:literal,)+) => {
+        const PROFILE_METRIC_COUNT: usize = <[()]>::len(&[$(profile_metrics!(@unit $variant)),+]);
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(usize)]
+        pub(crate) enum ProfileMetric {
+            $($variant,)+
+        }
+
+        impl ProfileMetric {
+            const ALL: [Self; PROFILE_METRIC_COUNT] = [$(Self::$variant,)+];
+
+            fn idx(self) -> usize {
+                self as usize
+            }
+
+            fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+        }
+    };
+    (@unit $variant:ident) => {
+        ()
+    };
+}
+
+profile_metrics! {
+    WorkerClear => "worker.clear",
+    WorkerFinish => "worker.finish",
+    WorkerStep => "worker.step",
+    WorkerGetCandidatesWithOutcomes => "worker.get_candidates_with_outcomes",
+    WorkerGetActions => "worker.get_actions",
+    WorkerGetOutcomes => "worker.get_outcomes",
+    WorkerGetDoorMatchCounts => "worker.get_door_match_counts",
+    WorkerGetDoorMatches => "worker.get_door_matches",
+    WorkerGetFeatures => "worker.get_features",
+    WorkerGetFeaturesAfterCandidatesUnused => "worker.get_features_after_candidates.unused",
+    WorkerGetSparseFeaturesAfterCandidatesUnused => "worker.get_sparse_features_after_candidates.unused",
+    WorkerGetFeatureFrontierCountAfterCandidatesUnused => "worker.get_feature_frontier_count_after_candidates.unused",
+    WorkerPackFeatures => "worker.pack_features",
+    EnvStepPushAction => "env.step.push_action",
+    EnvStepMarkRoomUsed => "env.step.mark_room_used",
+    EnvStepComponentsEdges => "env.step.components_edges",
+    EnvStepOccupancy => "env.step.occupancy",
+    EnvStepMatchExistingFrontiers => "env.step.match_existing_frontiers",
+    EnvStepBuildNewFrontierCandidates => "env.step.build_new_frontier_candidates",
+    EnvStepFilterExistingFrontiers => "env.step.filter_existing_frontiers",
+    WorkerStepKnown => "worker.step_known",
+    WorkerGetProposalCandidateMask => "worker.get_proposal_candidate_mask",
+    WorkerGetCandidatesFromProposals => "worker.get_candidates_from_proposals",
+    EnvProposalPreOutcomes => "env.proposal.pre_outcomes",
+    EnvProposalSortFrontiers => "env.proposal.sort_frontiers",
+    EnvProposalResolveAction => "env.proposal.resolve_action",
+    EnvProposalApplyLookahead => "env.proposal.apply_lookahead",
+    EnvProposalDoorOutcomes => "env.proposal.door_outcomes",
+    EnvProposalConnectionOutcomes => "env.proposal.connection_outcomes",
+    EnvProposalFeatures => "env.proposal.features",
+    EnvProposalDoorMatch => "env.proposal.door_match",
+    EnvProposalRestore => "env.proposal.restore",
+    EnvProposalFallbackRecompute => "env.proposal.fallback_recompute",
+    EnvLookaheadSnapshot => "env.lookahead.snapshot",
+    EnvLookaheadStep => "env.lookahead.step",
+    EnvFeaturesSetup => "env.features.setup",
+    EnvFeaturesSortFrontiers => "env.features.sort_frontiers",
+    EnvFeaturesConnectionReachability => "env.features.connection_reachability",
+    EnvFeaturesFrontierNeighbor => "env.features.frontier_neighbor",
+    EnvFeaturesFrontierNeighborFlags => "env.features.frontier_neighbor_flags",
+    EnvFeaturesRoomPositionClone => "env.features.room_position_clone",
+    EnvFeaturesOutput => "env.features.output",
+    EnvFeaturesApplyCandidate => "env.features.apply_candidate",
+}
 
 static PROFILE_ENABLED: AtomicBool = AtomicBool::new(false);
 static PROFILE_COUNTS: [AtomicU64; PROFILE_METRIC_COUNT] =
@@ -81,8 +109,9 @@ pub(crate) fn profile_enabled() -> bool {
     PROFILE_ENABLED.load(Ordering::Relaxed)
 }
 
-pub(crate) fn record_profile_metric(metric_idx: usize, duration: Duration) {
+pub(crate) fn record_profile_metric(metric: ProfileMetric, duration: Duration) {
     if PROFILE_ENABLED.load(Ordering::Relaxed) {
+        let metric_idx = metric.idx();
         PROFILE_COUNTS[metric_idx].fetch_add(1, Ordering::Relaxed);
         PROFILE_NANOS[metric_idx].fetch_add(
             duration.as_nanos().min(u128::from(u64::MAX)) as u64,
@@ -96,19 +125,20 @@ pub fn set_profile_enabled(enabled: bool) {
 }
 
 pub fn reset_profile() {
-    for metric_idx in 0..PROFILE_METRIC_COUNT {
+    for metric in ProfileMetric::ALL {
+        let metric_idx = metric.idx();
         PROFILE_COUNTS[metric_idx].store(0, Ordering::Relaxed);
         PROFILE_NANOS[metric_idx].store(0, Ordering::Relaxed);
     }
 }
 
 pub fn profile_report() -> Vec<(String, u64, u64)> {
-    PROFILE_METRIC_NAMES
+    ProfileMetric::ALL
         .iter()
-        .enumerate()
-        .map(|(metric_idx, name)| {
+        .map(|&metric| {
+            let metric_idx = metric.idx();
             (
-                (*name).to_string(),
+                metric.name().to_string(),
                 PROFILE_COUNTS[metric_idx].load(Ordering::Relaxed),
                 PROFILE_NANOS[metric_idx].load(Ordering::Relaxed),
             )
@@ -340,23 +370,33 @@ enum WorkerCommand {
 }
 
 impl WorkerCommand {
-    fn profile_metric_idx(&self) -> Option<usize> {
+    fn profile_metric(&self) -> Option<ProfileMetric> {
         match self {
-            WorkerCommand::Clear => Some(0),
-            WorkerCommand::Finish => Some(1),
-            WorkerCommand::Step { .. } => Some(2),
-            WorkerCommand::GetCandidatesWithOutcomes { .. } => Some(3),
-            WorkerCommand::GetActions { .. } => Some(4),
-            WorkerCommand::GetOutcomes { .. } => Some(5),
-            WorkerCommand::GetOutcomesAfterCandidates { .. } => Some(5),
-            WorkerCommand::GetDoorMatchCounts { .. } => Some(6),
-            WorkerCommand::GetDoorMatches { .. } => Some(7),
-            WorkerCommand::GetFeatures { .. } => Some(8),
-            WorkerCommand::PackFeatures { .. } => Some(12),
-            WorkerCommand::PackSparseFeatures { .. } => Some(12),
-            WorkerCommand::StepKnown { .. } => Some(20),
-            WorkerCommand::GetProposalCandidateMask { .. } => Some(21),
-            WorkerCommand::GetCandidatesFromProposals { .. } => Some(22),
+            WorkerCommand::Clear => Some(ProfileMetric::WorkerClear),
+            WorkerCommand::Finish => Some(ProfileMetric::WorkerFinish),
+            WorkerCommand::Step { .. } => Some(ProfileMetric::WorkerStep),
+            WorkerCommand::GetCandidatesWithOutcomes { .. } => {
+                Some(ProfileMetric::WorkerGetCandidatesWithOutcomes)
+            }
+            WorkerCommand::GetActions { .. } => Some(ProfileMetric::WorkerGetActions),
+            WorkerCommand::GetOutcomes { .. } => Some(ProfileMetric::WorkerGetOutcomes),
+            WorkerCommand::GetOutcomesAfterCandidates { .. } => {
+                Some(ProfileMetric::WorkerGetOutcomes)
+            }
+            WorkerCommand::GetDoorMatchCounts { .. } => {
+                Some(ProfileMetric::WorkerGetDoorMatchCounts)
+            }
+            WorkerCommand::GetDoorMatches { .. } => Some(ProfileMetric::WorkerGetDoorMatches),
+            WorkerCommand::GetFeatures { .. } => Some(ProfileMetric::WorkerGetFeatures),
+            WorkerCommand::PackFeatures { .. } => Some(ProfileMetric::WorkerPackFeatures),
+            WorkerCommand::PackSparseFeatures { .. } => Some(ProfileMetric::WorkerPackFeatures),
+            WorkerCommand::StepKnown { .. } => Some(ProfileMetric::WorkerStepKnown),
+            WorkerCommand::GetProposalCandidateMask { .. } => {
+                Some(ProfileMetric::WorkerGetProposalCandidateMask)
+            }
+            WorkerCommand::GetCandidatesFromProposals { .. } => {
+                Some(ProfileMetric::WorkerGetCandidatesFromProposals)
+            }
             WorkerCommand::Shutdown => None,
         }
     }
@@ -434,7 +474,7 @@ fn worker_loop(
 ) {
     let mut pending_features = Vec::new();
     while let Ok(command) = command_rx.recv() {
-        let profile_metric_idx = command.profile_metric_idx();
+        let profile_metric = command.profile_metric();
         let profile_start = if PROFILE_ENABLED.load(Ordering::Relaxed) {
             Some(Instant::now())
         } else {
@@ -1359,8 +1399,8 @@ fn worker_loop(
             }
             WorkerCommand::Shutdown => break,
         };
-        if let (Some(metric_idx), Some(start)) = (profile_metric_idx, profile_start) {
-            record_profile_metric(metric_idx, start.elapsed());
+        if let (Some(metric), Some(start)) = (profile_metric, profile_start) {
+            record_profile_metric(metric, start.elapsed());
         }
 
         if response_tx.send(response).is_err() {

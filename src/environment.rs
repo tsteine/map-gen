@@ -13,39 +13,12 @@ use crate::common::{
     DoorValidOutcome, DoorVariantIdx, FrontierIdx, GeometryData, GeometryIdx, GraphDistance,
     NUM_DIRS, PartIdx, RoomIdx, RoomPartIdx, get_behind_door_position,
 };
-use crate::engine::{profile_enabled, record_profile_metric};
+use crate::engine::{ProfileMetric, profile_enabled, record_profile_metric};
 use crate::scc_dag::SccDag;
 
 const NO_COMPONENT: usize = usize::MAX;
 const UNREACHABLE_DISTANCE: GraphDistance = GraphDistance::MAX;
 pub const FEATURE_FRONTIER_WIDTH: usize = 5;
-const PROFILE_STEP_PUSH_ACTION: usize = 13;
-const PROFILE_STEP_MARK_ROOM_USED: usize = 14;
-const PROFILE_STEP_COMPONENTS_EDGES: usize = 15;
-const PROFILE_STEP_OCCUPANCY: usize = 16;
-const PROFILE_STEP_MATCH_EXISTING_FRONTIERS: usize = 17;
-const PROFILE_STEP_BUILD_NEW_FRONTIER_CANDIDATES: usize = 18;
-const PROFILE_STEP_FILTER_EXISTING_FRONTIERS: usize = 19;
-const PROFILE_PROPOSAL_PRE_OUTCOMES: usize = 23;
-const PROFILE_PROPOSAL_SORT_FRONTIERS: usize = 24;
-const PROFILE_PROPOSAL_RESOLVE_ACTION: usize = 25;
-const PROFILE_PROPOSAL_APPLY_LOOKAHEAD: usize = 26;
-const PROFILE_PROPOSAL_DOOR_OUTCOMES: usize = 27;
-const PROFILE_PROPOSAL_CONNECTION_OUTCOMES: usize = 28;
-const PROFILE_PROPOSAL_FEATURES: usize = 29;
-const PROFILE_PROPOSAL_DOOR_MATCH: usize = 30;
-const PROFILE_PROPOSAL_RESTORE: usize = 31;
-const PROFILE_PROPOSAL_FALLBACK_RECOMPUTE: usize = 32;
-const PROFILE_LOOKAHEAD_SNAPSHOT: usize = 33;
-const PROFILE_LOOKAHEAD_STEP: usize = 34;
-const PROFILE_FEATURES_SETUP: usize = 35;
-const PROFILE_FEATURES_SORT_FRONTIERS: usize = 36;
-const PROFILE_FEATURES_CONNECTION_REACHABILITY: usize = 37;
-const PROFILE_FEATURES_FRONTIER_NEIGHBOR: usize = 38;
-const PROFILE_FEATURES_FRONTIER_NEIGHBOR_FLAGS: usize = 39;
-const PROFILE_FEATURES_ROOM_POSITION_CLONE: usize = 40;
-const PROFILE_FEATURES_OUTPUT: usize = 41;
-const PROFILE_FEATURES_APPLY_CANDIDATE: usize = 42;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StepMode {
@@ -133,9 +106,9 @@ fn profile_start() -> Option<Instant> {
     profile_enabled().then(Instant::now)
 }
 
-fn profile_end(metric_idx: usize, start: Option<Instant>) {
+fn profile_end(metric: ProfileMetric, start: Option<Instant>) {
     if let Some(start) = start {
-        record_profile_metric(metric_idx, start.elapsed());
+        record_profile_metric(metric, start.elapsed());
     }
 }
 
@@ -1613,7 +1586,7 @@ impl Environment {
         if mode.records_action() {
             let profile = profile_start();
             self.actions.push(action);
-            profile_end(PROFILE_STEP_PUSH_ACTION, profile);
+            profile_end(ProfileMetric::EnvStepPushAction, profile);
         }
         if self.finished {
             return;
@@ -1637,11 +1610,11 @@ impl Environment {
         if mode.updates_connection_variant_inventory() {
             self.connection_variant_unused_count[connection_variant_idx as usize] -= 1;
         }
-        profile_end(PROFILE_STEP_MARK_ROOM_USED, profile);
+        profile_end(ProfileMetric::EnvStepMarkRoomUsed, profile);
 
         let profile = profile_start();
         self.add_room_components_and_edges(action, common);
-        profile_end(PROFILE_STEP_COMPONENTS_EDGES, profile);
+        profile_end(ProfileMetric::EnvStepComponentsEdges, profile);
 
         let profile = profile_start();
         if mode.updates_occupancy() {
@@ -1653,7 +1626,7 @@ impl Environment {
                 }
             }
         }
-        profile_end(PROFILE_STEP_OCCUPANCY, profile);
+        profile_end(ProfileMetric::EnvStepOccupancy, profile);
 
         // Remove the frontiers that the new room connects to (if any),
         // and update the frontier with the new unconnected doors of the new room.
@@ -1684,7 +1657,7 @@ impl Environment {
                     self.room_part_component[p2 as usize],
                     self.room_part_component[p1 as usize],
                 );
-                profile_end(PROFILE_STEP_MATCH_EXISTING_FRONTIERS, profile);
+                profile_end(ProfileMetric::EnvStepMatchExistingFrontiers, profile);
             } else {
                 // This door is not connected to any existing frontier, so it becomes a new frontier.
                 // Check all doors with the given orientation, to list which ones could connect here.
@@ -1744,7 +1717,7 @@ impl Environment {
                             break 'door;
                         }
                     }
-                    profile_end(PROFILE_STEP_BUILD_NEW_FRONTIER_CANDIDATES, profile);
+                    profile_end(ProfileMetric::EnvStepBuildNewFrontierCandidates, profile);
                 }
                 let frontier_part = common.room_dir_door[door.direction as usize]
                     [door.dir_door_idx as usize]
@@ -1794,7 +1767,7 @@ impl Environment {
                     frontier.candidates.clear();
                 }
             }
-            profile_end(PROFILE_STEP_FILTER_EXISTING_FRONTIERS, profile);
+            profile_end(ProfileMetric::EnvStepFilterExistingFrontiers, profile);
         }
     }
 
@@ -2508,11 +2481,11 @@ impl Environment {
         debug_assert_eq!(sampled_frontier_idx.len(), sampled_door_variant_idx.len());
         let profile = profile_start();
         let pre_candidate_outcomes = self.outcomes(common);
-        profile_end(PROFILE_PROPOSAL_PRE_OUTCOMES, profile);
+        profile_end(ProfileMetric::EnvProposalPreOutcomes, profile);
 
         let profile = profile_start();
         let sorted_frontier_locations = self.sorted_frontier_locations();
-        profile_end(PROFILE_PROPOSAL_SORT_FRONTIERS, profile);
+        profile_end(ProfileMetric::EnvProposalSortFrontiers, profile);
 
         let mut clean = Vec::with_capacity(recommended_candidates);
         let mut rejected = Vec::new();
@@ -2531,10 +2504,10 @@ impl Environment {
                 frontier_idx,
                 door_variant_idx,
             ) else {
-                profile_end(PROFILE_PROPOSAL_RESOLVE_ACTION, profile);
+                profile_end(ProfileMetric::EnvProposalResolveAction, profile);
                 continue;
             };
-            profile_end(PROFILE_PROPOSAL_RESOLVE_ACTION, profile);
+            profile_end(ProfileMetric::EnvProposalResolveAction, profile);
             evaluated_count += 1;
             match self.evaluate_candidate_outcome(
                 common,
@@ -2586,7 +2559,7 @@ impl Environment {
                     (candidate, post_candidate_outcomes, door_match, features)
                 })
                 .collect::<Vec<_>>();
-            profile_end(PROFILE_PROPOSAL_FALLBACK_RECOMPUTE, profile);
+            profile_end(ProfileMetric::EnvProposalFallbackRecompute, profile);
             fallback
         } else {
             clean
@@ -2631,7 +2604,7 @@ impl Environment {
     ) -> Result<CandidateOutcome, String> {
         let profile = profile_start();
         let snapshot = self.apply_lookahead_candidate(candidate, common);
-        profile_end(PROFILE_PROPOSAL_APPLY_LOOKAHEAD, profile);
+        profile_end(ProfileMetric::EnvProposalApplyLookahead, profile);
 
         let profile = profile_start();
         let mut door_valid = Vec::with_capacity(pre_candidate_outcomes.door_valid.len());
@@ -2642,10 +2615,10 @@ impl Environment {
                 if before == DoorValidOutcome::Unknown {
                     let after = self.door_outcome(common, dir, i);
                     if after == DoorValidOutcome::Invalid {
-                        profile_end(PROFILE_PROPOSAL_DOOR_OUTCOMES, profile);
+                        profile_end(ProfileMetric::EnvProposalDoorOutcomes, profile);
                         let profile = profile_start();
                         self.restore_lookahead_candidate(common, snapshot);
-                        profile_end(PROFILE_PROPOSAL_RESTORE, profile);
+                        profile_end(ProfileMetric::EnvProposalRestore, profile);
                         return Ok(CandidateOutcome::Rejected);
                     }
                     door_valid.push(after);
@@ -2655,7 +2628,7 @@ impl Environment {
                 outcome_idx += 1;
             }
         }
-        profile_end(PROFILE_PROPOSAL_DOOR_OUTCOMES, profile);
+        profile_end(ProfileMetric::EnvProposalDoorOutcomes, profile);
 
         let profile = profile_start();
         let frontier_reachability = if self.finished {
@@ -2671,10 +2644,10 @@ impl Environment {
                 let after =
                     self.connection_outcome(common, connection_idx, frontier_reachability.as_ref());
                 if after == DoorValidOutcome::Invalid {
-                    profile_end(PROFILE_PROPOSAL_CONNECTION_OUTCOMES, profile);
+                    profile_end(ProfileMetric::EnvProposalConnectionOutcomes, profile);
                     let profile = profile_start();
                     self.restore_lookahead_candidate(common, snapshot);
-                    profile_end(PROFILE_PROPOSAL_RESTORE, profile);
+                    profile_end(ProfileMetric::EnvProposalRestore, profile);
                     return Ok(CandidateOutcome::Rejected);
                 }
                 connections_valid.push(after);
@@ -2682,14 +2655,14 @@ impl Environment {
                 connections_valid.push(before);
             }
         }
-        profile_end(PROFILE_PROPOSAL_CONNECTION_OUTCOMES, profile);
+        profile_end(ProfileMetric::EnvProposalConnectionOutcomes, profile);
 
         let toilet_valid = if pre_candidate_outcomes.toilet_valid == DoorValidOutcome::Unknown {
             let after = self.toilet_outcome(common);
             if after == DoorValidOutcome::Invalid {
                 let profile = profile_start();
                 self.restore_lookahead_candidate(common, snapshot);
-                profile_end(PROFILE_PROPOSAL_RESTORE, profile);
+                profile_end(ProfileMetric::EnvProposalRestore, profile);
                 return Ok(CandidateOutcome::Rejected);
             }
             after
@@ -2706,7 +2679,7 @@ impl Environment {
             frontier_neighbor_count,
             frontier_window_size,
         );
-        profile_end(PROFILE_PROPOSAL_FEATURES, profile);
+        profile_end(ProfileMetric::EnvProposalFeatures, profile);
         let outcomes = PreliminaryOutcomes {
             door_valid: door_valid.clone(),
             connections_valid: connections_valid.clone(),
@@ -2715,10 +2688,10 @@ impl Environment {
         };
         let profile = profile_start();
         let door_match = self.door_match_feature(common, &outcomes);
-        profile_end(PROFILE_PROPOSAL_DOOR_MATCH, profile);
+        profile_end(ProfileMetric::EnvProposalDoorMatch, profile);
         let profile = profile_start();
         self.restore_lookahead_candidate(common, snapshot);
-        profile_end(PROFILE_PROPOSAL_RESTORE, profile);
+        profile_end(ProfileMetric::EnvProposalRestore, profile);
         Ok(CandidateOutcome::Clean(outcomes, door_match, features))
     }
 
@@ -2733,11 +2706,11 @@ impl Environment {
     ) -> (PreliminaryOutcomes, Vec<i16>, Features) {
         let profile = profile_start();
         let snapshot = self.apply_lookahead_candidate(candidate, common);
-        profile_end(PROFILE_PROPOSAL_APPLY_LOOKAHEAD, profile);
+        profile_end(ProfileMetric::EnvProposalApplyLookahead, profile);
         let outcomes = self.outcomes(common);
         let profile = profile_start();
         let door_match = self.door_match_feature(common, &outcomes);
-        profile_end(PROFILE_PROPOSAL_DOOR_MATCH, profile);
+        profile_end(ProfileMetric::EnvProposalDoorMatch, profile);
         let profile = profile_start();
         let features = self.features_for_applied_candidate(
             common,
@@ -2747,10 +2720,10 @@ impl Environment {
             frontier_neighbor_count,
             frontier_window_size,
         );
-        profile_end(PROFILE_PROPOSAL_FEATURES, profile);
+        profile_end(ProfileMetric::EnvProposalFeatures, profile);
         let profile = profile_start();
         self.restore_lookahead_candidate(common, snapshot);
-        profile_end(PROFILE_PROPOSAL_RESTORE, profile);
+        profile_end(ProfileMetric::EnvProposalRestore, profile);
         (outcomes, door_match, features)
     }
 
@@ -2879,10 +2852,10 @@ impl Environment {
             graph_distance_snapshot,
             room_part_frontier_distance_cache: self.room_part_frontier_distance_cache.clone(),
         };
-        profile_end(PROFILE_LOOKAHEAD_SNAPSHOT, profile);
+        profile_end(ProfileMetric::EnvLookaheadSnapshot, profile);
         let profile = profile_start();
         self.step_for_lookahead(candidate, common);
-        profile_end(PROFILE_LOOKAHEAD_STEP, profile);
+        profile_end(ProfileMetric::EnvLookaheadStep, profile);
         snapshot
     }
 
@@ -3116,7 +3089,7 @@ impl Environment {
         } else {
             vec![]
         };
-        profile_end(PROFILE_FEATURES_SETUP, profile);
+        profile_end(ProfileMetric::EnvFeaturesSetup, profile);
 
         let profile = profile_start();
         let mut sorted_frontiers = if config.has_frontier_features() {
@@ -3125,7 +3098,7 @@ impl Environment {
             vec![]
         };
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
-        profile_end(PROFILE_FEATURES_SORT_FRONTIERS, profile);
+        profile_end(ProfileMetric::EnvFeaturesSortFrontiers, profile);
 
         let map_width = self.map_size.0 as usize;
         for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
@@ -3242,7 +3215,7 @@ impl Environment {
                 }
             }
         }
-        profile_end(PROFILE_FEATURES_CONNECTION_REACHABILITY, profile);
+        profile_end(ProfileMetric::EnvFeaturesConnectionReachability, profile);
 
         if config.frontier_neighbor {
             let profile = profile_start();
@@ -3285,7 +3258,7 @@ impl Environment {
                     }
                 }
             }
-            profile_end(PROFILE_FEATURES_FRONTIER_NEIGHBOR, profile);
+            profile_end(ProfileMetric::EnvFeaturesFrontierNeighbor, profile);
         }
         if config.frontier_neighbor_flags {
             let profile = profile_start();
@@ -3312,7 +3285,7 @@ impl Environment {
                     frontier_neighbor_pair[pair_idx] = flags;
                 }
             }
-            profile_end(PROFILE_FEATURES_FRONTIER_NEIGHBOR_FLAGS, profile);
+            profile_end(ProfileMetric::EnvFeaturesFrontierNeighborFlags, profile);
         }
         let profile = profile_start();
         let room_x = if config.room_position {
@@ -3325,7 +3298,7 @@ impl Environment {
         } else {
             vec![]
         };
-        profile_end(PROFILE_FEATURES_ROOM_POSITION_CLONE, profile);
+        profile_end(ProfileMetric::EnvFeaturesRoomPositionClone, profile);
 
         let toilet_crossed_room_idx = if config.toilet_crossed_room {
             vec![self.toilet_crossed_room_idx(common)]
@@ -3352,7 +3325,7 @@ impl Environment {
             frontier_connection_reachability,
             toilet_crossed_room_idx,
         };
-        profile_end(PROFILE_FEATURES_OUTPUT, profile);
+        profile_end(ProfileMetric::EnvFeaturesOutput, profile);
         result
     }
 
@@ -3381,7 +3354,7 @@ impl Environment {
             };
         let profile = profile_start();
         let snapshot = self.apply_feature_candidate(candidate, common);
-        profile_end(PROFILE_FEATURES_APPLY_CANDIDATE, profile);
+        profile_end(ProfileMetric::EnvFeaturesApplyCandidate, profile);
         let features = self.features_with_occupancy(
             common,
             config,
@@ -3393,7 +3366,7 @@ impl Environment {
         );
         let profile = profile_start();
         self.restore_feature_candidate(common, candidate, snapshot);
-        profile_end(PROFILE_FEATURES_APPLY_CANDIDATE, profile);
+        profile_end(ProfileMetric::EnvFeaturesApplyCandidate, profile);
         features
     }
 
