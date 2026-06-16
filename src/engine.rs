@@ -71,7 +71,7 @@ profile_metrics! {
     WorkerGetDoorMatchCounts => "worker.get_door_match_counts",
     WorkerGetDoorMatches => "worker.get_door_matches",
     WorkerGetFeatures => "worker.get_features",
-    WorkerPackSparseFeatures => "worker.pack_sparse_features",
+    WorkerPackFeatures => "worker.pack_features",
     EnvStepPushAction => "env.step.push_action",
     EnvStepMarkRoomUsed => "env.step.mark_room_used",
     EnvStepComponentsEdges => "env.step.components_edges",
@@ -326,8 +326,8 @@ enum WorkerCommand {
         environment_start: usize,
         environment_count: usize,
     },
-    PackSparseFeatures {
-        outputs: SparseFeatureOutputShards,
+    PackFeatures {
+        outputs: FeatureOutputShards,
         expected_snapshot_count: usize,
     },
     Shutdown,
@@ -350,8 +350,8 @@ impl WorkerCommand {
             }
             WorkerCommand::GetDoorMatches { .. } => Some(ProfileMetric::WorkerGetDoorMatches),
             WorkerCommand::GetFeatures { .. } => Some(ProfileMetric::WorkerGetFeatures),
-            WorkerCommand::PackSparseFeatures { .. } => {
-                Some(ProfileMetric::WorkerPackSparseFeatures)
+            WorkerCommand::PackFeatures { .. } => {
+                Some(ProfileMetric::WorkerPackFeatures)
             }
             WorkerCommand::StepKnown { .. } => Some(ProfileMetric::WorkerStepKnown),
             WorkerCommand::GetProposalCandidateMask { .. } => {
@@ -370,7 +370,7 @@ impl WorkerCommand {
 enum WorkerResponse {
     Done,
     Error(String),
-    SparseFeatureInfo(usize),
+    FeatureInfo(usize),
 }
 
 struct WorkerHandle {
@@ -408,7 +408,7 @@ impl WorkerHandle {
         match self.recv()? {
             WorkerResponse::Done => Ok(()),
             WorkerResponse::Error(err) => Err(PyRuntimeError::new_err(err)),
-            WorkerResponse::SparseFeatureInfo(_) => Err(PyRuntimeError::new_err(
+            WorkerResponse::FeatureInfo(_) => Err(PyRuntimeError::new_err(
                 "engine worker thread returned unexpected feature info",
             )),
         }
@@ -764,7 +764,7 @@ fn worker_loop(
                 }
                 match consistency_error {
                     Some(err) => WorkerResponse::Error(err),
-                    None => WorkerResponse::SparseFeatureInfo(
+                    None => WorkerResponse::FeatureInfo(
                         pending_features
                             .iter()
                             .map(|features| features.frontier.len() / FEATURE_FRONTIER_WIDTH)
@@ -1062,14 +1062,14 @@ fn worker_loop(
                         )
                     })
                     .collect();
-                WorkerResponse::SparseFeatureInfo(
+                WorkerResponse::FeatureInfo(
                     pending_features
                         .iter()
                         .map(|features| features.frontier.len() / FEATURE_FRONTIER_WIDTH)
                         .sum(),
                 )
             }
-            WorkerCommand::PackSparseFeatures {
+            WorkerCommand::PackFeatures {
                 outputs,
                 expected_snapshot_count,
             } => {
@@ -1084,7 +1084,7 @@ fn worker_loop(
                     for (idx, features) in pending_features.drain(..).enumerate() {
                         outputs.write_features(idx, &features);
                     }
-                    WorkerResponse::SparseFeatureInfo(outputs.sparse_row_count)
+                    WorkerResponse::FeatureInfo(outputs.frontier_row_count)
                 }
             }
             WorkerCommand::Shutdown => break,
@@ -1162,13 +1162,13 @@ fn collect_feature_info(
     sent_workers: Vec<usize>,
     mut first_error: Option<PyErr>,
 ) -> PyResult<(usize, Vec<usize>)> {
-    let mut sparse_row_count = 0;
-    let mut worker_sparse_row_counts = vec![0; workers.len()];
+    let mut frontier_row_count = 0;
+    let mut worker_frontier_row_counts = vec![0; workers.len()];
     for worker_idx in sent_workers {
         match workers[worker_idx].recv() {
-            Ok(WorkerResponse::SparseFeatureInfo(worker_sparse_row_count)) => {
-                sparse_row_count += worker_sparse_row_count;
-                worker_sparse_row_counts[worker_idx] = worker_sparse_row_count;
+            Ok(WorkerResponse::FeatureInfo(worker_frontier_row_count)) => {
+                frontier_row_count += worker_frontier_row_count;
+                worker_frontier_row_counts[worker_idx] = worker_frontier_row_count;
             }
             Ok(WorkerResponse::Done) => set_first_error(
                 &mut first_error,
@@ -1184,7 +1184,7 @@ fn collect_feature_info(
     if let Some(err) = first_error {
         Err(err)
     } else {
-        Ok((sparse_row_count, worker_sparse_row_counts))
+        Ok((frontier_row_count, worker_frontier_row_counts))
     }
 }
 
@@ -1252,11 +1252,11 @@ pub struct EpisodeOutcomes {
 }
 
 #[pyclass(module = "map_gen")]
-pub struct SparseFeatureRequirements {
+pub struct FeatureRequirements {
     #[pyo3(get)]
-    sparse_row_count: usize,
+    frontier_row_count: usize,
     #[pyo3(get)]
-    worker_sparse_row_counts: Vec<usize>,
+    worker_frontier_row_counts: Vec<usize>,
 }
 
 #[pyclass(module = "map_gen")]
@@ -1283,7 +1283,7 @@ pub struct ProposalCandidateBuffers {
 }
 
 #[pyclass(module = "map_gen")]
-pub struct SparseFeatureBuffers {
+pub struct FeatureBuffers {
     #[pyo3(get)]
     environment_count: usize,
     #[pyo3(get)]
@@ -1291,9 +1291,9 @@ pub struct SparseFeatureBuffers {
     #[pyo3(get)]
     environment_start: usize,
     #[pyo3(get)]
-    sparse_row_count: usize,
+    frontier_row_count: usize,
     #[pyo3(get)]
-    worker_sparse_row_counts: Vec<usize>,
+    worker_frontier_row_counts: Vec<usize>,
     inventory: Py<PyArray2<u8>>,
     out_room_x: Py<PyArray2<Coord>>,
     out_room_y: Py<PyArray2<Coord>>,
@@ -1342,15 +1342,15 @@ impl ProposalCandidateBuffers {
 }
 
 #[pymethods]
-impl SparseFeatureBuffers {
+impl FeatureBuffers {
     #[new]
     fn new(fields: &Bound<'_, PyDict>) -> PyResult<Self> {
         Ok(Self {
             environment_count: required_py_field!(fields, "environment_count"),
             candidate_count: required_py_field!(fields, "candidate_count"),
             environment_start: required_py_field!(fields, "environment_start"),
-            sparse_row_count: required_py_field!(fields, "sparse_row_count"),
-            worker_sparse_row_counts: required_py_field!(fields, "worker_sparse_row_counts"),
+            frontier_row_count: required_py_field!(fields, "frontier_row_count"),
+            worker_frontier_row_counts: required_py_field!(fields, "worker_frontier_row_counts"),
             inventory: required_py_field!(fields, "inventory"),
             out_room_x: required_py_field!(fields, "room_x"),
             out_room_y: required_py_field!(fields, "room_y"),
@@ -1713,7 +1713,7 @@ impl FrontierFeatureOutputSlices<'_> {
     }
 }
 
-struct SparseFeatureOutputShards {
+struct FeatureOutputShards {
     global: GlobalFeatureOutputShards,
     frontier_rows: FrontierFeatureOutputShards,
     row_snapshot_idx: OutputShard<i64>,
@@ -1721,39 +1721,39 @@ struct SparseFeatureOutputShards {
     snapshot_start: usize,
 }
 
-struct SparseFeatureOutputSlices<'a> {
+struct FeatureOutputSlices<'a> {
     global: GlobalFeatureOutputSlices<'a>,
     frontier_rows: FrontierFeatureOutputSlices<'a>,
     row_snapshot_idx: &'a mut [i64],
     row_frontier_idx: &'a mut [FrontierIdx],
     snapshot_start: usize,
-    sparse_row_count: usize,
+    frontier_row_count: usize,
 }
 
-impl SparseFeatureOutputShards {
-    unsafe fn into_slices<'a>(self) -> SparseFeatureOutputSlices<'a> {
-        SparseFeatureOutputSlices {
+impl FeatureOutputShards {
+    unsafe fn into_slices<'a>(self) -> FeatureOutputSlices<'a> {
+        FeatureOutputSlices {
             global: unsafe { self.global.into_slices() },
             frontier_rows: unsafe { self.frontier_rows.into_slices() },
             row_snapshot_idx: unsafe { self.row_snapshot_idx.into_mut_slice() },
             row_frontier_idx: unsafe { self.row_frontier_idx.into_mut_slice() },
             snapshot_start: self.snapshot_start,
-            sparse_row_count: 0,
+            frontier_row_count: 0,
         }
     }
 }
 
-impl SparseFeatureOutputSlices<'_> {
+impl FeatureOutputSlices<'_> {
     fn write_features(&mut self, snapshot_idx: usize, features: &Features) {
         self.global.write_features(snapshot_idx, features);
         let frontier_count = features.frontier.len() / FEATURE_FRONTIER_WIDTH;
         for frontier_idx in 0..frontier_count {
-            let sparse_row_idx = self.sparse_row_count;
-            self.row_snapshot_idx[sparse_row_idx] = (self.snapshot_start + snapshot_idx) as i64;
-            self.row_frontier_idx[sparse_row_idx] = frontier_idx as FrontierIdx;
+            let frontier_row_idx = self.frontier_row_count;
+            self.row_snapshot_idx[frontier_row_idx] = (self.snapshot_start + snapshot_idx) as i64;
+            self.row_frontier_idx[frontier_row_idx] = frontier_idx as FrontierIdx;
             self.frontier_rows
-                .write_frontier_row(sparse_row_idx, features, frontier_idx);
-            self.sparse_row_count += 1;
+                .write_frontier_row(frontier_row_idx, features, frontier_idx);
+            self.frontier_row_count += 1;
         }
     }
 }
@@ -2033,7 +2033,7 @@ mod tests {
     }
 
     #[test]
-    fn sparse_feature_writer_keeps_frontier_neighbors_snapshot_local() {
+    fn feature_writer_keeps_frontier_neighbors_snapshot_local() {
         let features = Features {
             frontier: vec![1, 0, 0, 0, 0, 1, 1, 0, 0, 0],
             frontier_neighbor: vec![1, 0],
@@ -2044,7 +2044,7 @@ mod tests {
         let mut row_snapshot_idx = vec![-1; 4];
         let mut row_frontier_idx = vec![-1; 4];
 
-        let outputs = SparseFeatureOutputShards {
+        let outputs = FeatureOutputShards {
             global: empty_global_feature_output_shards(),
             frontier_rows: FrontierFeatureOutputShards {
                 frontier: OutputShard::from_slice(&mut frontier),
@@ -2240,7 +2240,7 @@ impl EnvironmentGroup {
         &mut self,
         py: Python<'py>,
         buffers: PyRef<'py, ProposalCandidateBuffers>,
-    ) -> PyResult<SparseFeatureRequirements> {
+    ) -> PyResult<FeatureRequirements> {
         if self.action_count == 0 {
             return Err(PyValueError::new_err(
                 "pack_candidates_from_proposals_into requires step_initial to be called first",
@@ -2437,7 +2437,7 @@ impl EnvironmentGroup {
         let mut worker_evaluated_counts = vec![0; self.num_environments];
         let mut worker_rejected_counts = vec![0; self.num_environments];
 
-        let (sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
+        let (frontier_row_count, worker_frontier_row_counts) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -2520,9 +2520,9 @@ impl EnvironmentGroup {
 
             collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
-        let sparse_row_count =
-            sparse_row_count * usize::from(self.features.has_frontier_features());
-        let worker_sparse_row_counts = worker_sparse_row_counts
+        let frontier_row_count =
+            frontier_row_count * usize::from(self.features.has_frontier_features());
+        let worker_frontier_row_counts = worker_frontier_row_counts
             .into_iter()
             .map(|count| count * usize::from(self.features.has_frontier_features()))
             .collect::<Vec<_>>();
@@ -2546,9 +2546,9 @@ impl EnvironmentGroup {
             *out = count as i64;
         }
 
-        Ok(SparseFeatureRequirements {
-            sparse_row_count,
-            worker_sparse_row_counts,
+        Ok(FeatureRequirements {
+            frontier_row_count,
+            worker_frontier_row_counts,
         })
     }
 
@@ -2911,12 +2911,12 @@ impl EnvironmentGroup {
     }
 
     #[pyo3(signature = (environment_start=0, environment_count=None))]
-    fn get_sparse_feature_requirements<'py>(
+    fn get_feature_requirements<'py>(
         &self,
         py: Python<'py>,
         environment_start: usize,
         environment_count: Option<usize>,
-    ) -> PyResult<SparseFeatureRequirements> {
+    ) -> PyResult<FeatureRequirements> {
         let Some(remaining_environments) = self.num_environments.checked_sub(environment_start)
         else {
             return Err(PyValueError::new_err(
@@ -2929,7 +2929,7 @@ impl EnvironmentGroup {
                 "feature range must fit within the environment group",
             ));
         }
-        let (sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
+        let (frontier_row_count, worker_frontier_row_counts) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -2952,28 +2952,28 @@ impl EnvironmentGroup {
             }
             collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
-        let sparse_row_count =
-            sparse_row_count * usize::from(self.features.has_frontier_features());
-        let worker_sparse_row_counts = worker_sparse_row_counts
+        let frontier_row_count =
+            frontier_row_count * usize::from(self.features.has_frontier_features());
+        let worker_frontier_row_counts = worker_frontier_row_counts
             .into_iter()
             .map(|count| count * usize::from(self.features.has_frontier_features()))
             .collect::<Vec<_>>();
-        Ok(SparseFeatureRequirements {
-            sparse_row_count,
-            worker_sparse_row_counts,
+        Ok(FeatureRequirements {
+            frontier_row_count,
+            worker_frontier_row_counts,
         })
     }
 
-    fn pack_sparse_features_into<'py>(
+    fn pack_features_into<'py>(
         &self,
         py: Python<'py>,
-        buffers: PyRef<'py, SparseFeatureBuffers>,
+        buffers: PyRef<'py, FeatureBuffers>,
     ) -> PyResult<()> {
         let environment_count = buffers.environment_count;
         let candidate_count = buffers.candidate_count;
         let environment_start = buffers.environment_start;
-        let sparse_row_count = buffers.sparse_row_count;
-        let worker_sparse_row_counts = &buffers.worker_sparse_row_counts;
+        let frontier_row_count = buffers.frontier_row_count;
+        let worker_frontier_row_counts = &buffers.worker_frontier_row_counts;
         let mut inventory = buffers.inventory.bind(py).readwrite();
         let mut out_room_x = buffers.out_room_x.bind(py).readwrite();
         let mut out_room_y = buffers.out_room_y.bind(py).readwrite();
@@ -3063,16 +3063,16 @@ impl EnvironmentGroup {
             || room_part_frontier_distance_shape[0] < snapshot_count
             || connection_reachability_shape[0] < snapshot_count
             || toilet_crossed_room_shape[0] < snapshot_count
-            || frontier_shape[0] < sparse_row_count
-            || frontier_occupancy_shape[0] < sparse_row_count
-            || frontier_neighbor_shape[0] < sparse_row_count
-            || frontier_neighbor_pair_shape[0] < sparse_row_count
-            || frontier_connection_reachability_shape[0] < sparse_row_count
-            || row_snapshot_idx_shape[0] < sparse_row_count
-            || row_frontier_idx_shape[0] < sparse_row_count
+            || frontier_shape[0] < frontier_row_count
+            || frontier_occupancy_shape[0] < frontier_row_count
+            || frontier_neighbor_shape[0] < frontier_row_count
+            || frontier_neighbor_pair_shape[0] < frontier_row_count
+            || frontier_connection_reachability_shape[0] < frontier_row_count
+            || row_snapshot_idx_shape[0] < frontier_row_count
+            || row_frontier_idx_shape[0] < frontier_row_count
         {
             return Err(PyValueError::new_err(
-                "sparse feature output buffer is too small",
+                "frontier feature output buffer is too small",
             ));
         }
         check_dim("inventory", inventory_shape[1], inventory_width)?;
@@ -3194,16 +3194,16 @@ impl EnvironmentGroup {
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("row_frontier_idx must be contiguous"))?;
 
-        if worker_sparse_row_counts.len() != self.workers.len() {
+        if worker_frontier_row_counts.len() != self.workers.len() {
             return Err(PyValueError::new_err(
-                "worker sparse row count length does not match worker count",
+                "worker frontier row count length does not match worker count",
             ));
         }
 
-        let (actual_sparse_row_count, _) = py.detach(|| {
+        let (actual_frontier_row_count, _) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
-            let mut sparse_row_start = 0;
+            let mut frontier_row_start = 0;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
                 let start = max(environment_start, worker.start);
                 let end = min(environment_start + environment_count, worker.end());
@@ -3212,8 +3212,8 @@ impl EnvironmentGroup {
                 }
                 let snapshot_start = (start - environment_start) * candidate_count;
                 let snapshot_count = (end - start) * candidate_count;
-                let worker_sparse_row_count = worker_sparse_row_counts[worker_idx];
-                let outputs = SparseFeatureOutputShards {
+                let worker_frontier_row_count = worker_frontier_row_counts[worker_idx];
+                let outputs = FeatureOutputShards {
                     global: GlobalFeatureOutputShards {
                         inventory: OutputShard::from_slice(
                             &mut inventory[snapshot_start * inventory_width
@@ -3279,30 +3279,30 @@ impl EnvironmentGroup {
                     },
                     frontier_rows: FrontierFeatureOutputShards {
                         frontier: OutputShard::from_slice(
-                            &mut frontier[sparse_row_start * FEATURE_FRONTIER_WIDTH
-                                ..(sparse_row_start + worker_sparse_row_count)
+                            &mut frontier[frontier_row_start * FEATURE_FRONTIER_WIDTH
+                                ..(frontier_row_start + worker_frontier_row_count)
                                     * FEATURE_FRONTIER_WIDTH],
                         ),
                         frontier_occupancy: OutputShard::from_slice(
-                            &mut frontier_occupancy[sparse_row_start * frontier_occupancy_width
-                                ..(sparse_row_start + worker_sparse_row_count)
+                            &mut frontier_occupancy[frontier_row_start * frontier_occupancy_width
+                                ..(frontier_row_start + worker_frontier_row_count)
                                     * frontier_occupancy_width],
                         ),
                         frontier_neighbor: OutputShard::from_slice(
-                            &mut frontier_neighbor[sparse_row_start * frontier_neighbor_width
-                                ..(sparse_row_start + worker_sparse_row_count)
+                            &mut frontier_neighbor[frontier_row_start * frontier_neighbor_width
+                                ..(frontier_row_start + worker_frontier_row_count)
                                     * frontier_neighbor_width],
                         ),
                         frontier_neighbor_pair: OutputShard::from_slice(
-                            &mut frontier_neighbor_pair[sparse_row_start
+                            &mut frontier_neighbor_pair[frontier_row_start
                                 * frontier_neighbor_pair_width
-                                ..(sparse_row_start + worker_sparse_row_count)
+                                ..(frontier_row_start + worker_frontier_row_count)
                                     * frontier_neighbor_pair_width],
                         ),
                         frontier_connection_reachability: OutputShard::from_slice(
-                            &mut frontier_connection_reachability[sparse_row_start
+                            &mut frontier_connection_reachability[frontier_row_start
                                 * frontier_connection_width
-                                ..(sparse_row_start + worker_sparse_row_count)
+                                ..(frontier_row_start + worker_frontier_row_count)
                                     * frontier_connection_width],
                         ),
                         frontier_neighbor_count: self.frontier_neighbor_count,
@@ -3311,15 +3311,15 @@ impl EnvironmentGroup {
                     },
                     row_snapshot_idx: OutputShard::from_slice(
                         &mut row_snapshot_idx
-                            [sparse_row_start..sparse_row_start + worker_sparse_row_count],
+                            [frontier_row_start..frontier_row_start + worker_frontier_row_count],
                     ),
                     row_frontier_idx: OutputShard::from_slice(
                         &mut row_frontier_idx
-                            [sparse_row_start..sparse_row_start + worker_sparse_row_count],
+                            [frontier_row_start..frontier_row_start + worker_frontier_row_count],
                     ),
                     snapshot_start,
                 };
-                if let Err(err) = worker.send(WorkerCommand::PackSparseFeatures {
+                if let Err(err) = worker.send(WorkerCommand::PackFeatures {
                     outputs,
                     expected_snapshot_count: snapshot_count,
                 }) {
@@ -3327,13 +3327,13 @@ impl EnvironmentGroup {
                     break;
                 }
                 sent_workers.push(worker_idx);
-                sparse_row_start += worker_sparse_row_count;
+                frontier_row_start += worker_frontier_row_count;
             }
             collect_feature_info(&self.workers, sent_workers, first_error)
         })?;
-        if actual_sparse_row_count != sparse_row_count {
+        if actual_frontier_row_count != frontier_row_count {
             return Err(PyRuntimeError::new_err(format!(
-                "sparse feature row count changed between passes: expected {sparse_row_count}, got {actual_sparse_row_count}"
+                "frontier feature row count changed between passes: expected {frontier_row_count}, got {actual_frontier_row_count}"
             )));
         }
         Ok(())

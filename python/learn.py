@@ -10,8 +10,8 @@ from env import (
     DoorMatches,
     EpisodeData,
     EpisodeOutcomes,
-    SparseFeatures,
-    SparseFeatureSlot,
+    Features,
+    FeatureSlot,
     PreliminaryOutcomes,
     ProposalData,
 )
@@ -35,7 +35,7 @@ class TrainBatchTask:
 
 @dataclass
 class FeatureTrainBatch:
-    features: SparseFeatures
+    features: Features
     proposal_frontier_idx: torch.Tensor | None
     proposal_door_variant_idx: torch.Tensor | None
     proposal_target_logits: torch.Tensor | None
@@ -337,10 +337,10 @@ def prepare_feature_batches(
                 proposal_frontier_idx = proposal_data.frontier_idx[:, step]
                 proposal_door_variant_idx = proposal_data.door_variant_idx[:, step]
                 proposal_target_logits = proposal_data.target_logits[:, step]
-            feature_slot = SparseFeatureSlot(env, pin_memory=pin_memory)
+            feature_slot = FeatureSlot(env, pin_memory=pin_memory)
             feature_batches.append(
                 FeatureTrainBatch(
-                    features=env.extract_sparse_features(
+                    features=env.extract_features(
                         feature_slot,
                         log_temperature,
                         config.features.temperature,

@@ -5,7 +5,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from env import OutputMetadata, SparseFeatures
+from env import OutputMetadata, Features
 
 if TYPE_CHECKING:
     from train_config import FeatureConfig
@@ -447,11 +447,11 @@ class FrontierModel(torch.nn.Module):
         y = y.to(torch.int64) + offset
         return embedding_x[x].to(dtype) + embedding_y[y].to(dtype)
 
-    def _global_room_position_features(self, features: SparseFeatures, dtype):
+    def _global_room_position_features(self, features: Features, dtype):
         if not self.features.global_room_position:
             return None
-        room_x = features.room_x.to(torch.int64) + COORD_OFFSET
-        room_y = features.room_y.to(torch.int64) + COORD_OFFSET
+        room_x = features.global_features.room_x.to(torch.int64) + COORD_OFFSET
+        room_y = features.global_features.room_y.to(torch.int64) + COORD_OFFSET
         room_connection_variant_idx = (
             self.room_connection_variant_idx.to(room_x.device).unsqueeze(0).expand_as(room_x)
         )
@@ -459,14 +459,14 @@ class FrontierModel(torch.nn.Module):
             self.global_room_pos_embedding_x[room_connection_variant_idx, room_x]
             + self.global_room_pos_embedding_y[room_connection_variant_idx, room_y]
         ).to(dtype)
-        placed = features.room_placed.to(dtype).unsqueeze(-1)
+        placed = features.global_features.room_placed.to(dtype).unsqueeze(-1)
         placed_count = placed.sum(dim=1).clamp_min(1)
         return (room_position * placed).sum(dim=1) / torch.sqrt(placed_count)
 
     def _pair_features(self, features, dtype):
         values = []
         if self.features.frontier_neighbor_flags:
-            flags = features.frontier_neighbor_pair
+            flags = features.frontier_features.frontier_neighbor_pair
             values.append(
                 torch.stack(
                     [
@@ -505,11 +505,11 @@ class FrontierModel(torch.nn.Module):
 
     def _lookahead_outcome_features(
         self,
-        features: SparseFeatures,
+        features: Features,
         dtype: torch.dtype,
     ) -> torch.Tensor:
         left, right, up, down = torch.split(
-            features.lookahead_door_match,
+            features.global_features.lookahead_door_match,
             [self.left_count, self.right_count, self.up_count, self.down_count],
             dim=-1,
         )
@@ -521,15 +521,15 @@ class FrontierModel(torch.nn.Module):
         )
         connection_features = torch.stack(
             [
-                (features.lookahead_connection_invalid == 0).to(dtype),
-                (features.lookahead_connection_invalid == 1).to(dtype),
+                (features.global_features.lookahead_connection_invalid == 0).to(dtype),
+                (features.global_features.lookahead_connection_invalid == 1).to(dtype),
             ],
             dim=-1,
         ).flatten(1)
         toilet_features = torch.stack(
             [
-                (features.lookahead_toilet_invalid == 0).to(dtype),
-                (features.lookahead_toilet_invalid == 1).to(dtype),
+                (features.global_features.lookahead_toilet_invalid == 0).to(dtype),
+                (features.global_features.lookahead_toilet_invalid == 1).to(dtype),
             ],
             dim=-1,
         ).flatten(1)
@@ -537,12 +537,12 @@ class FrontierModel(torch.nn.Module):
 
     def _toilet_crossed_room_features(
         self,
-        features: SparseFeatures,
+        features: Features,
         dtype: torch.dtype,
     ) -> torch.Tensor | None:
         if self.toilet_crossed_room_embedding is None:
             return None
-        crossed_room = features.toilet_crossed_room_idx.to(torch.int64)
+        crossed_room = features.global_features.toilet_crossed_room_idx.to(torch.int64)
         torch._assert(
             torch.all((crossed_room >= -1) & (crossed_room < self.num_rooms)),
             "toilet_crossed_room_idx must be -1 or a valid room index",
@@ -551,15 +551,15 @@ class FrontierModel(torch.nn.Module):
 
     def _room_part_furthest_distance_features(
         self,
-        features: SparseFeatures,
+        features: Features,
         dtype: torch.dtype,
     ) -> torch.Tensor | None:
         if self.room_part_furthest_distance_embedding is None:
             return None
         distances = torch.cat(
             [
-                features.room_part_furthest_destination,
-                features.room_part_furthest_source,
+                features.global_features.room_part_furthest_destination,
+                features.global_features.room_part_furthest_source,
             ],
             dim=-1,
         ).to(torch.int64)
@@ -567,38 +567,38 @@ class FrontierModel(torch.nn.Module):
 
     def _room_part_save_distance_features(
         self,
-        features: SparseFeatures,
+        features: Features,
         dtype: torch.dtype,
     ) -> torch.Tensor | None:
         if self.room_part_save_distance_embedding is None:
             return None
-        distances = features.room_part_save_distance.to(torch.int64)
+        distances = features.global_features.room_part_save_distance.to(torch.int64)
         return self.room_part_save_distance_embedding(distances).flatten(1).to(dtype)
 
     def _room_part_refill_distance_features(
         self,
-        features: SparseFeatures,
+        features: Features,
         dtype: torch.dtype,
     ) -> torch.Tensor | None:
         if self.room_part_refill_distance_embedding is None:
             return None
-        distances = features.room_part_refill_distance.to(torch.int64)
+        distances = features.global_features.room_part_refill_distance.to(torch.int64)
         return self.room_part_refill_distance_embedding(distances).flatten(1).to(dtype)
 
     def _room_part_frontier_distance_features(
         self,
-        features: SparseFeatures,
+        features: Features,
         dtype: torch.dtype,
     ) -> torch.Tensor | None:
         if self.room_part_frontier_distance_embedding is None:
             return None
-        distances = features.room_part_frontier_distance.to(torch.int64)
+        distances = features.global_features.room_part_frontier_distance.to(torch.int64)
         return self.room_part_frontier_distance_embedding(distances).flatten(1).to(dtype)
 
     def _relative_position_features(self, features, neighbor):
         if self.frontier_relative_pos_embedding_x is None:
             return None
-        node = features.frontier
+        node = features.frontier_features.frontier
         raw_x = node[:, 1].to(torch.int64)
         raw_y = node[:, 2].to(torch.int64)
         raw_x0, raw_x1 = raw_x.unsqueeze(1), raw_x[neighbor]
@@ -608,36 +608,36 @@ class FrontierModel(torch.nn.Module):
             raw_y1 - raw_y0,
             self.frontier_relative_pos_embedding_x,
             self.frontier_relative_pos_embedding_y,
-            self._activation_dtype(features.frontier.device),
+            self._activation_dtype(features.frontier_features.frontier.device),
             COORD_OFFSET,
         )
 
     def forward(
         self,
-        features: SparseFeatures,
+        features: Features,
         include_proposal: bool,
         return_proposal_state: bool = False,
     ):
-        # Shapes below use: s=snapshot, r=sparse frontier row, k=neighbors, e=embedding width,
+        # Shapes below use: s=snapshot, r=frontier row, k=neighbors, e=embedding width,
         # h=message hidden width.
         # node: [r, 5]
-        node = features.frontier
-        row_snapshot_idx = features.row_snapshot_idx.to(torch.int64)
-        snapshot_count = features.inventory.shape[0]
+        node = features.frontier_features.frontier
+        row_snapshot_idx = features.frontier_features.row_snapshot_idx.to(torch.int64)
+        snapshot_count = features.global_features.inventory.shape[0]
         row_count = node.shape[0]
         # numeric: [r, numeric_width]
         numeric = []
         dtype = self._activation_dtype(node.device)
         if self.features.frontier_occupancy:
             numeric.append(
-                features.frontier_occupancy.unsqueeze(-1)
+                features.frontier_features.frontier_occupancy.unsqueeze(-1)
                 .bitwise_and(self.frontier_occupancy_bits)
                 .ne(0)
                 .flatten(-2)[..., : self.frontier_window_area]
                 .to(dtype)
             )
         if self.features.frontier_connection_reachability:
-            flags = features.frontier_connection_reachability
+            flags = features.frontier_features.frontier_connection_reachability
             numeric.append(
                 torch.stack(
                     [
@@ -665,25 +665,25 @@ class FrontierModel(torch.nn.Module):
             X = X + self.kind_embedding(node[:, 4].to(torch.int64)).to(dtype)
         # if self.inventory_embedding is not None:
         #     X = X + torch.matmul(
-        #         features.inventory.to(torch.float32), self.inventory_embedding
+        #         features.global_features.inventory.to(torch.float32), self.inventory_embedding
         #     ).unsqueeze(1)
         # if self.connection_reachability_embedding is not None:
         #     X = X + self.connection_reachability_embedding(
-        #         features.connection_reachability.to(torch.float32)
+        #         features.global_features.connection_reachability.to(torch.float32)
         #     ).unsqueeze(1)
-        inventory_features = features.inventory.to(X.dtype) if self.include_inventory else None
+        inventory_features = features.global_features.inventory.to(X.dtype) if self.include_inventory else None
         connection_features = (
-            self.connection_reachability_embedding(features.connection_reachability.to(X.dtype))
+            self.connection_reachability_embedding(features.global_features.connection_reachability.to(X.dtype))
             if self.connection_reachability_embedding is not None
             else None
         )
         temperature_features = (
-            features.log_temperature.to(X.dtype).unsqueeze(-1)
+            features.global_features.log_temperature.to(X.dtype).unsqueeze(-1)
             if self.features.temperature
             else None
         )
         recommended_candidate_features = (
-            features.log_recommended_candidates.to(X.dtype).unsqueeze(-1)
+            features.global_features.log_recommended_candidates.to(X.dtype).unsqueeze(-1)
             if self.features.recommended_candidates
             else None
         )
@@ -748,7 +748,7 @@ class FrontierModel(torch.nn.Module):
             row_start_by_snapshot = row_count_by_snapshot.cumsum(0) - row_count_by_snapshot
             # pair: [r, k, pair_width], neighbor: [r, k], pair_mask: [r, k, 1]
             pair = self._pair_features(features, dtype)
-            frontier_neighbor = features.frontier_neighbor
+            frontier_neighbor = features.frontier_features.frontier_neighbor
             local_neighbor = frontier_neighbor.clamp_min(0).to(torch.int64)
             row_neighbor_count = row_count_by_snapshot[row_snapshot_idx].unsqueeze(1)
             neighbor_valid = (frontier_neighbor >= 0) & (local_neighbor < row_neighbor_count)
@@ -823,7 +823,7 @@ class FrontierModel(torch.nn.Module):
         # mean_pool, max_pool, pooled_state: [s, e]
         pooled_inputs = []
         if inventory_features is not None:
-            # pooled_inputs.append(torch.matmul(features.inventory.to(torch.float32), self.inventory_embedding))
+            # pooled_inputs.append(torch.matmul(features.global_features.inventory.to(torch.float32), self.inventory_embedding))
             pooled_inputs.append(inventory_features)
         if self.features.frontier_mask:
             pooled_inputs.extend([mean_pool, max_pool])
@@ -845,9 +845,9 @@ class FrontierModel(torch.nn.Module):
             else X.new_zeros([snapshot_count, self.embedding_width])
         )
         if self.features.room_position:
-            room_x = (features.room_x.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
-            room_y = (features.room_y.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
-            room_placed = features.room_placed.to(torch.bool).unsqueeze(1)
+            room_x = (features.global_features.room_x.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
+            room_y = (features.global_features.room_y.to(torch.int64) + COORD_OFFSET).unsqueeze(1)
+            room_placed = features.global_features.room_placed.to(torch.bool).unsqueeze(1)
         else:
             room_x = torch.full(
                 [snapshot_count, 1, self.num_rooms],
@@ -905,9 +905,9 @@ class FrontierModel(torch.nn.Module):
                 else row_snapshot_idx.new_empty([0])
             ),
             proposal_row_frontier_idx=(
-                features.row_frontier_idx
+                features.frontier_features.row_frontier_idx
                 if return_proposal_state or include_proposal
-                else features.row_frontier_idx.new_empty([0])
+                else features.frontier_features.row_frontier_idx.new_empty([0])
             ),
         )
 

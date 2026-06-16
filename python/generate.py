@@ -13,9 +13,9 @@ from env import (
     PreliminaryOutcomes,
     ProposalData,
     ProposalCandidateMask,
-    SparseFeatureRequirements,
-    SparseFeatureSlot,
-    SparseFeatures,
+    FeatureRequirements,
+    FeatureSlot,
+    Features,
     extract_candidate_features,
 )
 from model import Predictions
@@ -179,10 +179,10 @@ def compute_expected_reward(
 
 
 def transfer_features(
-    features: SparseFeatures,
+    features: Features,
     device: torch.device,
     transfer_stream: torch.cuda.Stream | None = None,
-) -> SparseFeatures:
+) -> Features:
     if transfer_stream is None or device.type != "cuda":
         return features.to(device)
     current_stream = torch.cuda.current_stream(device)
@@ -215,14 +215,14 @@ class GenerationGroup:
     env: EnvironmentGroup
     config: GenerateConfig
     step: int
-    feature_slot: SparseFeatureSlot
+    feature_slot: FeatureSlot
     candidate_slot: CandidateSlot
     previous_lookahead_outcomes: PreliminaryOutcomes | None
-    previous_proposal_scores: SparseProposalCache | None
+    previous_proposal_scores: ProposalCache | None
 
 
 @dataclass
-class SparseProposalCache:
+class ProposalCache:
     state: torch.Tensor
     row_start_idx: torch.Tensor
     row_count: torch.Tensor
@@ -237,7 +237,7 @@ class CandidateBatch:
     proposal_door_variant_idx: torch.Tensor
     reward_outcomes: PreliminaryOutcomes
     post_candidate_outcomes: PreliminaryOutcomes
-    feature_requirements: SparseFeatureRequirements
+    feature_requirements: FeatureRequirements
     stats: CandidateStats
 
     def to(self, device: torch.device, non_blocking: bool = False) -> "CandidateBatch":
@@ -259,7 +259,7 @@ class CandidateBatch:
 @dataclass
 class PreparedGenerationStep:
     candidate_batch: CandidateBatch
-    features: SparseFeatures | None
+    features: Features | None
 
 
 @dataclass
@@ -277,7 +277,7 @@ class PendingProposalStep:
 
 @dataclass
 class ProposalInputs:
-    features: SparseFeatures | None
+    features: Features | None
     mask: ProposalCandidateMask
 
 
@@ -503,7 +503,7 @@ def prepare_proposal_inputs(group: GenerationGroup) -> ProposalInputs:
         log_recommended_candidates,
     ) = state_log_inputs(group.config, environment_count)
     return ProposalInputs(
-        features=group.env.extract_sparse_features(
+        features=group.env.extract_features(
             group.feature_slot,
             log_temperature,
             group.env.engine.features.temperature,
@@ -520,7 +520,7 @@ def prepare_candidate_features(
     env: EnvironmentGroup,
     config: GenerateConfig,
     candidate_batch: CandidateBatch,
-    feature_slot: SparseFeatureSlot,
+    feature_slot: FeatureSlot,
 ) -> PreparedGenerationStep:
     candidates = candidate_batch.candidates
     if candidates.room_idx.shape[1] == 1:
@@ -572,7 +572,7 @@ def select_candidate_actions(
     model,
     candidates: Actions,
     outcomes: PreliminaryOutcomes,
-    features: SparseFeatures,
+    features: Features,
     device: torch.device,
     gpu_lock: threading.Lock,
     transfer_stream: torch.cuda.Stream | None,
@@ -679,7 +679,7 @@ def select_candidate_actions(
                 minlength=environment_count * candidate_count,
             )
             row_start_idx = row_count_by_snapshot.cumsum(0) - row_count_by_snapshot
-            selected_proposal_scores = SparseProposalCache(
+            selected_proposal_scores = ProposalCache(
                 state=preds.proposal_state,
                 row_start_idx=row_start_idx,
                 row_count=row_count_by_snapshot,
@@ -694,7 +694,7 @@ def select_candidate_actions(
 def compute_proposal_scores(
     group: GenerationGroup,
     model,
-    features: SparseFeatures,
+    features: Features,
     proposal_mask: ProposalCandidateMask,
     device: torch.device,
     gpu_lock: threading.Lock,
@@ -720,7 +720,7 @@ def compute_proposal_scores(
 def compute_cached_proposal_scores(
     group: GenerationGroup,
     model,
-    cache: SparseProposalCache,
+    cache: ProposalCache,
     proposal_mask: ProposalCandidateMask,
     device: torch.device,
 ) -> torch.Tensor:
@@ -1038,7 +1038,7 @@ def run_generation_groups(
             env=env,
             config=config,
             step=0,
-            feature_slot=SparseFeatureSlot(env, pin_memory=device.type == "cuda"),
+            feature_slot=FeatureSlot(env, pin_memory=device.type == "cuda"),
             candidate_slot=CandidateSlot(env, pin_memory=device.type == "cuda"),
             previous_lookahead_outcomes=None,
             previous_proposal_scores=None,
