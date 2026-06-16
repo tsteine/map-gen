@@ -64,10 +64,7 @@ profile_metrics! {
     WorkerGetDoorMatchCounts => "worker.get_door_match_counts",
     WorkerGetDoorMatches => "worker.get_door_matches",
     WorkerGetFeatures => "worker.get_features",
-    WorkerGetFeaturesAfterCandidatesUnused => "worker.get_features_after_candidates.unused",
-    WorkerGetSparseFeaturesAfterCandidatesUnused => "worker.get_sparse_features_after_candidates.unused",
-    WorkerGetFeatureFrontierCountAfterCandidatesUnused => "worker.get_feature_frontier_count_after_candidates.unused",
-    WorkerPackFeatures => "worker.pack_features",
+    WorkerPackSparseFeatures => "worker.pack_sparse_features",
     EnvStepPushAction => "env.step.push_action",
     EnvStepMarkRoomUsed => "env.step.mark_room_used",
     EnvStepComponentsEdges => "env.step.components_edges",
@@ -322,10 +319,6 @@ enum WorkerCommand {
         environment_start: usize,
         environment_count: usize,
     },
-    PackFeatures {
-        outputs: FeatureOutputShards,
-        expected_snapshot_count: usize,
-    },
     PackSparseFeatures {
         outputs: SparseFeatureOutputShards,
         expected_snapshot_count: usize,
@@ -350,8 +343,9 @@ impl WorkerCommand {
             }
             WorkerCommand::GetDoorMatches { .. } => Some(ProfileMetric::WorkerGetDoorMatches),
             WorkerCommand::GetFeatures { .. } => Some(ProfileMetric::WorkerGetFeatures),
-            WorkerCommand::PackFeatures { .. } => Some(ProfileMetric::WorkerPackFeatures),
-            WorkerCommand::PackSparseFeatures { .. } => Some(ProfileMetric::WorkerPackFeatures),
+            WorkerCommand::PackSparseFeatures { .. } => {
+                Some(ProfileMetric::WorkerPackSparseFeatures)
+            }
             WorkerCommand::StepKnown { .. } => Some(ProfileMetric::WorkerStepKnown),
             WorkerCommand::GetProposalCandidateMask { .. } => {
                 Some(ProfileMetric::WorkerGetProposalCandidateMask)
@@ -369,7 +363,7 @@ impl WorkerCommand {
 enum WorkerResponse {
     Done,
     Error(String),
-    FeatureInfo(usize, usize),
+    SparseFeatureInfo(usize),
 }
 
 struct WorkerHandle {
@@ -407,7 +401,7 @@ impl WorkerHandle {
         match self.recv()? {
             WorkerResponse::Done => Ok(()),
             WorkerResponse::Error(err) => Err(PyRuntimeError::new_err(err)),
-            WorkerResponse::FeatureInfo(_, _) => Err(PyRuntimeError::new_err(
+            WorkerResponse::SparseFeatureInfo(_) => Err(PyRuntimeError::new_err(
                 "engine worker thread returned unexpected feature info",
             )),
         }
@@ -763,16 +757,12 @@ fn worker_loop(
                 }
                 match consistency_error {
                     Some(err) => WorkerResponse::Error(err),
-                    None => {
-                        let frontier_count = max_feature_frontier_count(&pending_features);
-                        WorkerResponse::FeatureInfo(
-                            frontier_count,
-                            pending_features
-                                .iter()
-                                .map(|features| features.frontier.len() / FEATURE_FRONTIER_WIDTH)
-                                .sum(),
-                        )
-                    }
+                    None => WorkerResponse::SparseFeatureInfo(
+                        pending_features
+                            .iter()
+                            .map(|features| features.frontier.len() / FEATURE_FRONTIER_WIDTH)
+                            .sum(),
+                    ),
                 }
             }
             WorkerCommand::GetActions {
@@ -1065,32 +1055,12 @@ fn worker_loop(
                         )
                     })
                     .collect();
-                let frontier_count = max_feature_frontier_count(&pending_features);
-                WorkerResponse::FeatureInfo(
-                    frontier_count,
+                WorkerResponse::SparseFeatureInfo(
                     pending_features
                         .iter()
                         .map(|features| features.frontier.len() / FEATURE_FRONTIER_WIDTH)
                         .sum(),
                 )
-            }
-            WorkerCommand::PackFeatures {
-                outputs,
-                expected_snapshot_count,
-            } => {
-                if pending_features.len() != expected_snapshot_count {
-                    let actual = pending_features.len();
-                    pending_features.clear();
-                    WorkerResponse::Error(format!(
-                        "pending feature count mismatch: expected {expected_snapshot_count}, got {actual}"
-                    ))
-                } else {
-                    let mut outputs = unsafe { outputs.into_slices() };
-                    for (idx, features) in pending_features.drain(..).enumerate() {
-                        outputs.write_features(idx, &features);
-                    }
-                    WorkerResponse::Done
-                }
             }
             WorkerCommand::PackSparseFeatures {
                 outputs,
@@ -1107,7 +1077,7 @@ fn worker_loop(
                     for (idx, features) in pending_features.drain(..).enumerate() {
                         outputs.write_features(idx, &features);
                     }
-                    WorkerResponse::FeatureInfo(0, outputs.sparse_row_count)
+                    WorkerResponse::SparseFeatureInfo(outputs.sparse_row_count)
                 }
             }
             WorkerCommand::Shutdown => break,
@@ -1184,14 +1154,12 @@ fn collect_feature_info(
     workers: &[WorkerHandle],
     sent_workers: Vec<usize>,
     mut first_error: Option<PyErr>,
-) -> PyResult<(usize, usize, Vec<usize>)> {
-    let mut frontier_count = 0;
+) -> PyResult<(usize, Vec<usize>)> {
     let mut sparse_row_count = 0;
     let mut worker_sparse_row_counts = vec![0; workers.len()];
     for worker_idx in sent_workers {
         match workers[worker_idx].recv() {
-            Ok(WorkerResponse::FeatureInfo(worker_frontier_count, worker_sparse_row_count)) => {
-                frontier_count = max(frontier_count, worker_frontier_count);
+            Ok(WorkerResponse::SparseFeatureInfo(worker_sparse_row_count)) => {
                 sparse_row_count += worker_sparse_row_count;
                 worker_sparse_row_counts[worker_idx] = worker_sparse_row_count;
             }
@@ -1209,7 +1177,7 @@ fn collect_feature_info(
     if let Some(err) = first_error {
         Err(err)
     } else {
-        Ok((frontier_count, sparse_row_count, worker_sparse_row_counts))
+        Ok((sparse_row_count, worker_sparse_row_counts))
     }
 }
 
@@ -1231,14 +1199,6 @@ fn check_shape(name: &str, actual: &[usize], expected: &[usize]) -> PyResult<()>
     } else {
         Ok(())
     }
-}
-
-fn max_feature_frontier_count(features: &[Features]) -> usize {
-    features
-        .iter()
-        .map(|features| features.frontier.len() / FEATURE_FRONTIER_WIDTH)
-        .max()
-        .unwrap_or(0)
 }
 
 #[pyclass(module = "map_gen")]
@@ -1419,15 +1379,9 @@ struct FrontierFeatureOutputShards {
     frontier_neighbor: OutputShard<i16>,
     frontier_neighbor_pair: OutputShard<u8>,
     frontier_connection_reachability: OutputShard<u8>,
-    frontier_count: usize,
     frontier_neighbor_count: usize,
     connection_count: usize,
     frontier_window_size: usize,
-}
-
-struct FeatureOutputShards {
-    global: GlobalFeatureOutputShards,
-    frontier: FrontierFeatureOutputShards,
 }
 
 struct GlobalFeatureOutputSlices<'a> {
@@ -1458,15 +1412,9 @@ struct FrontierFeatureOutputSlices<'a> {
     frontier_neighbor: &'a mut [i16],
     frontier_neighbor_pair: &'a mut [u8],
     frontier_connection_reachability: &'a mut [u8],
-    frontier_count: usize,
     frontier_neighbor_count: usize,
     connection_count: usize,
     frontier_window_size: usize,
-}
-
-struct FeatureOutputSlices<'a> {
-    global: GlobalFeatureOutputSlices<'a>,
-    frontier: FrontierFeatureOutputSlices<'a>,
 }
 
 impl GlobalFeatureOutputShards {
@@ -1509,19 +1457,9 @@ impl FrontierFeatureOutputShards {
             frontier_connection_reachability: unsafe {
                 self.frontier_connection_reachability.into_mut_slice()
             },
-            frontier_count: self.frontier_count,
             frontier_neighbor_count: self.frontier_neighbor_count,
             connection_count: self.connection_count,
             frontier_window_size: self.frontier_window_size,
-        }
-    }
-}
-
-impl FeatureOutputShards {
-    unsafe fn into_slices<'a>(self) -> FeatureOutputSlices<'a> {
-        FeatureOutputSlices {
-            global: unsafe { self.global.into_slices() },
-            frontier: unsafe { self.frontier.into_slices() },
         }
     }
 }
@@ -1595,47 +1533,6 @@ impl GlobalFeatureOutputSlices<'_> {
 }
 
 impl FrontierFeatureOutputSlices<'_> {
-    fn write_features(&mut self, idx: usize, features: &Features) {
-        fn copy_row<T: Copy>(dst: &mut [T], row: &[T], idx: usize, stride: usize) {
-            if row.is_empty() {
-                return;
-            }
-            dst[idx * stride..idx * stride + row.len()].copy_from_slice(row);
-        }
-
-        copy_row(
-            &mut self.frontier,
-            &features.frontier,
-            idx,
-            self.frontier_count * FEATURE_FRONTIER_WIDTH,
-        );
-        copy_row(
-            &mut self.frontier_occupancy,
-            &features.frontier_occupancy,
-            idx,
-            self.frontier_count
-                * (self.frontier_window_size * self.frontier_window_size).div_ceil(8),
-        );
-        copy_row(
-            &mut self.frontier_neighbor,
-            &features.frontier_neighbor,
-            idx,
-            self.frontier_count * self.frontier_neighbor_count,
-        );
-        copy_row(
-            &mut self.frontier_neighbor_pair,
-            &features.frontier_neighbor_pair,
-            idx,
-            self.frontier_count * self.frontier_neighbor_count,
-        );
-        copy_row(
-            &mut self.frontier_connection_reachability,
-            &features.frontier_connection_reachability,
-            idx,
-            self.frontier_count * self.connection_count,
-        );
-    }
-
     fn write_frontier_row(&mut self, dst_idx: usize, features: &Features, src_idx: usize) {
         fn copy_row<T: Copy>(
             dst: &mut [T],
@@ -1686,13 +1583,6 @@ impl FrontierFeatureOutputSlices<'_> {
             src_idx,
             self.connection_count,
         );
-    }
-}
-
-impl FeatureOutputSlices<'_> {
-    fn write_features(&mut self, idx: usize, features: &Features) {
-        self.global.write_features(idx, features);
-        self.frontier.write_features(idx, features);
     }
 }
 
@@ -2009,7 +1899,6 @@ mod tests {
             frontier_neighbor: OutputShard::empty(),
             frontier_neighbor_pair: OutputShard::empty(),
             frontier_connection_reachability: OutputShard::empty(),
-            frontier_count: 0,
             frontier_neighbor_count: 1,
             connection_count: 0,
             frontier_window_size: 1,
@@ -2033,7 +1922,6 @@ mod tests {
             frontier_rows: FrontierFeatureOutputShards {
                 frontier: OutputShard::from_slice(&mut frontier),
                 frontier_neighbor: OutputShard::from_slice(&mut frontier_neighbor),
-                frontier_count: 1,
                 ..empty_frontier_feature_output_shards()
             },
             row_snapshot_idx: OutputShard::from_slice(&mut row_snapshot_idx),
@@ -2422,91 +2310,89 @@ impl EnvironmentGroup {
         let mut worker_evaluated_counts = vec![0; self.num_environments];
         let mut worker_rejected_counts = vec![0; self.num_environments];
 
-        let (_feature_frontier_count, sparse_row_count, worker_sparse_row_counts) =
-            py.detach(|| {
-                let mut sent_workers = Vec::with_capacity(self.workers.len());
-                let mut first_error = None;
-                for (worker_idx, worker) in self.workers.iter().enumerate() {
-                    let output_start = worker.start * recommended_candidates;
-                    let output_end = worker.end() * recommended_candidates;
-                    let shortlist_start = worker.start * shortlist_candidates;
-                    let shortlist_end = worker.end() * shortlist_candidates;
-                    let pre_door_output_start = worker.start * door_outcome_count;
-                    let pre_door_output_end =
-                        pre_door_output_start + worker.len * door_outcome_count;
-                    let pre_connection_output_start = worker.start * connection_outcome_count;
-                    let pre_connection_output_end =
-                        pre_connection_output_start + worker.len * connection_outcome_count;
-                    let door_output_start = output_start * door_outcome_count;
-                    let door_output_end = output_end * door_outcome_count;
-                    let connection_output_start = output_start * connection_outcome_count;
-                    let connection_output_end = output_end * connection_outcome_count;
-                    let door_match_output_start = output_start * door_outcome_count;
-                    let door_match_output_end =
-                        door_match_output_start + (output_end - output_start) * door_outcome_count;
-                    if let Err(err) = worker.send(WorkerCommand::GetCandidatesFromProposals {
-                        recommended_candidates,
-                        shortlist_candidates,
-                        sampled_frontier_idx: InputShard::from_slice(
-                            &sampled_frontier_idx[shortlist_start..shortlist_end],
-                        ),
-                        sampled_door_variant_idx: InputShard::from_slice(
-                            &sampled_door_variant_idx[shortlist_start..shortlist_end],
-                        ),
-                        room_idx: OutputShard::from_slice(&mut room_idx[output_start..output_end]),
-                        room_x: OutputShard::from_slice(&mut room_x[output_start..output_end]),
-                        room_y: OutputShard::from_slice(&mut room_y[output_start..output_end]),
-                        proposal_frontier_idx: OutputShard::from_slice(
-                            &mut proposal_frontier_idx[output_start..output_end],
-                        ),
-                        proposal_door_variant_idx: OutputShard::from_slice(
-                            &mut proposal_door_variant_idx[output_start..output_end],
-                        ),
-                        frontier_neighbor_algorithm: self.frontier_neighbor_algorithm,
-                        frontier_neighbor_count: self.frontier_neighbor_count,
-                        frontier_window_size: self.frontier_window_size,
-                        door_outcome_count,
-                        connection_outcome_count,
-                        pre_door_valid: OutputShard::from_slice(
-                            &mut pre_door_valid[pre_door_output_start..pre_door_output_end],
-                        ),
-                        pre_connections_valid: OutputShard::from_slice(
-                            &mut pre_connections_valid
-                                [pre_connection_output_start..pre_connection_output_end],
-                        ),
-                        pre_toilet_valid: OutputShard::from_slice(
-                            &mut pre_toilet_valid[worker.start..worker.end()],
-                        ),
-                        door_valid: OutputShard::from_slice(
-                            &mut door_valid[door_output_start..door_output_end],
-                        ),
-                        connections_valid: OutputShard::from_slice(
-                            &mut connections_valid[connection_output_start..connection_output_end],
-                        ),
-                        toilet_valid: OutputShard::from_slice(
-                            &mut toilet_valid[output_start..output_end],
-                        ),
-                        door_match: OutputShard::from_slice(
-                            &mut door_match[door_match_output_start..door_match_output_end],
-                        ),
-                        clean_counts: OutputShard::from_slice(
-                            &mut worker_clean_counts[worker.start..worker.end()],
-                        ),
-                        evaluated_counts: OutputShard::from_slice(
-                            &mut worker_evaluated_counts[worker.start..worker.end()],
-                        ),
-                        rejected_counts: OutputShard::from_slice(
-                            &mut worker_rejected_counts[worker.start..worker.end()],
-                        ),
-                    }) {
-                        set_first_error(&mut first_error, err);
-                        break;
-                    }
-                    sent_workers.push(worker_idx);
+        let (sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
+            let mut sent_workers = Vec::with_capacity(self.workers.len());
+            let mut first_error = None;
+            for (worker_idx, worker) in self.workers.iter().enumerate() {
+                let output_start = worker.start * recommended_candidates;
+                let output_end = worker.end() * recommended_candidates;
+                let shortlist_start = worker.start * shortlist_candidates;
+                let shortlist_end = worker.end() * shortlist_candidates;
+                let pre_door_output_start = worker.start * door_outcome_count;
+                let pre_door_output_end = pre_door_output_start + worker.len * door_outcome_count;
+                let pre_connection_output_start = worker.start * connection_outcome_count;
+                let pre_connection_output_end =
+                    pre_connection_output_start + worker.len * connection_outcome_count;
+                let door_output_start = output_start * door_outcome_count;
+                let door_output_end = output_end * door_outcome_count;
+                let connection_output_start = output_start * connection_outcome_count;
+                let connection_output_end = output_end * connection_outcome_count;
+                let door_match_output_start = output_start * door_outcome_count;
+                let door_match_output_end =
+                    door_match_output_start + (output_end - output_start) * door_outcome_count;
+                if let Err(err) = worker.send(WorkerCommand::GetCandidatesFromProposals {
+                    recommended_candidates,
+                    shortlist_candidates,
+                    sampled_frontier_idx: InputShard::from_slice(
+                        &sampled_frontier_idx[shortlist_start..shortlist_end],
+                    ),
+                    sampled_door_variant_idx: InputShard::from_slice(
+                        &sampled_door_variant_idx[shortlist_start..shortlist_end],
+                    ),
+                    room_idx: OutputShard::from_slice(&mut room_idx[output_start..output_end]),
+                    room_x: OutputShard::from_slice(&mut room_x[output_start..output_end]),
+                    room_y: OutputShard::from_slice(&mut room_y[output_start..output_end]),
+                    proposal_frontier_idx: OutputShard::from_slice(
+                        &mut proposal_frontier_idx[output_start..output_end],
+                    ),
+                    proposal_door_variant_idx: OutputShard::from_slice(
+                        &mut proposal_door_variant_idx[output_start..output_end],
+                    ),
+                    frontier_neighbor_algorithm: self.frontier_neighbor_algorithm,
+                    frontier_neighbor_count: self.frontier_neighbor_count,
+                    frontier_window_size: self.frontier_window_size,
+                    door_outcome_count,
+                    connection_outcome_count,
+                    pre_door_valid: OutputShard::from_slice(
+                        &mut pre_door_valid[pre_door_output_start..pre_door_output_end],
+                    ),
+                    pre_connections_valid: OutputShard::from_slice(
+                        &mut pre_connections_valid
+                            [pre_connection_output_start..pre_connection_output_end],
+                    ),
+                    pre_toilet_valid: OutputShard::from_slice(
+                        &mut pre_toilet_valid[worker.start..worker.end()],
+                    ),
+                    door_valid: OutputShard::from_slice(
+                        &mut door_valid[door_output_start..door_output_end],
+                    ),
+                    connections_valid: OutputShard::from_slice(
+                        &mut connections_valid[connection_output_start..connection_output_end],
+                    ),
+                    toilet_valid: OutputShard::from_slice(
+                        &mut toilet_valid[output_start..output_end],
+                    ),
+                    door_match: OutputShard::from_slice(
+                        &mut door_match[door_match_output_start..door_match_output_end],
+                    ),
+                    clean_counts: OutputShard::from_slice(
+                        &mut worker_clean_counts[worker.start..worker.end()],
+                    ),
+                    evaluated_counts: OutputShard::from_slice(
+                        &mut worker_evaluated_counts[worker.start..worker.end()],
+                    ),
+                    rejected_counts: OutputShard::from_slice(
+                        &mut worker_rejected_counts[worker.start..worker.end()],
+                    ),
+                }) {
+                    set_first_error(&mut first_error, err);
+                    break;
                 }
+                sent_workers.push(worker_idx);
+            }
 
-                collect_feature_info(&self.workers, sent_workers, first_error)
-            })?;
+            collect_feature_info(&self.workers, sent_workers, first_error)
+        })?;
         let sparse_row_count =
             sparse_row_count * usize::from(self.features.has_frontier_features());
         let worker_sparse_row_counts = worker_sparse_row_counts
@@ -2916,7 +2802,7 @@ impl EnvironmentGroup {
                 "feature range must fit within the environment group",
             ));
         }
-        let (_, sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
+        let (sparse_row_count, worker_sparse_row_counts) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             for (worker_idx, worker) in self.workers.iter().enumerate() {
@@ -2948,373 +2834,6 @@ impl EnvironmentGroup {
         Ok(SparseFeatureRequirements {
             sparse_row_count,
             worker_sparse_row_counts,
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn pack_features_after_candidates_into<'py>(
-        &self,
-        py: Python<'py>,
-        environment_count: usize,
-        candidate_count: usize,
-        environment_start: usize,
-        frontier_count: usize,
-        mut inventory: PyReadwriteArray2<'py, u8>,
-        mut out_room_x: PyReadwriteArray2<'py, Coord>,
-        mut out_room_y: PyReadwriteArray2<'py, Coord>,
-        mut room_placed: PyReadwriteArray2<'py, u8>,
-        mut room_part_furthest_destination: PyReadwriteArray2<'py, u8>,
-        mut room_part_furthest_source: PyReadwriteArray2<'py, u8>,
-        mut room_part_save_distance: PyReadwriteArray2<'py, u8>,
-        mut room_part_refill_distance: PyReadwriteArray2<'py, u8>,
-        mut room_part_frontier_distance: PyReadwriteArray2<'py, u8>,
-        mut frontier: PyReadwriteArray3<'py, i8>,
-        mut frontier_occupancy: PyReadwriteArray3<'py, u8>,
-        mut frontier_neighbor: PyReadwriteArray3<'py, i16>,
-        mut frontier_neighbor_pair: PyReadwriteArray3<'py, u8>,
-        mut connection_reachability: PyReadwriteArray2<'py, u8>,
-        mut frontier_connection_reachability: PyReadwriteArray3<'py, u8>,
-        mut toilet_crossed_room_idx: PyReadwriteArray2<'py, i16>,
-    ) -> PyResult<()> {
-        if environment_start + environment_count > self.num_environments {
-            return Err(PyValueError::new_err(
-                "candidate dimensions must fit within the environment group",
-            ));
-        }
-        let snapshot_count = environment_count * candidate_count;
-        let inventory_count = self.common_data.connection_variant_rooms.len();
-        let room_count = self.common_data.room.len();
-        let room_part_count = self.common_data.room_part.len();
-        let connection_count = self.common_data.room_connection.len();
-        let inventory_width = inventory_count * usize::from(self.features.inventory);
-        let room_width = room_count * usize::from(self.features.room_position);
-        let room_part_furthest_width =
-            room_part_count * usize::from(self.features.room_part_furthest_distance);
-        let room_part_save_distance_width =
-            room_part_count * usize::from(self.features.room_part_save_distance);
-        let room_part_refill_distance_width =
-            room_part_count * usize::from(self.features.room_part_refill_distance);
-        let room_part_frontier_distance_width =
-            room_part_count * usize::from(self.features.room_part_frontier_distance);
-        let frontier_occupancy_width = (self.frontier_window_size * self.frontier_window_size)
-            .div_ceil(8)
-            * usize::from(self.features.frontier_occupancy);
-        let frontier_neighbor_width =
-            self.frontier_neighbor_count * usize::from(self.features.frontier_neighbor);
-        let frontier_neighbor_pair_width =
-            self.frontier_neighbor_count * usize::from(self.features.frontier_neighbor_flags);
-        let connection_reachability_width =
-            connection_count * usize::from(self.features.connection_reachability);
-        let frontier_connection_width =
-            connection_count * usize::from(self.features.frontier_connection_reachability);
-        let toilet_crossed_room_width = usize::from(self.features.toilet_crossed_room);
-
-        let inventory_shape = inventory.as_array().shape().to_vec();
-        let room_x_shape = out_room_x.as_array().shape().to_vec();
-        let room_y_shape = out_room_y.as_array().shape().to_vec();
-        let room_placed_shape = room_placed.as_array().shape().to_vec();
-        let room_part_furthest_destination_shape =
-            room_part_furthest_destination.as_array().shape().to_vec();
-        let room_part_furthest_source_shape = room_part_furthest_source.as_array().shape().to_vec();
-        let room_part_save_distance_shape = room_part_save_distance.as_array().shape().to_vec();
-        let room_part_refill_distance_shape = room_part_refill_distance.as_array().shape().to_vec();
-        let room_part_frontier_distance_shape =
-            room_part_frontier_distance.as_array().shape().to_vec();
-        let frontier_shape = frontier.as_array().shape().to_vec();
-        let frontier_occupancy_shape = frontier_occupancy.as_array().shape().to_vec();
-        let frontier_neighbor_shape = frontier_neighbor.as_array().shape().to_vec();
-        let frontier_neighbor_pair_shape = frontier_neighbor_pair.as_array().shape().to_vec();
-        let connection_reachability_shape = connection_reachability.as_array().shape().to_vec();
-        let frontier_connection_reachability_shape =
-            frontier_connection_reachability.as_array().shape().to_vec();
-        let toilet_crossed_room_shape = toilet_crossed_room_idx.as_array().shape().to_vec();
-        if inventory_shape[0] < snapshot_count
-            || room_x_shape[0] < snapshot_count
-            || room_y_shape[0] < snapshot_count
-            || room_placed_shape[0] < snapshot_count
-            || room_part_furthest_destination_shape[0] < snapshot_count
-            || room_part_furthest_source_shape[0] < snapshot_count
-            || room_part_save_distance_shape[0] < snapshot_count
-            || room_part_refill_distance_shape[0] < snapshot_count
-            || room_part_frontier_distance_shape[0] < snapshot_count
-            || connection_reachability_shape[0] < snapshot_count
-            || toilet_crossed_room_shape[0] < snapshot_count
-            || frontier_shape[0] < snapshot_count
-            || frontier_occupancy_shape[0] < snapshot_count
-            || frontier_neighbor_shape[0] < snapshot_count
-            || frontier_neighbor_pair_shape[0] < snapshot_count
-            || frontier_connection_reachability_shape[0] < snapshot_count
-        {
-            return Err(PyValueError::new_err("feature output buffer is too small"));
-        }
-        check_dim("inventory", inventory_shape[1], inventory_width)?;
-        check_dim("room_x", room_x_shape[1], room_width)?;
-        check_dim("room_y", room_y_shape[1], room_width)?;
-        check_dim("room_placed", room_placed_shape[1], room_width)?;
-        check_dim(
-            "room_part_furthest_destination",
-            room_part_furthest_destination_shape[1],
-            room_part_furthest_width,
-        )?;
-        check_dim(
-            "room_part_furthest_source",
-            room_part_furthest_source_shape[1],
-            room_part_furthest_width,
-        )?;
-        check_dim(
-            "room_part_save_distance",
-            room_part_save_distance_shape[1],
-            room_part_save_distance_width,
-        )?;
-        check_dim(
-            "room_part_refill_distance",
-            room_part_refill_distance_shape[1],
-            room_part_refill_distance_width,
-        )?;
-        check_dim(
-            "room_part_frontier_distance",
-            room_part_frontier_distance_shape[1],
-            room_part_frontier_distance_width,
-        )?;
-        check_dim("frontier", frontier_shape[1], frontier_count)?;
-        check_dim("frontier", frontier_shape[2], FEATURE_FRONTIER_WIDTH)?;
-        check_dim(
-            "frontier_occupancy",
-            frontier_occupancy_shape[1],
-            frontier_count,
-        )?;
-        check_dim(
-            "frontier_occupancy",
-            frontier_occupancy_shape[2],
-            frontier_occupancy_width,
-        )?;
-        check_dim(
-            "frontier_neighbor",
-            frontier_neighbor_shape[1],
-            frontier_count,
-        )?;
-        check_dim(
-            "frontier_neighbor",
-            frontier_neighbor_shape[2],
-            frontier_neighbor_width,
-        )?;
-        check_dim(
-            "frontier_neighbor_pair",
-            frontier_neighbor_pair_shape[1],
-            frontier_count,
-        )?;
-        check_dim(
-            "frontier_neighbor_pair",
-            frontier_neighbor_pair_shape[2],
-            frontier_neighbor_pair_width,
-        )?;
-        check_dim(
-            "connection_reachability",
-            connection_reachability_shape[1],
-            connection_reachability_width,
-        )?;
-        check_dim(
-            "frontier_connection_reachability",
-            frontier_connection_reachability_shape[1],
-            frontier_count,
-        )?;
-        check_dim(
-            "frontier_connection_reachability",
-            frontier_connection_reachability_shape[2],
-            frontier_connection_width,
-        )?;
-        check_dim(
-            "toilet_crossed_room_idx",
-            toilet_crossed_room_shape[1],
-            toilet_crossed_room_width,
-        )?;
-
-        let inventory = inventory
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("inventory must be contiguous"))?;
-        let out_room_x = out_room_x
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_x must be contiguous"))?;
-        let out_room_y = out_room_y
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_y must be contiguous"))?;
-        let room_placed = room_placed
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_placed must be contiguous"))?;
-        let room_part_furthest_destination =
-            room_part_furthest_destination.as_slice_mut().map_err(|_| {
-                PyValueError::new_err("room_part_furthest_destination must be contiguous")
-            })?;
-        let room_part_furthest_source = room_part_furthest_source
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_part_furthest_source must be contiguous"))?;
-        let room_part_save_distance = room_part_save_distance
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_part_save_distance must be contiguous"))?;
-        let room_part_refill_distance = room_part_refill_distance
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_part_refill_distance must be contiguous"))?;
-        let room_part_frontier_distance = room_part_frontier_distance
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_part_frontier_distance must be contiguous"))?;
-        let frontier = frontier
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("frontier must be contiguous"))?;
-        let frontier_occupancy = frontier_occupancy
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("frontier_occupancy must be contiguous"))?;
-        let frontier_neighbor = frontier_neighbor
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("frontier_neighbor must be contiguous"))?;
-        let frontier_neighbor_pair = frontier_neighbor_pair
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("frontier_neighbor_pair must be contiguous"))?;
-        let connection_reachability = connection_reachability
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("connection_reachability must be contiguous"))?;
-        let frontier_connection_reachability = frontier_connection_reachability
-            .as_slice_mut()
-            .map_err(|_| {
-                PyValueError::new_err("frontier_connection_reachability must be contiguous")
-            })?;
-        let toilet_crossed_room_idx = toilet_crossed_room_idx
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("toilet_crossed_room_idx must be contiguous"))?;
-
-        py.detach(|| {
-            let mut sent_workers = Vec::with_capacity(self.workers.len());
-            let mut first_error = None;
-            for (worker_idx, worker) in self.workers.iter().enumerate() {
-                let start = max(environment_start, worker.start);
-                let end = min(environment_start + environment_count, worker.end());
-                if start >= end {
-                    continue;
-                }
-                let snapshot_start = (start - environment_start) * candidate_count;
-                let snapshot_count = (end - start) * candidate_count;
-                if let Err(err) = worker.send(WorkerCommand::PackFeatures {
-                    expected_snapshot_count: snapshot_count,
-                    outputs: FeatureOutputShards {
-                        global: GlobalFeatureOutputShards {
-                            inventory: OutputShard::from_slice(
-                                &mut inventory[snapshot_start * inventory_width
-                                    ..(snapshot_start + snapshot_count) * inventory_width],
-                            ),
-                            room_x: OutputShard::from_slice(
-                                &mut out_room_x[snapshot_start * room_width
-                                    ..(snapshot_start + snapshot_count) * room_width],
-                            ),
-                            room_y: OutputShard::from_slice(
-                                &mut out_room_y[snapshot_start * room_width
-                                    ..(snapshot_start + snapshot_count) * room_width],
-                            ),
-                            room_placed: OutputShard::from_slice(
-                                &mut room_placed[snapshot_start * room_width
-                                    ..(snapshot_start + snapshot_count) * room_width],
-                            ),
-                            room_part_furthest_destination: OutputShard::from_slice(
-                                &mut room_part_furthest_destination[snapshot_start
-                                    * room_part_furthest_width
-                                    ..(snapshot_start + snapshot_count) * room_part_furthest_width],
-                            ),
-                            room_part_furthest_source: OutputShard::from_slice(
-                                &mut room_part_furthest_source[snapshot_start
-                                    * room_part_furthest_width
-                                    ..(snapshot_start + snapshot_count) * room_part_furthest_width],
-                            ),
-                            room_part_save_distance: OutputShard::from_slice(
-                                &mut room_part_save_distance[snapshot_start
-                                    * room_part_save_distance_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * room_part_save_distance_width],
-                            ),
-                            room_part_refill_distance: OutputShard::from_slice(
-                                &mut room_part_refill_distance[snapshot_start
-                                    * room_part_refill_distance_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * room_part_refill_distance_width],
-                            ),
-                            room_part_frontier_distance: OutputShard::from_slice(
-                                &mut room_part_frontier_distance[snapshot_start
-                                    * room_part_frontier_distance_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * room_part_frontier_distance_width],
-                            ),
-                            connection_reachability: OutputShard::from_slice(
-                                &mut connection_reachability[snapshot_start
-                                    * connection_reachability_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * connection_reachability_width],
-                            ),
-                            toilet_crossed_room_idx: OutputShard::from_slice(
-                                &mut toilet_crossed_room_idx[snapshot_start
-                                    * toilet_crossed_room_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * toilet_crossed_room_width],
-                            ),
-                            inventory_count: inventory_width,
-                            room_count: room_width,
-                            room_part_furthest_count: room_part_furthest_width,
-                            room_part_save_distance_count: room_part_save_distance_width,
-                            room_part_refill_distance_count: room_part_refill_distance_width,
-                            room_part_frontier_distance_count: room_part_frontier_distance_width,
-                            connection_count: connection_reachability_width,
-                            toilet_crossed_room_count: toilet_crossed_room_width,
-                        },
-                        frontier: FrontierFeatureOutputShards {
-                            frontier: OutputShard::from_slice(
-                                &mut frontier[snapshot_start
-                                    * frontier_count
-                                    * FEATURE_FRONTIER_WIDTH
-                                    ..(snapshot_start + snapshot_count)
-                                        * frontier_count
-                                        * FEATURE_FRONTIER_WIDTH],
-                            ),
-                            frontier_occupancy: OutputShard::from_slice(
-                                &mut frontier_occupancy[snapshot_start
-                                    * frontier_count
-                                    * frontier_occupancy_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * frontier_count
-                                        * frontier_occupancy_width],
-                            ),
-                            frontier_neighbor: OutputShard::from_slice(
-                                &mut frontier_neighbor[snapshot_start
-                                    * frontier_count
-                                    * frontier_neighbor_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * frontier_count
-                                        * frontier_neighbor_width],
-                            ),
-                            frontier_neighbor_pair: OutputShard::from_slice(
-                                &mut frontier_neighbor_pair[snapshot_start
-                                    * frontier_count
-                                    * frontier_neighbor_pair_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * frontier_count
-                                        * frontier_neighbor_pair_width],
-                            ),
-                            frontier_connection_reachability: OutputShard::from_slice(
-                                &mut frontier_connection_reachability[snapshot_start
-                                    * frontier_count
-                                    * frontier_connection_width
-                                    ..(snapshot_start + snapshot_count)
-                                        * frontier_count
-                                        * frontier_connection_width],
-                            ),
-                            frontier_count,
-                            frontier_neighbor_count: self.frontier_neighbor_count,
-                            connection_count: frontier_connection_width,
-                            frontier_window_size: self.frontier_window_size,
-                        },
-                    },
-                }) {
-                    set_first_error(&mut first_error, err);
-                    break;
-                }
-                sent_workers.push(worker_idx);
-            }
-            wait_for_done_responses(&self.workers, sent_workers, first_error)
         })
     }
 
@@ -3549,7 +3068,7 @@ impl EnvironmentGroup {
             ));
         }
 
-        let (_, actual_sparse_row_count, _) = py.detach(|| {
+        let (actual_sparse_row_count, _) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
             let mut first_error = None;
             let mut sparse_row_start = 0;
@@ -3654,7 +3173,6 @@ impl EnvironmentGroup {
                                 ..(sparse_row_start + worker_sparse_row_count)
                                     * frontier_connection_width],
                         ),
-                        frontier_count: 1,
                         frontier_neighbor_count: self.frontier_neighbor_count,
                         connection_count: frontier_connection_width,
                         frontier_window_size: self.frontier_window_size,

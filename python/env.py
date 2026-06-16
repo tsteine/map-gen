@@ -342,41 +342,6 @@ class DoorMatches:
 
 
 @dataclass
-class Features:
-    inventory: torch.Tensor
-    room_x: torch.Tensor
-    room_y: torch.Tensor
-    room_placed: torch.Tensor
-    room_part_furthest_destination: torch.Tensor
-    room_part_furthest_source: torch.Tensor
-    room_part_save_distance: torch.Tensor
-    room_part_refill_distance: torch.Tensor
-    room_part_frontier_distance: torch.Tensor
-    log_temperature: torch.Tensor
-    log_recommended_candidates: torch.Tensor
-    lookahead_door_invalid: torch.Tensor
-    lookahead_door_match: torch.Tensor
-    lookahead_connection_invalid: torch.Tensor
-    lookahead_toilet_invalid: torch.Tensor
-    frontier: torch.Tensor
-    frontier_occupancy: torch.Tensor
-    frontier_neighbor: torch.Tensor
-    frontier_neighbor_pair: torch.Tensor
-    connection_reachability: torch.Tensor
-    frontier_connection_reachability: torch.Tensor
-    toilet_crossed_room_idx: torch.Tensor
-
-    def to(self, device: torch.device) -> "Features":
-        return Features(*(value.to(device) for value in vars(self).values()))
-
-    def flatten_candidates(self) -> "Features":
-        return Features(*(value.flatten(0, 1) for value in vars(self).values()))
-
-    def slice(self, start: int, end: int) -> "Features":
-        return Features(*(value[start:end] for value in vars(self).values()))
-
-
-@dataclass
 class SparseFeatures:
     inventory: torch.Tensor
     room_x: torch.Tensor
