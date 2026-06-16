@@ -38,7 +38,6 @@ class FeatureTrainBatch:
     features: SparseFeatures
     proposal_frontier_idx: torch.Tensor | None
     proposal_door_variant_idx: torch.Tensor | None
-    proposal_selected_candidate: torch.Tensor | None
     proposal_target_logits: torch.Tensor | None
 
 
@@ -57,7 +56,6 @@ class PreparedTrainBatch:
     missing_connect_distance: torch.Tensor
     missing_connect_distance_mask: torch.Tensor
     door_matches: DoorMatches
-    prefix_count: int
     feature_batches: list[FeatureTrainBatch]
 
 
@@ -271,12 +269,7 @@ def select_batch(
     end = start + batch_size
     return (
         episode_data.slice(start, end),
-        PreliminaryOutcomes(
-            door_invalid=outcomes.door_invalid[start:end],
-            connection_invalid=outcomes.connection_invalid[start:end],
-            toilet_invalid=outcomes.toilet_invalid[start:end],
-            door_match=outcomes.door_match[start:end],
-        ),
+        outcomes.slice(start, end),
         toilet_crossed_room_idx[start:end],
     )
 
@@ -315,7 +308,6 @@ def prepare_feature_batches(
     train_episode_data: EpisodeData,
     proposal_data: ProposalData | None,
     env,
-    num_rooms: int,
     episode_length: int,
     pin_memory: bool,
 ) -> tuple[int, list[FeatureTrainBatch]]:
@@ -346,46 +338,14 @@ def prepare_feature_batches(
                     0,
                     train_actions.room_idx.shape[0],
                 )
-                dummy_action = next_actions.room_idx >= num_rooms
-                next_lookahead_outcomes = PreliminaryOutcomes(
-                    torch.where(
-                        dummy_action[:, None],
-                        torch.full_like(next_lookahead_outcomes.door_invalid, -1),
-                        next_lookahead_outcomes.door_invalid,
-                    ),
-                    torch.where(
-                        dummy_action[:, None],
-                        torch.full_like(next_lookahead_outcomes.connection_invalid, -1),
-                        next_lookahead_outcomes.connection_invalid,
-                    ),
-                    torch.where(
-                        dummy_action,
-                        torch.full_like(next_lookahead_outcomes.toilet_invalid, -1),
-                        next_lookahead_outcomes.toilet_invalid,
-                    ),
-                    torch.where(
-                        dummy_action[:, None],
-                        torch.full_like(next_lookahead_outcomes.door_match, -1),
-                        next_lookahead_outcomes.door_match,
-                    ),
-                )
             else:
-                door_count, connection_count = env.engine.get_output_sizes()
-                environment_count = train_actions.room_idx.shape[0]
-                next_lookahead_outcomes = PreliminaryOutcomes(
-                    torch.empty([environment_count, door_count], dtype=torch.int8),
-                    torch.empty([environment_count, connection_count], dtype=torch.int8),
-                    torch.empty([environment_count], dtype=torch.int8),
-                    torch.empty([environment_count, door_count], dtype=torch.int16),
-                )
+                next_lookahead_outcomes = None
             proposal_frontier_idx = None
             proposal_door_variant_idx = None
-            proposal_selected_candidate = None
             proposal_target_logits = None
             if proposal_data is not None and step + 1 < episode_length:
                 proposal_frontier_idx = proposal_data.frontier_idx[:, step]
                 proposal_door_variant_idx = proposal_data.door_variant_idx[:, step]
-                proposal_selected_candidate = proposal_data.selected_candidate[:, step]
                 proposal_target_logits = proposal_data.target_logits[:, step]
             feature_slot = SparseFeatureSlot(env, pin_memory=pin_memory)
             feature_batches.append(
@@ -396,23 +356,17 @@ def prepare_feature_batches(
                         config.features.temperature,
                         log_recommended_candidates,
                         config.features.recommended_candidates,
-                        PreliminaryOutcomes(
-                            next_lookahead_outcomes.door_invalid,
-                            next_lookahead_outcomes.connection_invalid,
-                            next_lookahead_outcomes.toilet_invalid,
-                            next_lookahead_outcomes.door_match,
-                        ),
+                        next_lookahead_outcomes,
                         config.features.lookahead_outcomes,
                         0,
                         train_actions.room_idx.shape[0],
                     ),
                     proposal_frontier_idx,
                     proposal_door_variant_idx,
-                    proposal_selected_candidate,
                     proposal_target_logits,
                 )
             )
-    return len(feature_batches), feature_batches
+    return feature_batches
 
 
 def prepare_feature_batch(
@@ -432,15 +386,13 @@ def prepare_feature_batch(
     missing_connect_distance_mask: torch.Tensor,
     proposal_data: ProposalData | None,
     env,
-    num_rooms: int,
     episode_length: int,
 ) -> PreparedTrainBatch:
-    prefix_count, feature_batches = prepare_feature_batches(
+    feature_batches = prepare_feature_batches(
         config,
         train_episode_data,
         proposal_data,
         env,
-        num_rooms,
         episode_length,
         device.type == "cuda",
     )
@@ -459,7 +411,6 @@ def prepare_feature_batch(
         missing_connect_distance,
         missing_connect_distance_mask,
         door_matches,
-        prefix_count=prefix_count,
         feature_batches=feature_batches,
     )
 
@@ -527,7 +478,6 @@ def prepare_train_batch_task(
             missing_connect_distance_mask,
             train_proposal_data,
             env,
-            context.num_rooms,
             context.episode_length,
         )
 
@@ -536,12 +486,11 @@ def prepare_train_batch_task(
         context.config.train.episodes_per_file,
         context.config.train.hist_c,
     )
-    prefix_count, feature_batches = prepare_feature_batches(
+    feature_batches = prepare_feature_batches(
         context.config,
         replay_episode_data,
         None,
         env,
-        context.num_rooms,
         context.episode_length,
         context.device.type == "cuda",
     )
@@ -563,7 +512,6 @@ def prepare_train_batch_task(
         replay_outcomes.missing_connect_distance,
         replay_outcomes.missing_connect_distance_mask,
         replay_door_matches,
-        prefix_count=prefix_count,
         feature_batches=feature_batches,
     )
 
@@ -693,7 +641,7 @@ def train_feature_batch_backward(
     prepared_batch: PreparedTrainBatch,
     loss_scale: float,
 ) -> MainLossBreakdown:
-    if prepared_batch.prefix_count == 0:
+    if len(prepared_batch.feature_batches) == 0:
         raise RuntimeError("feature training batch has no sampled prefixes")
 
     train_outcomes = prepared_batch.outcomes
@@ -755,7 +703,7 @@ def train_feature_batch_backward(
         device=context.device,
     )
     total_loss = empty_main_loss_breakdown()
-    prefix_weight = 1.0 / prepared_batch.prefix_count
+    prefix_weight = 1.0 / len(prepared_batch.feature_batches)
 
     for feature_batch in prepared_batch.feature_batches:
         features = feature_batch.features.to(context.device)
@@ -763,7 +711,6 @@ def train_feature_batch_backward(
             prepared_batch.kind == "fresh"
             and feature_batch.proposal_frontier_idx is not None
             and feature_batch.proposal_door_variant_idx is not None
-            and feature_batch.proposal_selected_candidate is not None
             and feature_batch.proposal_target_logits is not None
         )
         with torch.amp.autocast(

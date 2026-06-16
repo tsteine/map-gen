@@ -136,6 +136,13 @@ class PreliminaryOutcomes:
             self.door_match.to(device, non_blocking=non_blocking),
         )
 
+    def slice(self, start: int, end: int) -> "PreliminaryOutcomes":
+        return PreliminaryOutcomes(
+            self.door_invalid[start:end],
+            self.connection_invalid[start:end],
+            self.toilet_invalid[start:end],
+            self.door_match[start:end],
+        )
 
 @dataclass
 class EpisodeOutcomes:
