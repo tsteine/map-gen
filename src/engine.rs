@@ -18,6 +18,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use std::cmp::{max, min};
 use std::marker::PhantomData;
+#[cfg(test)]
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -208,6 +209,7 @@ struct OutputShard<T> {
 unsafe impl<T: Send> Send for OutputShard<T> {}
 
 impl<T> OutputShard<T> {
+    #[cfg(test)]
     fn empty() -> Self {
         Self {
             ptr: NonNull::<T>::dangling().as_ptr(),
@@ -2000,7 +2002,7 @@ struct FeatureBuffers {
     toilet_crossed_room_idx: Vec<i16>,
 }
 
-struct FeatureOutputShards {
+struct GlobalFeatureOutputShards {
     inventory: OutputShard<u8>,
     room_x: OutputShard<Coord>,
     room_y: OutputShard<Coord>,
@@ -2010,12 +2012,7 @@ struct FeatureOutputShards {
     room_part_save_distance: OutputShard<u8>,
     room_part_refill_distance: OutputShard<u8>,
     room_part_frontier_distance: OutputShard<u8>,
-    frontier: OutputShard<i8>,
-    frontier_occupancy: OutputShard<u8>,
-    frontier_neighbor: OutputShard<i16>,
-    frontier_neighbor_pair: OutputShard<u8>,
     connection_reachability: OutputShard<u8>,
-    frontier_connection_reachability: OutputShard<u8>,
     toilet_crossed_room_idx: OutputShard<i16>,
     inventory_count: usize,
     room_count: usize,
@@ -2025,12 +2022,26 @@ struct FeatureOutputShards {
     room_part_frontier_distance_count: usize,
     connection_count: usize,
     toilet_crossed_room_count: usize,
+}
+
+struct FrontierFeatureOutputShards {
+    frontier: OutputShard<i8>,
+    frontier_occupancy: OutputShard<u8>,
+    frontier_neighbor: OutputShard<i16>,
+    frontier_neighbor_pair: OutputShard<u8>,
+    frontier_connection_reachability: OutputShard<u8>,
     frontier_count: usize,
     frontier_neighbor_count: usize,
+    connection_count: usize,
     frontier_window_size: usize,
 }
 
-struct FeatureOutputSlices<'a> {
+struct FeatureOutputShards {
+    global: GlobalFeatureOutputShards,
+    frontier: FrontierFeatureOutputShards,
+}
+
+struct GlobalFeatureOutputSlices<'a> {
     inventory: &'a mut [u8],
     room_x: &'a mut [Coord],
     room_y: &'a mut [Coord],
@@ -2040,12 +2051,7 @@ struct FeatureOutputSlices<'a> {
     room_part_save_distance: &'a mut [u8],
     room_part_refill_distance: &'a mut [u8],
     room_part_frontier_distance: &'a mut [u8],
-    frontier: &'a mut [i8],
-    frontier_occupancy: &'a mut [u8],
-    frontier_neighbor: &'a mut [i16],
-    frontier_neighbor_pair: &'a mut [u8],
     connection_reachability: &'a mut [u8],
-    frontier_connection_reachability: &'a mut [u8],
     toilet_crossed_room_idx: &'a mut [i16],
     inventory_count: usize,
     room_count: usize,
@@ -2055,14 +2061,28 @@ struct FeatureOutputSlices<'a> {
     room_part_frontier_distance_count: usize,
     connection_count: usize,
     toilet_crossed_room_count: usize,
+}
+
+struct FrontierFeatureOutputSlices<'a> {
+    frontier: &'a mut [i8],
+    frontier_occupancy: &'a mut [u8],
+    frontier_neighbor: &'a mut [i16],
+    frontier_neighbor_pair: &'a mut [u8],
+    frontier_connection_reachability: &'a mut [u8],
     frontier_count: usize,
     frontier_neighbor_count: usize,
+    connection_count: usize,
     frontier_window_size: usize,
 }
 
-impl FeatureOutputShards {
-    unsafe fn into_slices<'a>(self) -> FeatureOutputSlices<'a> {
-        FeatureOutputSlices {
+struct FeatureOutputSlices<'a> {
+    global: GlobalFeatureOutputSlices<'a>,
+    frontier: FrontierFeatureOutputSlices<'a>,
+}
+
+impl GlobalFeatureOutputShards {
+    unsafe fn into_slices<'a>(self) -> GlobalFeatureOutputSlices<'a> {
+        GlobalFeatureOutputSlices {
             inventory: unsafe { self.inventory.into_mut_slice() },
             room_x: unsafe { self.room_x.into_mut_slice() },
             room_y: unsafe { self.room_y.into_mut_slice() },
@@ -2076,14 +2096,7 @@ impl FeatureOutputShards {
             room_part_frontier_distance: unsafe {
                 self.room_part_frontier_distance.into_mut_slice()
             },
-            frontier: unsafe { self.frontier.into_mut_slice() },
-            frontier_occupancy: unsafe { self.frontier_occupancy.into_mut_slice() },
-            frontier_neighbor: unsafe { self.frontier_neighbor.into_mut_slice() },
-            frontier_neighbor_pair: unsafe { self.frontier_neighbor_pair.into_mut_slice() },
             connection_reachability: unsafe { self.connection_reachability.into_mut_slice() },
-            frontier_connection_reachability: unsafe {
-                self.frontier_connection_reachability.into_mut_slice()
-            },
             toilet_crossed_room_idx: unsafe { self.toilet_crossed_room_idx.into_mut_slice() },
             inventory_count: self.inventory_count,
             room_count: self.room_count,
@@ -2093,15 +2106,39 @@ impl FeatureOutputShards {
             room_part_frontier_distance_count: self.room_part_frontier_distance_count,
             connection_count: self.connection_count,
             toilet_crossed_room_count: self.toilet_crossed_room_count,
+        }
+    }
+}
+
+impl FrontierFeatureOutputShards {
+    unsafe fn into_slices<'a>(self) -> FrontierFeatureOutputSlices<'a> {
+        FrontierFeatureOutputSlices {
+            frontier: unsafe { self.frontier.into_mut_slice() },
+            frontier_occupancy: unsafe { self.frontier_occupancy.into_mut_slice() },
+            frontier_neighbor: unsafe { self.frontier_neighbor.into_mut_slice() },
+            frontier_neighbor_pair: unsafe { self.frontier_neighbor_pair.into_mut_slice() },
+            frontier_connection_reachability: unsafe {
+                self.frontier_connection_reachability.into_mut_slice()
+            },
             frontier_count: self.frontier_count,
             frontier_neighbor_count: self.frontier_neighbor_count,
+            connection_count: self.connection_count,
             frontier_window_size: self.frontier_window_size,
         }
     }
 }
 
-impl FeatureOutputSlices<'_> {
-    fn write_fixed_features(&mut self, idx: usize, features: &Features) {
+impl FeatureOutputShards {
+    unsafe fn into_slices<'a>(self) -> FeatureOutputSlices<'a> {
+        FeatureOutputSlices {
+            global: unsafe { self.global.into_slices() },
+            frontier: unsafe { self.frontier.into_slices() },
+        }
+    }
+}
+
+impl GlobalFeatureOutputSlices<'_> {
+    fn write_features(&mut self, idx: usize, features: &Features) {
         fn copy_row<T: Copy>(dst: &mut [T], row: &[T], idx: usize, stride: usize) {
             if row.is_empty() {
                 return;
@@ -2166,7 +2203,9 @@ impl FeatureOutputSlices<'_> {
             self.toilet_crossed_room_count,
         );
     }
+}
 
+impl FrontierFeatureOutputSlices<'_> {
     fn write_features(&mut self, idx: usize, features: &Features) {
         fn copy_row<T: Copy>(dst: &mut [T], row: &[T], idx: usize, stride: usize) {
             if row.is_empty() {
@@ -2175,7 +2214,6 @@ impl FeatureOutputSlices<'_> {
             dst[idx * stride..idx * stride + row.len()].copy_from_slice(row);
         }
 
-        self.write_fixed_features(idx, features);
         copy_row(
             &mut self.frontier,
             &features.frontier,
@@ -2262,17 +2300,24 @@ impl FeatureOutputSlices<'_> {
     }
 }
 
+impl FeatureOutputSlices<'_> {
+    fn write_features(&mut self, idx: usize, features: &Features) {
+        self.global.write_features(idx, features);
+        self.frontier.write_features(idx, features);
+    }
+}
+
 struct SparseFeatureOutputShards {
-    fixed: FeatureOutputShards,
-    sparse: FeatureOutputShards,
+    global: GlobalFeatureOutputShards,
+    frontier_rows: FrontierFeatureOutputShards,
     row_snapshot_idx: OutputShard<i64>,
     row_frontier_idx: OutputShard<FrontierIdx>,
     snapshot_start: usize,
 }
 
 struct SparseFeatureOutputSlices<'a> {
-    fixed: FeatureOutputSlices<'a>,
-    sparse: FeatureOutputSlices<'a>,
+    global: GlobalFeatureOutputSlices<'a>,
+    frontier_rows: FrontierFeatureOutputSlices<'a>,
     row_snapshot_idx: &'a mut [i64],
     row_frontier_idx: &'a mut [FrontierIdx],
     snapshot_start: usize,
@@ -2282,8 +2327,8 @@ struct SparseFeatureOutputSlices<'a> {
 impl SparseFeatureOutputShards {
     unsafe fn into_slices<'a>(self) -> SparseFeatureOutputSlices<'a> {
         SparseFeatureOutputSlices {
-            fixed: unsafe { self.fixed.into_slices() },
-            sparse: unsafe { self.sparse.into_slices() },
+            global: unsafe { self.global.into_slices() },
+            frontier_rows: unsafe { self.frontier_rows.into_slices() },
             row_snapshot_idx: unsafe { self.row_snapshot_idx.into_mut_slice() },
             row_frontier_idx: unsafe { self.row_frontier_idx.into_mut_slice() },
             snapshot_start: self.snapshot_start,
@@ -2294,13 +2339,13 @@ impl SparseFeatureOutputShards {
 
 impl SparseFeatureOutputSlices<'_> {
     fn write_features(&mut self, snapshot_idx: usize, features: &Features) {
-        self.fixed.write_fixed_features(snapshot_idx, features);
+        self.global.write_features(snapshot_idx, features);
         let frontier_count = features.frontier.len() / FEATURE_FRONTIER_WIDTH;
         for frontier_idx in 0..frontier_count {
             let sparse_row_idx = self.sparse_row_count;
             self.row_snapshot_idx[sparse_row_idx] = (self.snapshot_start + snapshot_idx) as i64;
             self.row_frontier_idx[sparse_row_idx] = frontier_idx as FrontierIdx;
-            self.sparse
+            self.frontier_rows
                 .write_frontier_row(sparse_row_idx, features, frontier_idx);
             self.sparse_row_count += 1;
         }
@@ -2467,89 +2512,94 @@ impl FeatureBuffers {
         let connection_start = snapshot_start * direct_connection_count;
         let toilet_crossed_room_start = snapshot_start * toilet_crossed_room_count;
         FeatureOutputShards {
-            inventory: output_shard(
-                &mut self.inventory,
-                inventory_start,
-                snapshot_count * inventory_count,
-            ),
-            room_x: output_shard(&mut self.room_x, room_start, snapshot_count * room_count),
-            room_y: output_shard(&mut self.room_y, room_start, snapshot_count * room_count),
-            room_placed: output_shard(
-                &mut self.room_placed,
-                room_start,
-                snapshot_count * room_count,
-            ),
-            room_part_furthest_destination: output_shard(
-                &mut self.room_part_furthest_destination,
-                room_part_furthest_start,
-                snapshot_count * room_part_furthest_count,
-            ),
-            room_part_furthest_source: output_shard(
-                &mut self.room_part_furthest_source,
-                room_part_furthest_start,
-                snapshot_count * room_part_furthest_count,
-            ),
-            room_part_save_distance: output_shard(
-                &mut self.room_part_save_distance,
-                room_part_save_distance_start,
-                snapshot_count * room_part_save_distance_count,
-            ),
-            room_part_refill_distance: output_shard(
-                &mut self.room_part_refill_distance,
-                room_part_refill_distance_start,
-                snapshot_count * room_part_refill_distance_count,
-            ),
-            room_part_frontier_distance: output_shard(
-                &mut self.room_part_frontier_distance,
-                room_part_frontier_distance_start,
-                snapshot_count * room_part_frontier_distance_count,
-            ),
-            frontier: output_shard(
-                &mut self.frontier,
-                frontier_start * FEATURE_FRONTIER_WIDTH,
-                snapshot_count * frontier_count * FEATURE_FRONTIER_WIDTH,
-            ),
-            frontier_occupancy: output_shard(
-                &mut self.frontier_occupancy,
-                frontier_start * packed_window_size,
-                snapshot_count * frontier_count * packed_window_size,
-            ),
-            frontier_neighbor: output_shard(
-                &mut self.frontier_neighbor,
-                frontier_start * output_neighbor_count,
-                snapshot_count * frontier_count * output_neighbor_count,
-            ),
-            frontier_neighbor_pair: output_shard(
-                &mut self.frontier_neighbor_pair,
-                frontier_start * pair_neighbor_count,
-                snapshot_count * frontier_count * pair_neighbor_count,
-            ),
-            connection_reachability: output_shard(
-                &mut self.connection_reachability,
-                connection_start,
-                snapshot_count * direct_connection_count,
-            ),
-            frontier_connection_reachability: output_shard(
-                &mut self.frontier_connection_reachability,
-                frontier_start * frontier_connection_count,
-                snapshot_count * frontier_count * frontier_connection_count,
-            ),
-            toilet_crossed_room_idx: output_shard(
-                &mut self.toilet_crossed_room_idx,
-                toilet_crossed_room_start,
-                snapshot_count * toilet_crossed_room_count,
-            ),
-            inventory_count,
-            room_count,
-            room_part_furthest_count,
-            room_part_save_distance_count,
-            room_part_refill_distance_count,
-            room_part_frontier_distance_count,
-            connection_count: direct_connection_count.max(frontier_connection_count),
-            toilet_crossed_room_count,
-            frontier_count,
-            frontier_neighbor_count,
-            frontier_window_size,
+            global: GlobalFeatureOutputShards {
+                inventory: output_shard(
+                    &mut self.inventory,
+                    inventory_start,
+                    snapshot_count * inventory_count,
+                ),
+                room_x: output_shard(&mut self.room_x, room_start, snapshot_count * room_count),
+                room_y: output_shard(&mut self.room_y, room_start, snapshot_count * room_count),
+                room_placed: output_shard(
+                    &mut self.room_placed,
+                    room_start,
+                    snapshot_count * room_count,
+                ),
+                room_part_furthest_destination: output_shard(
+                    &mut self.room_part_furthest_destination,
+                    room_part_furthest_start,
+                    snapshot_count * room_part_furthest_count,
+                ),
+                room_part_furthest_source: output_shard(
+                    &mut self.room_part_furthest_source,
+                    room_part_furthest_start,
+                    snapshot_count * room_part_furthest_count,
+                ),
+                room_part_save_distance: output_shard(
+                    &mut self.room_part_save_distance,
+                    room_part_save_distance_start,
+                    snapshot_count * room_part_save_distance_count,
+                ),
+                room_part_refill_distance: output_shard(
+                    &mut self.room_part_refill_distance,
+                    room_part_refill_distance_start,
+                    snapshot_count * room_part_refill_distance_count,
+                ),
+                room_part_frontier_distance: output_shard(
+                    &mut self.room_part_frontier_distance,
+                    room_part_frontier_distance_start,
+                    snapshot_count * room_part_frontier_distance_count,
+                ),
+                connection_reachability: output_shard(
+                    &mut self.connection_reachability,
+                    connection_start,
+                    snapshot_count * direct_connection_count,
+                ),
+                toilet_crossed_room_idx: output_shard(
+                    &mut self.toilet_crossed_room_idx,
+                    toilet_crossed_room_start,
+                    snapshot_count * toilet_crossed_room_count,
+                ),
+                inventory_count,
+                room_count,
+                room_part_furthest_count,
+                room_part_save_distance_count,
+                room_part_refill_distance_count,
+                room_part_frontier_distance_count,
+                connection_count: direct_connection_count,
+                toilet_crossed_room_count,
+            },
+            frontier: FrontierFeatureOutputShards {
+                frontier: output_shard(
+                    &mut self.frontier,
+                    frontier_start * FEATURE_FRONTIER_WIDTH,
+                    snapshot_count * frontier_count * FEATURE_FRONTIER_WIDTH,
+                ),
+                frontier_occupancy: output_shard(
+                    &mut self.frontier_occupancy,
+                    frontier_start * packed_window_size,
+                    snapshot_count * frontier_count * packed_window_size,
+                ),
+                frontier_neighbor: output_shard(
+                    &mut self.frontier_neighbor,
+                    frontier_start * output_neighbor_count,
+                    snapshot_count * frontier_count * output_neighbor_count,
+                ),
+                frontier_neighbor_pair: output_shard(
+                    &mut self.frontier_neighbor_pair,
+                    frontier_start * pair_neighbor_count,
+                    snapshot_count * frontier_count * pair_neighbor_count,
+                ),
+                frontier_connection_reachability: output_shard(
+                    &mut self.frontier_connection_reachability,
+                    frontier_start * frontier_connection_count,
+                    snapshot_count * frontier_count * frontier_connection_count,
+                ),
+                frontier_count,
+                frontier_neighbor_count,
+                connection_count: frontier_connection_count,
+                frontier_window_size,
+            },
         }
     }
 }
@@ -2791,8 +2841,8 @@ impl EnvironmentGroup {
 mod tests {
     use super::*;
 
-    fn empty_feature_output_shards() -> FeatureOutputShards {
-        FeatureOutputShards {
+    fn empty_global_feature_output_shards() -> GlobalFeatureOutputShards {
+        GlobalFeatureOutputShards {
             inventory: OutputShard::empty(),
             room_x: OutputShard::empty(),
             room_y: OutputShard::empty(),
@@ -2802,12 +2852,7 @@ mod tests {
             room_part_save_distance: OutputShard::empty(),
             room_part_refill_distance: OutputShard::empty(),
             room_part_frontier_distance: OutputShard::empty(),
-            frontier: OutputShard::empty(),
-            frontier_occupancy: OutputShard::empty(),
-            frontier_neighbor: OutputShard::empty(),
-            frontier_neighbor_pair: OutputShard::empty(),
             connection_reachability: OutputShard::empty(),
-            frontier_connection_reachability: OutputShard::empty(),
             toilet_crossed_room_idx: OutputShard::empty(),
             inventory_count: 0,
             room_count: 0,
@@ -2817,8 +2862,19 @@ mod tests {
             room_part_frontier_distance_count: 0,
             connection_count: 0,
             toilet_crossed_room_count: 0,
+        }
+    }
+
+    fn empty_frontier_feature_output_shards() -> FrontierFeatureOutputShards {
+        FrontierFeatureOutputShards {
+            frontier: OutputShard::empty(),
+            frontier_occupancy: OutputShard::empty(),
+            frontier_neighbor: OutputShard::empty(),
+            frontier_neighbor_pair: OutputShard::empty(),
+            frontier_connection_reachability: OutputShard::empty(),
             frontier_count: 0,
             frontier_neighbor_count: 1,
+            connection_count: 0,
             frontier_window_size: 1,
         }
     }
@@ -2836,12 +2892,12 @@ mod tests {
         let mut row_frontier_idx = vec![-1; 4];
 
         let outputs = SparseFeatureOutputShards {
-            fixed: empty_feature_output_shards(),
-            sparse: FeatureOutputShards {
+            global: empty_global_feature_output_shards(),
+            frontier_rows: FrontierFeatureOutputShards {
                 frontier: OutputShard::from_slice(&mut frontier),
                 frontier_neighbor: OutputShard::from_slice(&mut frontier_neighbor),
                 frontier_count: 1,
-                ..empty_feature_output_shards()
+                ..empty_frontier_feature_output_shards()
             },
             row_snapshot_idx: OutputShard::from_slice(&mut row_snapshot_idx),
             row_frontier_idx: OutputShard::from_slice(&mut row_frontier_idx),
@@ -4203,7 +4259,7 @@ impl EnvironmentGroup {
                 let snapshot_count = end - start;
                 let worker_sparse_row_count = worker_sparse_row_counts[worker_idx];
                 let outputs = SparseFeatureOutputShards {
-                    fixed: FeatureOutputShards {
+                    global: GlobalFeatureOutputShards {
                         inventory: OutputShard::from_slice(
                             &mut inventory[snapshot_start * inventory_width
                                 ..(snapshot_start + snapshot_count) * inventory_width],
@@ -4247,17 +4303,12 @@ impl EnvironmentGroup {
                                 ..(snapshot_start + snapshot_count)
                                     * room_part_frontier_distance_width],
                         ),
-                        frontier: OutputShard::empty(),
-                        frontier_occupancy: OutputShard::empty(),
-                        frontier_neighbor: OutputShard::empty(),
-                        frontier_neighbor_pair: OutputShard::empty(),
                         connection_reachability: OutputShard::from_slice(
                             &mut connection_reachability[snapshot_start
                                 * connection_reachability_width
                                 ..(snapshot_start + snapshot_count)
                                     * connection_reachability_width],
                         ),
-                        frontier_connection_reachability: OutputShard::empty(),
                         toilet_crossed_room_idx: OutputShard::from_slice(
                             &mut toilet_crossed_room_idx[snapshot_start * toilet_crossed_room_width
                                 ..(snapshot_start + snapshot_count) * toilet_crossed_room_width],
@@ -4270,20 +4321,8 @@ impl EnvironmentGroup {
                         room_part_frontier_distance_count: room_part_frontier_distance_width,
                         connection_count: connection_reachability_width,
                         toilet_crossed_room_count: toilet_crossed_room_width,
-                        frontier_count: 0,
-                        frontier_neighbor_count: self.frontier_neighbor_count,
-                        frontier_window_size: self.frontier_window_size,
                     },
-                    sparse: FeatureOutputShards {
-                        inventory: OutputShard::empty(),
-                        room_x: OutputShard::empty(),
-                        room_y: OutputShard::empty(),
-                        room_placed: OutputShard::empty(),
-                        room_part_furthest_destination: OutputShard::empty(),
-                        room_part_furthest_source: OutputShard::empty(),
-                        room_part_save_distance: OutputShard::empty(),
-                        room_part_refill_distance: OutputShard::empty(),
-                        room_part_frontier_distance: OutputShard::empty(),
+                    frontier_rows: FrontierFeatureOutputShards {
                         frontier: OutputShard::from_slice(
                             &mut frontier[sparse_row_start * FEATURE_FRONTIER_WIDTH
                                 ..(sparse_row_start + worker_sparse_row_count)
@@ -4305,24 +4344,15 @@ impl EnvironmentGroup {
                                 ..(sparse_row_start + worker_sparse_row_count)
                                     * frontier_neighbor_pair_width],
                         ),
-                        connection_reachability: OutputShard::empty(),
                         frontier_connection_reachability: OutputShard::from_slice(
                             &mut frontier_connection_reachability[sparse_row_start
                                 * frontier_connection_width
                                 ..(sparse_row_start + worker_sparse_row_count)
                                     * frontier_connection_width],
                         ),
-                        toilet_crossed_room_idx: OutputShard::empty(),
-                        inventory_count: 0,
-                        room_count: 0,
-                        room_part_furthest_count: 0,
-                        room_part_save_distance_count: 0,
-                        room_part_refill_distance_count: 0,
-                        room_part_frontier_distance_count: 0,
-                        connection_count: frontier_connection_width,
-                        toilet_crossed_room_count: 0,
                         frontier_count: 1,
                         frontier_neighbor_count: self.frontier_neighbor_count,
+                        connection_count: frontier_connection_width,
                         frontier_window_size: self.frontier_window_size,
                     },
                     row_snapshot_idx: OutputShard::from_slice(
@@ -4687,109 +4717,119 @@ impl EnvironmentGroup {
                 if let Err(err) = worker.send(WorkerCommand::PackFeatures {
                     expected_snapshot_count: snapshot_count,
                     outputs: FeatureOutputShards {
-                        inventory: OutputShard::from_slice(
-                            &mut inventory[snapshot_start * inventory_width
-                                ..(snapshot_start + snapshot_count) * inventory_width],
-                        ),
-                        room_x: OutputShard::from_slice(
-                            &mut out_room_x[snapshot_start * room_width
-                                ..(snapshot_start + snapshot_count) * room_width],
-                        ),
-                        room_y: OutputShard::from_slice(
-                            &mut out_room_y[snapshot_start * room_width
-                                ..(snapshot_start + snapshot_count) * room_width],
-                        ),
-                        room_placed: OutputShard::from_slice(
-                            &mut room_placed[snapshot_start * room_width
-                                ..(snapshot_start + snapshot_count) * room_width],
-                        ),
-                        room_part_furthest_destination: OutputShard::from_slice(
-                            &mut room_part_furthest_destination[snapshot_start
-                                * room_part_furthest_width
-                                ..(snapshot_start + snapshot_count) * room_part_furthest_width],
-                        ),
-                        room_part_furthest_source: OutputShard::from_slice(
-                            &mut room_part_furthest_source[snapshot_start * room_part_furthest_width
-                                ..(snapshot_start + snapshot_count) * room_part_furthest_width],
-                        ),
-                        room_part_save_distance: OutputShard::from_slice(
-                            &mut room_part_save_distance[snapshot_start
-                                * room_part_save_distance_width
-                                ..(snapshot_start + snapshot_count)
-                                    * room_part_save_distance_width],
-                        ),
-                        room_part_refill_distance: OutputShard::from_slice(
-                            &mut room_part_refill_distance[snapshot_start
-                                * room_part_refill_distance_width
-                                ..(snapshot_start + snapshot_count)
-                                    * room_part_refill_distance_width],
-                        ),
-                        room_part_frontier_distance: OutputShard::from_slice(
-                            &mut room_part_frontier_distance[snapshot_start
-                                * room_part_frontier_distance_width
-                                ..(snapshot_start + snapshot_count)
-                                    * room_part_frontier_distance_width],
-                        ),
-                        frontier: OutputShard::from_slice(
-                            &mut frontier[snapshot_start * frontier_count * FEATURE_FRONTIER_WIDTH
-                                ..(snapshot_start + snapshot_count)
+                        global: GlobalFeatureOutputShards {
+                            inventory: OutputShard::from_slice(
+                                &mut inventory[snapshot_start * inventory_width
+                                    ..(snapshot_start + snapshot_count) * inventory_width],
+                            ),
+                            room_x: OutputShard::from_slice(
+                                &mut out_room_x[snapshot_start * room_width
+                                    ..(snapshot_start + snapshot_count) * room_width],
+                            ),
+                            room_y: OutputShard::from_slice(
+                                &mut out_room_y[snapshot_start * room_width
+                                    ..(snapshot_start + snapshot_count) * room_width],
+                            ),
+                            room_placed: OutputShard::from_slice(
+                                &mut room_placed[snapshot_start * room_width
+                                    ..(snapshot_start + snapshot_count) * room_width],
+                            ),
+                            room_part_furthest_destination: OutputShard::from_slice(
+                                &mut room_part_furthest_destination[snapshot_start
+                                    * room_part_furthest_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * room_part_furthest_width],
+                            ),
+                            room_part_furthest_source: OutputShard::from_slice(
+                                &mut room_part_furthest_source[snapshot_start
+                                    * room_part_furthest_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * room_part_furthest_width],
+                            ),
+                            room_part_save_distance: OutputShard::from_slice(
+                                &mut room_part_save_distance[snapshot_start
+                                    * room_part_save_distance_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * room_part_save_distance_width],
+                            ),
+                            room_part_refill_distance: OutputShard::from_slice(
+                                &mut room_part_refill_distance[snapshot_start
+                                    * room_part_refill_distance_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * room_part_refill_distance_width],
+                            ),
+                            room_part_frontier_distance: OutputShard::from_slice(
+                                &mut room_part_frontier_distance[snapshot_start
+                                    * room_part_frontier_distance_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * room_part_frontier_distance_width],
+                            ),
+                            connection_reachability: OutputShard::from_slice(
+                                &mut connection_reachability[snapshot_start
+                                    * connection_reachability_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * connection_reachability_width],
+                            ),
+                            toilet_crossed_room_idx: OutputShard::from_slice(
+                                &mut toilet_crossed_room_idx[snapshot_start
+                                    * toilet_crossed_room_width
+                                    ..(snapshot_start + snapshot_count) * toilet_crossed_room_width],
+                            ),
+                            inventory_count: inventory_width,
+                            room_count: room_width,
+                            room_part_furthest_count: room_part_furthest_width,
+                            room_part_save_distance_count: room_part_save_distance_width,
+                            room_part_refill_distance_count: room_part_refill_distance_width,
+                            room_part_frontier_distance_count: room_part_frontier_distance_width,
+                            connection_count: connection_reachability_width,
+                            toilet_crossed_room_count: toilet_crossed_room_width,
+                        },
+                        frontier: FrontierFeatureOutputShards {
+                            frontier: OutputShard::from_slice(
+                                &mut frontier[snapshot_start
                                     * frontier_count
-                                    * FEATURE_FRONTIER_WIDTH],
-                        ),
-                        frontier_occupancy: OutputShard::from_slice(
-                            &mut frontier_occupancy[snapshot_start
-                                * frontier_count
-                                * frontier_occupancy_width
-                                ..(snapshot_start + snapshot_count)
+                                    * FEATURE_FRONTIER_WIDTH
+                                    ..(snapshot_start + snapshot_count)
+                                        * frontier_count
+                                        * FEATURE_FRONTIER_WIDTH],
+                            ),
+                            frontier_occupancy: OutputShard::from_slice(
+                                &mut frontier_occupancy[snapshot_start
                                     * frontier_count
-                                    * frontier_occupancy_width],
-                        ),
-                        frontier_neighbor: OutputShard::from_slice(
-                            &mut frontier_neighbor[snapshot_start
-                                * frontier_count
-                                * frontier_neighbor_width
-                                ..(snapshot_start + snapshot_count)
+                                    * frontier_occupancy_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * frontier_count
+                                        * frontier_occupancy_width],
+                            ),
+                            frontier_neighbor: OutputShard::from_slice(
+                                &mut frontier_neighbor[snapshot_start
                                     * frontier_count
-                                    * frontier_neighbor_width],
-                        ),
-                        frontier_neighbor_pair: OutputShard::from_slice(
-                            &mut frontier_neighbor_pair[snapshot_start
-                                * frontier_count
-                                * frontier_neighbor_pair_width
-                                ..(snapshot_start + snapshot_count)
+                                    * frontier_neighbor_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * frontier_count
+                                        * frontier_neighbor_width],
+                            ),
+                            frontier_neighbor_pair: OutputShard::from_slice(
+                                &mut frontier_neighbor_pair[snapshot_start
                                     * frontier_count
-                                    * frontier_neighbor_pair_width],
-                        ),
-                        connection_reachability: OutputShard::from_slice(
-                            &mut connection_reachability[snapshot_start
-                                * connection_reachability_width
-                                ..(snapshot_start + snapshot_count)
-                                    * connection_reachability_width],
-                        ),
-                        frontier_connection_reachability: OutputShard::from_slice(
-                            &mut frontier_connection_reachability[snapshot_start
-                                * frontier_count
-                                * frontier_connection_width
-                                ..(snapshot_start + snapshot_count)
+                                    * frontier_neighbor_pair_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * frontier_count
+                                        * frontier_neighbor_pair_width],
+                            ),
+                            frontier_connection_reachability: OutputShard::from_slice(
+                                &mut frontier_connection_reachability[snapshot_start
                                     * frontier_count
-                                    * frontier_connection_width],
-                        ),
-                        toilet_crossed_room_idx: OutputShard::from_slice(
-                            &mut toilet_crossed_room_idx[snapshot_start * toilet_crossed_room_width
-                                ..(snapshot_start + snapshot_count) * toilet_crossed_room_width],
-                        ),
-                        inventory_count: inventory_width,
-                        room_count: room_width,
-                        room_part_furthest_count: room_part_furthest_width,
-                        room_part_save_distance_count: room_part_save_distance_width,
-                        room_part_refill_distance_count: room_part_refill_distance_width,
-                        room_part_frontier_distance_count: room_part_frontier_distance_width,
-                        connection_count: connection_reachability_width
-                            .max(frontier_connection_width),
-                        toilet_crossed_room_count: toilet_crossed_room_width,
-                        frontier_count,
-                        frontier_neighbor_count: self.frontier_neighbor_count,
-                        frontier_window_size: self.frontier_window_size,
+                                    * frontier_connection_width
+                                    ..(snapshot_start + snapshot_count)
+                                        * frontier_count
+                                        * frontier_connection_width],
+                            ),
+                            frontier_count,
+                            frontier_neighbor_count: self.frontier_neighbor_count,
+                            connection_count: frontier_connection_width,
+                            frontier_window_size: self.frontier_window_size,
+                        },
                     },
                 }) {
                     set_first_error(&mut first_error, err);
@@ -5046,7 +5086,7 @@ impl EnvironmentGroup {
                 let snapshot_count = (end - start) * candidate_count;
                 let worker_sparse_row_count = worker_sparse_row_counts[worker_idx];
                 let outputs = SparseFeatureOutputShards {
-                    fixed: FeatureOutputShards {
+                    global: GlobalFeatureOutputShards {
                         inventory: OutputShard::from_slice(
                             &mut inventory[snapshot_start * inventory_width
                                 ..(snapshot_start + snapshot_count) * inventory_width],
@@ -5090,17 +5130,12 @@ impl EnvironmentGroup {
                                 ..(snapshot_start + snapshot_count)
                                     * room_part_frontier_distance_width],
                         ),
-                        frontier: OutputShard::empty(),
-                        frontier_occupancy: OutputShard::empty(),
-                        frontier_neighbor: OutputShard::empty(),
-                        frontier_neighbor_pair: OutputShard::empty(),
                         connection_reachability: OutputShard::from_slice(
                             &mut connection_reachability[snapshot_start
                                 * connection_reachability_width
                                 ..(snapshot_start + snapshot_count)
                                     * connection_reachability_width],
                         ),
-                        frontier_connection_reachability: OutputShard::empty(),
                         toilet_crossed_room_idx: OutputShard::from_slice(
                             &mut toilet_crossed_room_idx[snapshot_start * toilet_crossed_room_width
                                 ..(snapshot_start + snapshot_count) * toilet_crossed_room_width],
@@ -5113,20 +5148,8 @@ impl EnvironmentGroup {
                         room_part_frontier_distance_count: room_part_frontier_distance_width,
                         connection_count: connection_reachability_width,
                         toilet_crossed_room_count: toilet_crossed_room_width,
-                        frontier_count: 0,
-                        frontier_neighbor_count: self.frontier_neighbor_count,
-                        frontier_window_size: self.frontier_window_size,
                     },
-                    sparse: FeatureOutputShards {
-                        inventory: OutputShard::empty(),
-                        room_x: OutputShard::empty(),
-                        room_y: OutputShard::empty(),
-                        room_placed: OutputShard::empty(),
-                        room_part_furthest_destination: OutputShard::empty(),
-                        room_part_furthest_source: OutputShard::empty(),
-                        room_part_save_distance: OutputShard::empty(),
-                        room_part_refill_distance: OutputShard::empty(),
-                        room_part_frontier_distance: OutputShard::empty(),
+                    frontier_rows: FrontierFeatureOutputShards {
                         frontier: OutputShard::from_slice(
                             &mut frontier[sparse_row_start * FEATURE_FRONTIER_WIDTH
                                 ..(sparse_row_start + worker_sparse_row_count)
@@ -5148,24 +5171,15 @@ impl EnvironmentGroup {
                                 ..(sparse_row_start + worker_sparse_row_count)
                                     * frontier_neighbor_pair_width],
                         ),
-                        connection_reachability: OutputShard::empty(),
                         frontier_connection_reachability: OutputShard::from_slice(
                             &mut frontier_connection_reachability[sparse_row_start
                                 * frontier_connection_width
                                 ..(sparse_row_start + worker_sparse_row_count)
                                     * frontier_connection_width],
                         ),
-                        toilet_crossed_room_idx: OutputShard::empty(),
-                        inventory_count: 0,
-                        room_count: 0,
-                        room_part_furthest_count: 0,
-                        room_part_save_distance_count: 0,
-                        room_part_refill_distance_count: 0,
-                        room_part_frontier_distance_count: 0,
-                        connection_count: frontier_connection_width,
-                        toilet_crossed_room_count: 0,
                         frontier_count: 1,
                         frontier_neighbor_count: self.frontier_neighbor_count,
+                        connection_count: frontier_connection_width,
                         frontier_window_size: self.frontier_window_size,
                     },
                     row_snapshot_idx: OutputShard::from_slice(
