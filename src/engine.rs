@@ -10,12 +10,10 @@ use crate::environment::{
     PreliminaryOutcomes,
 };
 use crossbeam_channel as channel;
-use numpy::{
-    Element, IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
-    PyReadwriteArray1, PyReadwriteArray2, PyReadwriteArray3,
-};
+use numpy::{Element, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayMethods, PyReadonlyArray1};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use std::cmp::{max, min};
 use std::marker::PhantomData;
 #[cfg(test)]
@@ -24,6 +22,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+macro_rules! required_py_field {
+    ($fields:expr, $name:literal) => {
+        $fields
+            .get_item($name)?
+            .ok_or_else(|| PyValueError::new_err(format!("missing required field {}", $name)))?
+            .extract()?
+    };
+}
 
 macro_rules! profile_metrics {
     ($($variant:ident => $name:literal,)+) => {
@@ -1252,6 +1259,126 @@ pub struct SparseFeatureRequirements {
     worker_sparse_row_counts: Vec<usize>,
 }
 
+#[pyclass(module = "map_gen")]
+pub struct ProposalCandidateBuffers {
+    sampled_frontier_idx: Py<PyArray2<FrontierIdx>>,
+    sampled_door_variant_idx: Py<PyArray2<DoorVariantIdx>>,
+    #[pyo3(get)]
+    recommended_candidates: usize,
+    room_idx: Py<PyArray2<RoomIdx>>,
+    room_x: Py<PyArray2<Coord>>,
+    room_y: Py<PyArray2<Coord>>,
+    proposal_frontier_idx: Py<PyArray2<FrontierIdx>>,
+    proposal_door_variant_idx: Py<PyArray2<DoorVariantIdx>>,
+    pre_door_valid: Py<PyArray2<i8>>,
+    pre_connections_valid: Py<PyArray2<i8>>,
+    pre_toilet_valid: Py<PyArray1<i8>>,
+    door_valid: Py<PyArray3<i8>>,
+    connections_valid: Py<PyArray3<i8>>,
+    toilet_valid: Py<PyArray2<i8>>,
+    door_match: Py<PyArray3<i16>>,
+    clean_counts: Py<PyArray1<i64>>,
+    evaluated_counts: Py<PyArray1<i64>>,
+    rejected_counts: Py<PyArray1<i64>>,
+}
+
+#[pyclass(module = "map_gen")]
+pub struct SparseFeatureBuffers {
+    #[pyo3(get)]
+    environment_count: usize,
+    #[pyo3(get)]
+    candidate_count: usize,
+    #[pyo3(get)]
+    environment_start: usize,
+    #[pyo3(get)]
+    sparse_row_count: usize,
+    #[pyo3(get)]
+    worker_sparse_row_counts: Vec<usize>,
+    inventory: Py<PyArray2<u8>>,
+    out_room_x: Py<PyArray2<Coord>>,
+    out_room_y: Py<PyArray2<Coord>>,
+    room_placed: Py<PyArray2<u8>>,
+    room_part_furthest_destination: Py<PyArray2<u8>>,
+    room_part_furthest_source: Py<PyArray2<u8>>,
+    room_part_save_distance: Py<PyArray2<u8>>,
+    room_part_refill_distance: Py<PyArray2<u8>>,
+    room_part_frontier_distance: Py<PyArray2<u8>>,
+    frontier: Py<PyArray2<i8>>,
+    frontier_occupancy: Py<PyArray2<u8>>,
+    frontier_neighbor: Py<PyArray2<i16>>,
+    frontier_neighbor_pair: Py<PyArray2<u8>>,
+    connection_reachability: Py<PyArray2<u8>>,
+    frontier_connection_reachability: Py<PyArray2<u8>>,
+    toilet_crossed_room_idx: Py<PyArray2<i16>>,
+    row_snapshot_idx: Py<PyArray1<i64>>,
+    row_frontier_idx: Py<PyArray1<FrontierIdx>>,
+}
+
+#[pymethods]
+impl ProposalCandidateBuffers {
+    #[new]
+    fn new(fields: &Bound<'_, PyDict>) -> PyResult<Self> {
+        Ok(Self {
+            sampled_frontier_idx: required_py_field!(fields, "sampled_frontier_idx"),
+            sampled_door_variant_idx: required_py_field!(fields, "sampled_door_variant_idx"),
+            recommended_candidates: required_py_field!(fields, "recommended_candidates"),
+            room_idx: required_py_field!(fields, "room_idx"),
+            room_x: required_py_field!(fields, "room_x"),
+            room_y: required_py_field!(fields, "room_y"),
+            proposal_frontier_idx: required_py_field!(fields, "proposal_frontier_idx"),
+            proposal_door_variant_idx: required_py_field!(fields, "proposal_door_variant_idx"),
+            pre_door_valid: required_py_field!(fields, "pre_door_valid"),
+            pre_connections_valid: required_py_field!(fields, "pre_connections_valid"),
+            pre_toilet_valid: required_py_field!(fields, "pre_toilet_valid"),
+            door_valid: required_py_field!(fields, "door_valid"),
+            connections_valid: required_py_field!(fields, "connections_valid"),
+            toilet_valid: required_py_field!(fields, "toilet_valid"),
+            door_match: required_py_field!(fields, "door_match"),
+            clean_counts: required_py_field!(fields, "clean_counts"),
+            evaluated_counts: required_py_field!(fields, "evaluated_counts"),
+            rejected_counts: required_py_field!(fields, "rejected_counts"),
+        })
+    }
+}
+
+#[pymethods]
+impl SparseFeatureBuffers {
+    #[new]
+    fn new(fields: &Bound<'_, PyDict>) -> PyResult<Self> {
+        Ok(Self {
+            environment_count: required_py_field!(fields, "environment_count"),
+            candidate_count: required_py_field!(fields, "candidate_count"),
+            environment_start: required_py_field!(fields, "environment_start"),
+            sparse_row_count: required_py_field!(fields, "sparse_row_count"),
+            worker_sparse_row_counts: required_py_field!(fields, "worker_sparse_row_counts"),
+            inventory: required_py_field!(fields, "inventory"),
+            out_room_x: required_py_field!(fields, "room_x"),
+            out_room_y: required_py_field!(fields, "room_y"),
+            room_placed: required_py_field!(fields, "room_placed"),
+            room_part_furthest_destination: required_py_field!(
+                fields,
+                "room_part_furthest_destination"
+            ),
+            room_part_furthest_source: required_py_field!(fields, "room_part_furthest_source"),
+            room_part_save_distance: required_py_field!(fields, "room_part_save_distance"),
+            room_part_refill_distance: required_py_field!(fields, "room_part_refill_distance"),
+            room_part_frontier_distance: required_py_field!(fields, "room_part_frontier_distance"),
+            frontier: required_py_field!(fields, "frontier"),
+            frontier_occupancy: required_py_field!(fields, "frontier_occupancy"),
+            frontier_neighbor: required_py_field!(fields, "frontier_neighbor"),
+            frontier_neighbor_pair: required_py_field!(fields, "frontier_neighbor_pair"),
+            connection_reachability: required_py_field!(fields, "connection_reachability"),
+            frontier_connection_reachability: required_py_field!(
+                fields,
+                "frontier_connection_reachability"
+            ),
+            toilet_crossed_room_idx: required_py_field!(fields, "toilet_crossed_room_idx"),
+            row_snapshot_idx: required_py_field!(fields, "row_snapshot_idx"),
+            row_frontier_idx: required_py_field!(fields, "row_frontier_idx"),
+        })
+    }
+}
+
 #[pymethods]
 impl EpisodeOutcomes {
     #[getter]
@@ -2109,34 +2236,34 @@ impl EnvironmentGroup {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn pack_candidates_from_proposals_into<'py>(
         &mut self,
         py: Python<'py>,
-        sampled_frontier_idx: PyReadonlyArray2<'py, FrontierIdx>,
-        sampled_door_variant_idx: PyReadonlyArray2<'py, DoorVariantIdx>,
-        recommended_candidates: usize,
-        mut room_idx: PyReadwriteArray2<'py, RoomIdx>,
-        mut room_x: PyReadwriteArray2<'py, Coord>,
-        mut room_y: PyReadwriteArray2<'py, Coord>,
-        mut proposal_frontier_idx: PyReadwriteArray2<'py, FrontierIdx>,
-        mut proposal_door_variant_idx: PyReadwriteArray2<'py, DoorVariantIdx>,
-        mut pre_door_valid: PyReadwriteArray2<'py, i8>,
-        mut pre_connections_valid: PyReadwriteArray2<'py, i8>,
-        mut pre_toilet_valid: PyReadwriteArray1<'py, i8>,
-        mut door_valid: PyReadwriteArray3<'py, i8>,
-        mut connections_valid: PyReadwriteArray3<'py, i8>,
-        mut toilet_valid: PyReadwriteArray2<'py, i8>,
-        mut door_match: PyReadwriteArray3<'py, i16>,
-        mut clean_counts: PyReadwriteArray1<'py, i64>,
-        mut evaluated_counts: PyReadwriteArray1<'py, i64>,
-        mut rejected_counts: PyReadwriteArray1<'py, i64>,
+        buffers: PyRef<'py, ProposalCandidateBuffers>,
     ) -> PyResult<SparseFeatureRequirements> {
         if self.action_count == 0 {
             return Err(PyValueError::new_err(
                 "pack_candidates_from_proposals_into requires step_initial to be called first",
             ));
         }
+        let sampled_frontier_idx = buffers.sampled_frontier_idx.bind(py).readonly();
+        let sampled_door_variant_idx = buffers.sampled_door_variant_idx.bind(py).readonly();
+        let recommended_candidates = buffers.recommended_candidates;
+        let mut room_idx = buffers.room_idx.bind(py).readwrite();
+        let mut room_x = buffers.room_x.bind(py).readwrite();
+        let mut room_y = buffers.room_y.bind(py).readwrite();
+        let mut proposal_frontier_idx = buffers.proposal_frontier_idx.bind(py).readwrite();
+        let mut proposal_door_variant_idx = buffers.proposal_door_variant_idx.bind(py).readwrite();
+        let mut pre_door_valid = buffers.pre_door_valid.bind(py).readwrite();
+        let mut pre_connections_valid = buffers.pre_connections_valid.bind(py).readwrite();
+        let mut pre_toilet_valid = buffers.pre_toilet_valid.bind(py).readwrite();
+        let mut door_valid = buffers.door_valid.bind(py).readwrite();
+        let mut connections_valid = buffers.connections_valid.bind(py).readwrite();
+        let mut toilet_valid = buffers.toilet_valid.bind(py).readwrite();
+        let mut door_match = buffers.door_match.bind(py).readwrite();
+        let mut clean_counts = buffers.clean_counts.bind(py).readwrite();
+        let mut evaluated_counts = buffers.evaluated_counts.bind(py).readwrite();
+        let mut rejected_counts = buffers.rejected_counts.bind(py).readwrite();
         let sampled_shape = sampled_frontier_idx.as_array().shape().to_vec();
         if sampled_shape.len() != 2
             || sampled_door_variant_idx.as_array().shape() != sampled_shape
@@ -2837,34 +2964,39 @@ impl EnvironmentGroup {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn pack_sparse_features_into<'py>(
         &self,
         py: Python<'py>,
-        environment_count: usize,
-        candidate_count: usize,
-        environment_start: usize,
-        sparse_row_count: usize,
-        worker_sparse_row_counts: Vec<usize>,
-        mut inventory: PyReadwriteArray2<'py, u8>,
-        mut out_room_x: PyReadwriteArray2<'py, Coord>,
-        mut out_room_y: PyReadwriteArray2<'py, Coord>,
-        mut room_placed: PyReadwriteArray2<'py, u8>,
-        mut room_part_furthest_destination: PyReadwriteArray2<'py, u8>,
-        mut room_part_furthest_source: PyReadwriteArray2<'py, u8>,
-        mut room_part_save_distance: PyReadwriteArray2<'py, u8>,
-        mut room_part_refill_distance: PyReadwriteArray2<'py, u8>,
-        mut room_part_frontier_distance: PyReadwriteArray2<'py, u8>,
-        mut frontier: PyReadwriteArray2<'py, i8>,
-        mut frontier_occupancy: PyReadwriteArray2<'py, u8>,
-        mut frontier_neighbor: PyReadwriteArray2<'py, i16>,
-        mut frontier_neighbor_pair: PyReadwriteArray2<'py, u8>,
-        mut connection_reachability: PyReadwriteArray2<'py, u8>,
-        mut frontier_connection_reachability: PyReadwriteArray2<'py, u8>,
-        mut toilet_crossed_room_idx: PyReadwriteArray2<'py, i16>,
-        mut row_snapshot_idx: PyReadwriteArray1<'py, i64>,
-        mut row_frontier_idx: PyReadwriteArray1<'py, FrontierIdx>,
+        buffers: PyRef<'py, SparseFeatureBuffers>,
     ) -> PyResult<()> {
+        let environment_count = buffers.environment_count;
+        let candidate_count = buffers.candidate_count;
+        let environment_start = buffers.environment_start;
+        let sparse_row_count = buffers.sparse_row_count;
+        let worker_sparse_row_counts = &buffers.worker_sparse_row_counts;
+        let mut inventory = buffers.inventory.bind(py).readwrite();
+        let mut out_room_x = buffers.out_room_x.bind(py).readwrite();
+        let mut out_room_y = buffers.out_room_y.bind(py).readwrite();
+        let mut room_placed = buffers.room_placed.bind(py).readwrite();
+        let mut room_part_furthest_destination =
+            buffers.room_part_furthest_destination.bind(py).readwrite();
+        let mut room_part_furthest_source = buffers.room_part_furthest_source.bind(py).readwrite();
+        let mut room_part_save_distance = buffers.room_part_save_distance.bind(py).readwrite();
+        let mut room_part_refill_distance = buffers.room_part_refill_distance.bind(py).readwrite();
+        let mut room_part_frontier_distance =
+            buffers.room_part_frontier_distance.bind(py).readwrite();
+        let mut frontier = buffers.frontier.bind(py).readwrite();
+        let mut frontier_occupancy = buffers.frontier_occupancy.bind(py).readwrite();
+        let mut frontier_neighbor = buffers.frontier_neighbor.bind(py).readwrite();
+        let mut frontier_neighbor_pair = buffers.frontier_neighbor_pair.bind(py).readwrite();
+        let mut connection_reachability = buffers.connection_reachability.bind(py).readwrite();
+        let mut frontier_connection_reachability = buffers
+            .frontier_connection_reachability
+            .bind(py)
+            .readwrite();
+        let mut toilet_crossed_room_idx = buffers.toilet_crossed_room_idx.bind(py).readwrite();
+        let mut row_snapshot_idx = buffers.row_snapshot_idx.bind(py).readwrite();
+        let mut row_frontier_idx = buffers.row_frontier_idx.bind(py).readwrite();
         if environment_start + environment_count > self.num_environments {
             return Err(PyValueError::new_err(
                 "candidate dimensions must fit within the environment group",

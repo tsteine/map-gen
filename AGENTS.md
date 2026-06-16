@@ -21,6 +21,10 @@
   returning `PyTuple`, deeply nested tuples, or other positional containers. If
   adding fields pushes an existing tuple-returning API past a comfortable arity,
   convert that API to a named result object with explicit getters instead.
+- Do not use `#[allow(clippy::too_many_arguments)]` to suppress Clippy in PyO3
+  bindings. If a Python-exposed function needs many related inputs or output
+  buffers, group them into a named `#[pyclass]` argument object with required
+  fields.
 - Avoid defining functions inside of other function definitions.
 - When constructing dataclasses in Python, use named arguments rather than
   positional arguments.

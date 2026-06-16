@@ -640,24 +640,44 @@ class EnvironmentGroup:
         candidate_count = recommended_candidates
         candidate_slot.ensure(self.num_envs, candidate_count)
         result = self.env.pack_candidates_from_proposals_into(
-            sampled_frontier_idx.contiguous().cpu().numpy(),
-            sampled_door_variant_idx.contiguous().cpu().numpy(),
-            recommended_candidates,
-            candidate_slot.room_idx[: self.num_envs, :candidate_count].numpy(),
-            candidate_slot.room_x[: self.num_envs, :candidate_count].numpy(),
-            candidate_slot.room_y[: self.num_envs, :candidate_count].numpy(),
-            candidate_slot.proposal_frontier_idx[: self.num_envs, :candidate_count].numpy(),
-            candidate_slot.proposal_door_variant_idx[: self.num_envs, :candidate_count].numpy(),
-            candidate_slot.pre_door_invalid[: self.num_envs].numpy(),
-            candidate_slot.pre_connection_invalid[: self.num_envs].numpy(),
-            candidate_slot.pre_toilet_invalid[: self.num_envs].numpy(),
-            candidate_slot.door_invalid[: self.num_envs, :candidate_count].numpy(),
-            candidate_slot.connection_invalid[: self.num_envs, :candidate_count].numpy(),
-            candidate_slot.toilet_invalid[: self.num_envs, :candidate_count].numpy(),
-            candidate_slot.door_match[: self.num_envs, :candidate_count].numpy(),
-            candidate_slot.clean_counts[: self.num_envs].numpy(),
-            candidate_slot.evaluated_counts[: self.num_envs].numpy(),
-            candidate_slot.rejected_counts[: self.num_envs].numpy(),
+            map_gen.ProposalCandidateBuffers(
+                {
+                    "sampled_frontier_idx": sampled_frontier_idx.contiguous().cpu().numpy(),
+                    "sampled_door_variant_idx": sampled_door_variant_idx.contiguous()
+                    .cpu()
+                    .numpy(),
+                    "recommended_candidates": recommended_candidates,
+                    "room_idx": candidate_slot.room_idx[: self.num_envs, :candidate_count].numpy(),
+                    "room_x": candidate_slot.room_x[: self.num_envs, :candidate_count].numpy(),
+                    "room_y": candidate_slot.room_y[: self.num_envs, :candidate_count].numpy(),
+                    "proposal_frontier_idx": candidate_slot.proposal_frontier_idx[
+                        : self.num_envs, :candidate_count
+                    ].numpy(),
+                    "proposal_door_variant_idx": candidate_slot.proposal_door_variant_idx[
+                        : self.num_envs, :candidate_count
+                    ].numpy(),
+                    "pre_door_valid": candidate_slot.pre_door_invalid[: self.num_envs].numpy(),
+                    "pre_connections_valid": candidate_slot.pre_connection_invalid[
+                        : self.num_envs
+                    ].numpy(),
+                    "pre_toilet_valid": candidate_slot.pre_toilet_invalid[: self.num_envs].numpy(),
+                    "door_valid": candidate_slot.door_invalid[
+                        : self.num_envs, :candidate_count
+                    ].numpy(),
+                    "connections_valid": candidate_slot.connection_invalid[
+                        : self.num_envs, :candidate_count
+                    ].numpy(),
+                    "toilet_valid": candidate_slot.toilet_invalid[
+                        : self.num_envs, :candidate_count
+                    ].numpy(),
+                    "door_match": candidate_slot.door_match[
+                        : self.num_envs, :candidate_count
+                    ].numpy(),
+                    "clean_counts": candidate_slot.clean_counts[: self.num_envs].numpy(),
+                    "evaluated_counts": candidate_slot.evaluated_counts[: self.num_envs].numpy(),
+                    "rejected_counts": candidate_slot.rejected_counts[: self.num_envs].numpy(),
+                }
+            )
         )
         return self._candidate_slot_result(candidate_slot, candidate_count, result)
 
@@ -786,29 +806,33 @@ class EnvironmentGroup:
         )
         feature_slot.ensure(environment_count, feature_requirements.sparse_row_count)
         self.env.pack_sparse_features_into(
-            environment_count,
-            1,
-            environment_start,
-            feature_requirements.sparse_row_count,
-            feature_requirements.worker_sparse_row_counts,
-            feature_slot.inventory.numpy(),
-            feature_slot.room_x.numpy(),
-            feature_slot.room_y.numpy(),
-            feature_slot.room_placed.numpy(),
-            feature_slot.room_part_furthest_destination.numpy(),
-            feature_slot.room_part_furthest_source.numpy(),
-            feature_slot.room_part_save_distance.numpy(),
-            feature_slot.room_part_refill_distance.numpy(),
-            feature_slot.room_part_frontier_distance.numpy(),
-            feature_slot.frontier.numpy(),
-            feature_slot.frontier_occupancy.numpy(),
-            feature_slot.frontier_neighbor.numpy(),
-            feature_slot.frontier_neighbor_pair.numpy(),
-            feature_slot.connection_reachability.numpy(),
-            feature_slot.frontier_connection_reachability.numpy(),
-            feature_slot.toilet_crossed_room_idx.numpy(),
-            feature_slot.row_snapshot_idx.numpy(),
-            feature_slot.row_frontier_idx.numpy(),
+            map_gen.SparseFeatureBuffers(
+                {
+                    "environment_count": environment_count,
+                    "candidate_count": 1,
+                    "environment_start": environment_start,
+                    "sparse_row_count": feature_requirements.sparse_row_count,
+                    "worker_sparse_row_counts": feature_requirements.worker_sparse_row_counts,
+                    "inventory": feature_slot.inventory.numpy(),
+                    "room_x": feature_slot.room_x.numpy(),
+                    "room_y": feature_slot.room_y.numpy(),
+                    "room_placed": feature_slot.room_placed.numpy(),
+                    "room_part_furthest_destination": feature_slot.room_part_furthest_destination.numpy(),
+                    "room_part_furthest_source": feature_slot.room_part_furthest_source.numpy(),
+                    "room_part_save_distance": feature_slot.room_part_save_distance.numpy(),
+                    "room_part_refill_distance": feature_slot.room_part_refill_distance.numpy(),
+                    "room_part_frontier_distance": feature_slot.room_part_frontier_distance.numpy(),
+                    "frontier": feature_slot.frontier.numpy(),
+                    "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
+                    "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),
+                    "frontier_neighbor_pair": feature_slot.frontier_neighbor_pair.numpy(),
+                    "connection_reachability": feature_slot.connection_reachability.numpy(),
+                    "frontier_connection_reachability": feature_slot.frontier_connection_reachability.numpy(),
+                    "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
+                    "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),
+                    "row_frontier_idx": feature_slot.row_frontier_idx.numpy(),
+                }
+            )
         )
         return feature_slot.state_features(
             environment_count,
@@ -1120,29 +1144,33 @@ def extract_candidate_features(
     worker_sparse_row_counts = feature_requirements.worker_sparse_row_counts
     feature_slot.ensure(candidates.room_idx.numel(), sparse_row_count)
     env.env.pack_sparse_features_into(
-        candidates.room_idx.shape[0],
-        candidates.room_idx.shape[1],
-        0,
-        sparse_row_count,
-        worker_sparse_row_counts,
-        feature_slot.inventory.numpy(),
-        feature_slot.room_x.numpy(),
-        feature_slot.room_y.numpy(),
-        feature_slot.room_placed.numpy(),
-        feature_slot.room_part_furthest_destination.numpy(),
-        feature_slot.room_part_furthest_source.numpy(),
-        feature_slot.room_part_save_distance.numpy(),
-        feature_slot.room_part_refill_distance.numpy(),
-        feature_slot.room_part_frontier_distance.numpy(),
-        feature_slot.frontier.numpy(),
-        feature_slot.frontier_occupancy.numpy(),
-        feature_slot.frontier_neighbor.numpy(),
-        feature_slot.frontier_neighbor_pair.numpy(),
-        feature_slot.connection_reachability.numpy(),
-        feature_slot.frontier_connection_reachability.numpy(),
-        feature_slot.toilet_crossed_room_idx.numpy(),
-        feature_slot.row_snapshot_idx.numpy(),
-        feature_slot.row_frontier_idx.numpy(),
+        map_gen.SparseFeatureBuffers(
+            {
+                "environment_count": candidates.room_idx.shape[0],
+                "candidate_count": candidates.room_idx.shape[1],
+                "environment_start": 0,
+                "sparse_row_count": sparse_row_count,
+                "worker_sparse_row_counts": worker_sparse_row_counts,
+                "inventory": feature_slot.inventory.numpy(),
+                "room_x": feature_slot.room_x.numpy(),
+                "room_y": feature_slot.room_y.numpy(),
+                "room_placed": feature_slot.room_placed.numpy(),
+                "room_part_furthest_destination": feature_slot.room_part_furthest_destination.numpy(),
+                "room_part_furthest_source": feature_slot.room_part_furthest_source.numpy(),
+                "room_part_save_distance": feature_slot.room_part_save_distance.numpy(),
+                "room_part_refill_distance": feature_slot.room_part_refill_distance.numpy(),
+                "room_part_frontier_distance": feature_slot.room_part_frontier_distance.numpy(),
+                "frontier": feature_slot.frontier.numpy(),
+                "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
+                "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),
+                "frontier_neighbor_pair": feature_slot.frontier_neighbor_pair.numpy(),
+                "connection_reachability": feature_slot.connection_reachability.numpy(),
+                "frontier_connection_reachability": feature_slot.frontier_connection_reachability.numpy(),
+                "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
+                "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),
+                "row_frontier_idx": feature_slot.row_frontier_idx.numpy(),
+            }
+        )
     )
     return feature_slot.features(
         candidates.room_idx.shape[0],
