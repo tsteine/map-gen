@@ -335,44 +335,49 @@ def prepare_feature_batches(
             train_actions_cpu.room_y[:, step],
         )
         sample_step = step % config.train.sample_period == offset
-        if sample_step:
-            next_lookahead_outcomes = env.get_outcomes_after_candidates(
-                Actions(
-                    next_actions.room_idx.unsqueeze(1),
-                    next_actions.room_x.unsqueeze(1),
-                    next_actions.room_y.unsqueeze(1),
-                ),
-                torch.device("cpu"),
-                0,
-            )
-            dummy_action = next_actions.room_idx >= num_rooms
-            next_lookahead_outcomes = PreliminaryOutcomes(
-                torch.where(
-                    dummy_action[:, None, None],
-                    torch.full_like(next_lookahead_outcomes.door_invalid, -1),
-                    next_lookahead_outcomes.door_invalid,
-                ),
-                torch.where(
-                    dummy_action[:, None, None],
-                    torch.full_like(next_lookahead_outcomes.connection_invalid, -1),
-                    next_lookahead_outcomes.connection_invalid,
-                ),
-                torch.where(
-                    dummy_action[:, None],
-                    torch.full_like(next_lookahead_outcomes.toilet_invalid, -1),
-                    next_lookahead_outcomes.toilet_invalid,
-                ),
-                torch.where(
-                    dummy_action[:, None, None],
-                    torch.full_like(next_lookahead_outcomes.door_match, -1),
-                    next_lookahead_outcomes.door_match,
-                ),
-            )
         if config.features.lookahead_outcomes:
             env.step(next_actions)
         else:
             env.step_known(next_actions)
         if sample_step:
+            if config.features.lookahead_outcomes:
+                next_lookahead_outcomes = env.get_current_feature_outcomes(
+                    torch.device("cpu"),
+                    0,
+                    train_actions.room_idx.shape[0],
+                )
+                dummy_action = next_actions.room_idx >= num_rooms
+                next_lookahead_outcomes = PreliminaryOutcomes(
+                    torch.where(
+                        dummy_action[:, None],
+                        torch.full_like(next_lookahead_outcomes.door_invalid, -1),
+                        next_lookahead_outcomes.door_invalid,
+                    ),
+                    torch.where(
+                        dummy_action[:, None],
+                        torch.full_like(next_lookahead_outcomes.connection_invalid, -1),
+                        next_lookahead_outcomes.connection_invalid,
+                    ),
+                    torch.where(
+                        dummy_action,
+                        torch.full_like(next_lookahead_outcomes.toilet_invalid, -1),
+                        next_lookahead_outcomes.toilet_invalid,
+                    ),
+                    torch.where(
+                        dummy_action[:, None],
+                        torch.full_like(next_lookahead_outcomes.door_match, -1),
+                        next_lookahead_outcomes.door_match,
+                    ),
+                )
+            else:
+                door_count, connection_count = env.engine.get_output_sizes()
+                environment_count = train_actions.room_idx.shape[0]
+                next_lookahead_outcomes = PreliminaryOutcomes(
+                    torch.empty([environment_count, door_count], dtype=torch.int8),
+                    torch.empty([environment_count, connection_count], dtype=torch.int8),
+                    torch.empty([environment_count], dtype=torch.int8),
+                    torch.empty([environment_count, door_count], dtype=torch.int16),
+                )
             proposal_frontier_idx = None
             proposal_door_variant_idx = None
             proposal_selected_candidate = None
@@ -392,10 +397,10 @@ def prepare_feature_batches(
                         log_recommended_candidates,
                         config.features.recommended_candidates,
                         PreliminaryOutcomes(
-                            next_lookahead_outcomes.door_invalid.squeeze(1),
-                            next_lookahead_outcomes.connection_invalid.squeeze(1),
-                            next_lookahead_outcomes.toilet_invalid.squeeze(1),
-                            next_lookahead_outcomes.door_match.squeeze(1),
+                            next_lookahead_outcomes.door_invalid,
+                            next_lookahead_outcomes.connection_invalid,
+                            next_lookahead_outcomes.toilet_invalid,
+                            next_lookahead_outcomes.door_match,
                         ),
                         config.features.lookahead_outcomes,
                         0,

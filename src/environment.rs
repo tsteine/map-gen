@@ -223,6 +223,12 @@ pub struct PreliminaryOutcomes {
     pub toilet_crossed_room_idx: i16,
 }
 
+#[derive(Clone)]
+pub struct FeatureOutcomes {
+    pub preliminary: PreliminaryOutcomes,
+    pub door_match: Vec<i16>,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeatureConfig {
@@ -2357,19 +2363,19 @@ impl Environment {
             frontier_window_size,
         );
         profile_end(ProfileMetric::EnvProposalFeatures, profile);
-        let outcomes = PreliminaryOutcomes {
+        let preliminary = PreliminaryOutcomes {
             door_valid: door_valid.clone(),
             connections_valid: connections_valid.clone(),
             toilet_valid,
             toilet_crossed_room_idx: self.toilet_crossed_room_idx(common),
         };
         let profile = profile_start();
-        let door_match = self.door_match_feature(common, &outcomes);
+        let door_match = self.door_match_feature(common, &preliminary);
         profile_end(ProfileMetric::EnvProposalDoorMatch, profile);
         let profile = profile_start();
         self.restore_lookahead_candidate(common, snapshot);
         profile_end(ProfileMetric::EnvProposalRestore, profile);
-        Ok(CandidateOutcome::Clean(outcomes, door_match, features))
+        Ok(CandidateOutcome::Clean(preliminary, door_match, features))
     }
 
     fn outcomes_and_features_after_candidate(
@@ -2384,10 +2390,7 @@ impl Environment {
         let profile = profile_start();
         let snapshot = self.apply_lookahead_candidate(candidate, common);
         profile_end(ProfileMetric::EnvProposalApplyLookahead, profile);
-        let outcomes = self.outcomes(common);
-        let profile = profile_start();
-        let door_match = self.door_match_feature(common, &outcomes);
-        profile_end(ProfileMetric::EnvProposalDoorMatch, profile);
+        let feature_outcomes = self.feature_outcomes(common);
         let profile = profile_start();
         let features = self.features_for_applied_candidate(
             common,
@@ -2401,19 +2404,34 @@ impl Environment {
         let profile = profile_start();
         self.restore_lookahead_candidate(common, snapshot);
         profile_end(ProfileMetric::EnvProposalRestore, profile);
-        (outcomes, door_match, features)
+        (
+            feature_outcomes.preliminary,
+            feature_outcomes.door_match,
+            features,
+        )
     }
 
-    pub fn outcomes_after_candidate(
+    #[cfg(test)]
+    fn outcomes_after_candidate(
         &mut self,
         common: &CommonData,
         candidate: Action,
-    ) -> (PreliminaryOutcomes, Vec<i16>) {
+    ) -> FeatureOutcomes {
         let snapshot = self.apply_lookahead_candidate(candidate, common);
-        let outcomes = self.outcomes(common);
-        let door_match = self.door_match_feature(common, &outcomes);
+        let feature_outcomes = self.feature_outcomes(common);
         self.restore_lookahead_candidate(common, snapshot);
-        (outcomes, door_match)
+        feature_outcomes
+    }
+
+    pub fn feature_outcomes(&self, common: &CommonData) -> FeatureOutcomes {
+        let preliminary = self.outcomes(common);
+        let profile = profile_start();
+        let door_match = self.door_match_feature(common, &preliminary);
+        profile_end(ProfileMetric::EnvProposalDoorMatch, profile);
+        FeatureOutcomes {
+            preliminary,
+            door_match,
+        }
     }
 
     fn door_match_feature(&self, common: &CommonData, outcomes: &PreliminaryOutcomes) -> Vec<i16> {
@@ -3414,6 +3432,63 @@ mod tests {
                 assert!(neighbors[dst].contains(&src));
             }
         }
+    }
+
+    fn feature_outcome_test_common() -> CommonData {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            },
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        CommonData::new(rooms).unwrap()
+    }
+
+    fn feature_outcome_test_env(common: &CommonData) -> Environment {
+        let mut env = Environment::new(common, (4, 4), 0);
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            common,
+        );
+        env
+    }
+
+    fn assert_feature_outcomes_eq(left: &FeatureOutcomes, right: &FeatureOutcomes) {
+        assert_eq!(left.preliminary.door_valid, right.preliminary.door_valid);
+        assert_eq!(
+            left.preliminary.connections_valid,
+            right.preliminary.connections_valid
+        );
+        assert_eq!(
+            left.preliminary.toilet_valid,
+            right.preliminary.toilet_valid
+        );
+        assert_eq!(
+            left.preliminary.toilet_crossed_room_idx,
+            right.preliminary.toilet_crossed_room_idx
+        );
+        assert_eq!(left.door_match, right.door_match);
     }
 
     #[test]
@@ -5200,6 +5275,34 @@ mod tests {
     }
 
     #[test]
+    fn feature_outcomes_match_after_candidate_and_committed_step() {
+        let common = feature_outcome_test_common();
+        let actions = [
+            Action {
+                room_idx: 1,
+                x: 1,
+                y: 0,
+            },
+            Action {
+                room_idx: common.room.len() as RoomIdx,
+                x: 0,
+                y: 0,
+            },
+        ];
+
+        for action in actions {
+            let mut lookahead_env = feature_outcome_test_env(&common);
+            let expected = lookahead_env.outcomes_after_candidate(&common, action);
+
+            let mut stepped_env = feature_outcome_test_env(&common);
+            stepped_env.step(action, &common);
+            let actual = stepped_env.feature_outcomes(&common);
+
+            assert_feature_outcomes_eq(&expected, &actual);
+        }
+    }
+
+    #[test]
     fn features_do_not_depend_on_frontier_candidate_lists() {
         let rooms_json = r#"
         [
@@ -5544,14 +5647,16 @@ mod tests {
             &common,
         );
 
-        let (outcomes, _) = env.outcomes_after_candidate(
-            &common,
-            Action {
-                room_idx: 1,
-                x: 0,
-                y: 4,
-            },
-        );
+        let outcomes = env
+            .outcomes_after_candidate(
+                &common,
+                Action {
+                    room_idx: 1,
+                    x: 0,
+                    y: 4,
+                },
+            )
+            .preliminary;
         assert_eq!(outcomes.toilet_valid, DoorValidOutcome::Invalid);
 
         env.step_known(
@@ -5582,14 +5687,16 @@ mod tests {
             &common,
         );
 
-        let (outcomes, _) = env.outcomes_after_candidate(
-            &common,
-            Action {
-                room_idx: common.room.len() as RoomIdx,
-                x: 0,
-                y: 0,
-            },
-        );
+        let outcomes = env
+            .outcomes_after_candidate(
+                &common,
+                Action {
+                    room_idx: common.room.len() as RoomIdx,
+                    x: 0,
+                    y: 0,
+                },
+            )
+            .preliminary;
         assert_eq!(outcomes.toilet_valid, DoorValidOutcome::Invalid);
         assert_eq!(outcomes.toilet_crossed_room_idx, -1);
     }

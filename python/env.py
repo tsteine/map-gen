@@ -668,18 +668,16 @@ class EnvironmentGroup:
             ).to(device),
         )
 
-    def get_outcomes_after_candidates(
+    def get_current_feature_outcomes(
         self,
-        actions: Actions,
         device: torch.device,
-        environment_start: int = 0,
+        environment_start: int,
+        environment_count: int,
     ) -> PreliminaryOutcomes:
         door_invalid, connection_invalid, toilet_invalid, door_match = (
-            self.env.get_outcomes_after_candidates(
-                actions.room_idx.contiguous().cpu().numpy(),
-                actions.room_x.contiguous().cpu().numpy(),
-                actions.room_y.contiguous().cpu().numpy(),
+            self.env.get_current_feature_outcomes(
                 environment_start,
+                environment_count,
             )
         )
         return PreliminaryOutcomes(
