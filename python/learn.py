@@ -45,16 +45,7 @@ class FeatureTrainBatch:
 class PreparedTrainBatch:
     kind: Literal["fresh", "replay"]
     episode_data: EpisodeData
-    outcomes: StepOutcomes
-    toilet_crossed_room_idx: torch.Tensor
-    avg_frontiers: torch.Tensor
-    graph_diameter: torch.Tensor
-    save_distance: torch.Tensor
-    save_distance_mask: torch.Tensor
-    refill_distance: torch.Tensor
-    refill_distance_mask: torch.Tensor
-    missing_connect_distance: torch.Tensor
-    missing_connect_distance_mask: torch.Tensor
+    outcomes: EpisodeOutcomes
     door_matches: DoorMatches
     feature_batches: list[FeatureTrainBatch]
 
@@ -364,16 +355,7 @@ def prepare_feature_batch(
     device: torch.device,
     kind: Literal["fresh", "replay"],
     train_episode_data: EpisodeData,
-    train_outcomes: StepOutcomes,
-    toilet_crossed_room_idx: torch.Tensor,
-    avg_frontiers: torch.Tensor,
-    graph_diameter: torch.Tensor,
-    save_distance: torch.Tensor,
-    save_distance_mask: torch.Tensor,
-    refill_distance: torch.Tensor,
-    refill_distance_mask: torch.Tensor,
-    missing_connect_distance: torch.Tensor,
-    missing_connect_distance_mask: torch.Tensor,
+    train_outcomes: EpisodeOutcomes,
     proposal_data: ProposalData | None,
     env,
     episode_length: int,
@@ -391,15 +373,6 @@ def prepare_feature_batch(
         kind=kind,
         episode_data=train_episode_data,
         outcomes=train_outcomes,
-        toilet_crossed_room_idx=toilet_crossed_room_idx,
-        avg_frontiers=avg_frontiers,
-        graph_diameter=graph_diameter,
-        save_distance=save_distance,
-        save_distance_mask=save_distance_mask,
-        refill_distance=refill_distance,
-        refill_distance_mask=refill_distance_mask,
-        missing_connect_distance=missing_connect_distance,
-        missing_connect_distance_mask=missing_connect_distance_mask,
         door_matches=door_matches,
         feature_batches=feature_batches,
     )
@@ -425,16 +398,7 @@ def prepare_train_batch_task(
             context.device,
             task.kind,
             train_episode_data,
-            train_outcomes.step_outcomes,
-            train_outcomes.end_outcomes.toilet_crossed_room_idx,
-            train_outcomes.end_outcomes.avg_frontiers,
-            train_outcomes.end_outcomes.graph_diameter,
-            train_outcomes.end_outcomes.save_distance,
-            train_outcomes.end_outcomes.save_distance_mask,
-            train_outcomes.end_outcomes.refill_distance,
-            train_outcomes.end_outcomes.refill_distance_mask,
-            train_outcomes.end_outcomes.missing_connect_distance,
-            train_outcomes.end_outcomes.missing_connect_distance_mask,
+            train_outcomes,
             train_proposal_data,
             env,
             context.episode_length,
@@ -460,16 +424,7 @@ def prepare_train_batch_task(
     return PreparedTrainBatch(
         kind=task.kind,
         episode_data=replay_episode_data,
-        outcomes=replay_outcomes.step_outcomes,
-        toilet_crossed_room_idx=replay_outcomes.end_outcomes.toilet_crossed_room_idx,
-        avg_frontiers=replay_outcomes.end_outcomes.avg_frontiers,
-        graph_diameter=replay_outcomes.end_outcomes.graph_diameter,
-        save_distance=replay_outcomes.end_outcomes.save_distance,
-        save_distance_mask=replay_outcomes.end_outcomes.save_distance_mask,
-        refill_distance=replay_outcomes.end_outcomes.refill_distance,
-        refill_distance_mask=replay_outcomes.end_outcomes.refill_distance_mask,
-        missing_connect_distance=replay_outcomes.end_outcomes.missing_connect_distance,
-        missing_connect_distance_mask=replay_outcomes.end_outcomes.missing_connect_distance_mask,
+        outcomes=replay_outcomes,
         door_matches=replay_door_matches,
         feature_batches=feature_batches,
     )
@@ -485,7 +440,7 @@ def train_balance_batch_backward(
     balance_loss = compute_balance_loss(
         preds,
         prepared_batch.door_matches,
-        prepared_batch.toilet_crossed_room_idx,
+        prepared_batch.outcomes.end_outcomes.toilet_crossed_room_idx,
     )
     (balance_loss * loss_scale).backward()
     return balance_loss
@@ -602,12 +557,13 @@ def train_feature_batch_backward(
     if len(prepared_batch.feature_batches) == 0:
         raise RuntimeError("feature training batch has no sampled prefixes")
 
-    train_outcomes = prepared_batch.outcomes
+    step_outcomes = prepared_batch.outcomes.step_outcomes
+    end_outcomes = prepared_batch.outcomes.end_outcomes
     repeated_outcomes = StepOutcomes(
-        door_invalid=train_outcomes.door_invalid.unsqueeze(1),
-        connection_invalid=train_outcomes.connection_invalid.unsqueeze(1),
-        toilet_invalid=train_outcomes.toilet_invalid.unsqueeze(1),
-        door_match=train_outcomes.door_match.unsqueeze(1),
+        door_invalid=step_outcomes.door_invalid.unsqueeze(1),
+        connection_invalid=step_outcomes.connection_invalid.unsqueeze(1),
+        toilet_invalid=step_outcomes.toilet_invalid.unsqueeze(1),
+        door_match=step_outcomes.door_match.unsqueeze(1),
     )
     with torch.no_grad():
         balance_preds = context.balance_model(torch.log(prepared_batch.episode_data.temperature))
@@ -618,7 +574,7 @@ def train_feature_batch_backward(
         toilet_balance_score_target_logits, toilet_balance_score_mask = (
             compute_toilet_balance_score_target_logits(
                 balance_preds,
-                prepared_batch.toilet_crossed_room_idx,
+                end_outcomes.toilet_crossed_room_idx,
             )
         )
     repeated_balance_score_target_logits = balance_score_target_logits.unsqueeze(1)
@@ -626,32 +582,32 @@ def train_feature_batch_backward(
     repeated_toilet_balance_score_target_logits = toilet_balance_score_target_logits.unsqueeze(1)
     repeated_toilet_balance_score_mask = toilet_balance_score_mask.unsqueeze(1)
     batch_size = prepared_batch.episode_data.actions.room_idx.shape[0]
-    avg_frontiers_target = prepared_batch.avg_frontiers.to(context.device).unsqueeze(1)
+    avg_frontiers_target = end_outcomes.avg_frontiers.to(context.device).unsqueeze(1)
     avg_frontiers_mask = torch.ones(
         [batch_size, 1],
         dtype=torch.bool,
         device=context.device,
     )
-    graph_diameter_target = prepared_batch.graph_diameter.to(context.device).unsqueeze(1)
+    graph_diameter_target = end_outcomes.graph_diameter.to(context.device).unsqueeze(1)
     graph_diameter_mask = torch.ones(
         [batch_size, 1],
         dtype=torch.bool,
         device=context.device,
     )
-    save_distance_target = prepared_batch.save_distance.to(context.device).unsqueeze(1)
-    save_distance_mask = prepared_batch.save_distance_mask.to(
+    save_distance_target = end_outcomes.save_distance.to(context.device).unsqueeze(1)
+    save_distance_mask = end_outcomes.save_distance_mask.to(
         device=context.device,
         dtype=torch.bool,
     ).unsqueeze(1)
-    refill_distance_target = prepared_batch.refill_distance.to(context.device).unsqueeze(1)
-    refill_distance_mask = prepared_batch.refill_distance_mask.to(
+    refill_distance_target = end_outcomes.refill_distance.to(context.device).unsqueeze(1)
+    refill_distance_mask = end_outcomes.refill_distance_mask.to(
         device=context.device,
         dtype=torch.bool,
     ).unsqueeze(1)
-    missing_connect_distance_target = prepared_batch.missing_connect_distance.to(
+    missing_connect_distance_target = end_outcomes.missing_connect_distance.to(
         context.device
     ).unsqueeze(1)
-    missing_connect_distance_mask = prepared_batch.missing_connect_distance_mask.to(
+    missing_connect_distance_mask = end_outcomes.missing_connect_distance_mask.to(
         device=context.device,
         dtype=torch.bool,
     ).unsqueeze(1)
