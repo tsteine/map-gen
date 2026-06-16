@@ -754,10 +754,12 @@ impl RoomPartSaveDistanceCache {
         &mut self,
         graph_distance: &[GraphDistance],
         graph_size: usize,
+        active_room_parts: &[RoomPartIdx],
         save_part: usize,
     ) {
         self.save_room_part[save_part] = true;
-        for part in 0..graph_size {
+        for &part in active_room_parts {
+            let part = part as usize;
             let to_save = graph_distance[part * graph_size + save_part];
             if to_save < self.nearest_save_destination[part] {
                 self.nearest_save_destination[part] = to_save;
@@ -859,13 +861,15 @@ impl RoomPartFrontierDistanceCache {
         &mut self,
         graph_distance: &[GraphDistance],
         graph_size: usize,
+        active_room_parts: &[RoomPartIdx],
         frontier_part: usize,
     ) {
         self.frontier_room_part_count[frontier_part] += 1;
         if self.frontier_room_part_count[frontier_part] > 1 {
             return;
         }
-        for part in 0..graph_size {
+        for &part in active_room_parts {
+            let part = part as usize;
             let to_frontier = graph_distance[part * graph_size + frontier_part];
             if to_frontier < self.nearest_frontier_destination[part] {
                 self.nearest_frontier_destination[part] = to_frontier;
@@ -881,6 +885,7 @@ impl RoomPartFrontierDistanceCache {
         &mut self,
         graph_distance: &[GraphDistance],
         graph_size: usize,
+        active_room_parts: &[RoomPartIdx],
         frontier_part: usize,
     ) {
         debug_assert!(self.frontier_room_part_count[frontier_part] > 0);
@@ -888,7 +893,8 @@ impl RoomPartFrontierDistanceCache {
         if self.frontier_room_part_count[frontier_part] > 0 {
             return;
         }
-        for part in 0..graph_size {
+        for &part in active_room_parts {
+            let part = part as usize;
             if self.nearest_frontier_destination[part]
                 == graph_distance[part * graph_size + frontier_part]
             {
@@ -1596,6 +1602,7 @@ impl Environment {
                 self.room_part_frontier_distance_cache.remove_frontier_part(
                     &self.graph_distance,
                     common.room_part.len(),
+                    &self.active_room_parts,
                     frontier.room_part_idx as usize,
                 );
                 self.add_component_edge(
@@ -1682,6 +1689,7 @@ impl Environment {
                 self.room_part_frontier_distance_cache.add_frontier_part(
                     &self.graph_distance,
                     common.room_part.len(),
+                    &self.active_room_parts,
                     frontier_part as usize,
                 );
                 self.frontier.insert(door_loc, frontier);
@@ -1818,6 +1826,7 @@ impl Environment {
                 self.room_part_save_distance_cache.add_save_part(
                     &self.graph_distance,
                     graph_size,
+                    &self.active_room_parts,
                     room.door_group_offset + local_part,
                 );
             }
@@ -1827,6 +1836,7 @@ impl Environment {
                 self.room_part_refill_distance_cache.add_save_part(
                     &self.graph_distance,
                     graph_size,
+                    &self.active_room_parts,
                     room.door_group_offset + local_part,
                 );
             }
@@ -4496,8 +4506,13 @@ mod tests {
         env.set_graph_distance(graph_size, 1, 0, 2);
         env.set_graph_distance(graph_size, 0, 1, 4);
         env.set_graph_distance(graph_size, 2, 0, 5);
-        env.room_part_save_distance_cache
-            .add_save_part(&env.graph_distance, graph_size, 0);
+        let active_room_parts = env.active_room_parts.clone();
+        env.room_part_save_distance_cache.add_save_part(
+            &env.graph_distance,
+            graph_size,
+            &active_room_parts,
+            0,
+        );
 
         assert_eq!(env.room_part_save_distance_features(&common), vec![1, 7, 0]);
         env.assert_room_part_save_distance_cache_matches_slow(&common);
@@ -4546,10 +4561,19 @@ mod tests {
         env.set_graph_distance(graph_size, 0, 2, 10);
         env.set_graph_distance(graph_size, 2, 1, 20);
         env.set_graph_distance(graph_size, 1, 2, 30);
-        env.room_part_save_distance_cache
-            .add_save_part(&env.graph_distance, graph_size, 0);
-        env.room_part_save_distance_cache
-            .add_save_part(&env.graph_distance, graph_size, 1);
+        let active_room_parts = env.active_room_parts.clone();
+        env.room_part_save_distance_cache.add_save_part(
+            &env.graph_distance,
+            graph_size,
+            &active_room_parts,
+            0,
+        );
+        env.room_part_save_distance_cache.add_save_part(
+            &env.graph_distance,
+            graph_size,
+            &active_room_parts,
+            1,
+        );
 
         assert_eq!(
             env.room_part_save_distance_features(&common),
@@ -4621,8 +4645,13 @@ mod tests {
                 candidates: vec![],
             },
         );
-        env.room_part_frontier_distance_cache
-            .add_frontier_part(&env.graph_distance, graph_size, 0);
+        let active_room_parts = env.active_room_parts.clone();
+        env.room_part_frontier_distance_cache.add_frontier_part(
+            &env.graph_distance,
+            graph_size,
+            &active_room_parts,
+            0,
+        );
 
         assert_eq!(
             env.room_part_frontier_distance_features(&common),
@@ -4672,6 +4701,7 @@ mod tests {
         env.set_graph_distance(graph_size, 0, 2, 10);
         env.set_graph_distance(graph_size, 2, 1, 20);
         env.set_graph_distance(graph_size, 1, 2, 30);
+        let active_room_parts = env.active_room_parts.clone();
 
         for (idx, frontier_part) in [(0, 0), (1, 1), (2, 1)] {
             env.frontier.insert(
@@ -4687,6 +4717,7 @@ mod tests {
             env.room_part_frontier_distance_cache.add_frontier_part(
                 &env.graph_distance,
                 graph_size,
+                &active_room_parts,
                 frontier_part as usize,
             );
         }
@@ -4706,6 +4737,7 @@ mod tests {
         env.room_part_frontier_distance_cache.remove_frontier_part(
             &env.graph_distance,
             graph_size,
+            &active_room_parts,
             1,
         );
         assert_eq!(
@@ -4717,6 +4749,7 @@ mod tests {
         env.room_part_frontier_distance_cache.remove_frontier_part(
             &env.graph_distance,
             graph_size,
+            &active_room_parts,
             1,
         );
         assert_eq!(
