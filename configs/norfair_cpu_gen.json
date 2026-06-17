@@ -64,6 +64,7 @@
     "frontier_neighbor_algorithm": "nearest-exclusive",
     "frontier_neighbor_count": 1,
     "frontier_window_size": 8,
+    "candidate_spatial_cell_size": 8,
     "num_threads": 1
   },
   "features": {

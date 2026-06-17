@@ -66,9 +66,12 @@ class Args:
     device: str
     load_checkpoint: Path | None
     profile: bool
+    ignore_scores: bool
 
 
 type RustProfileReport = list[tuple[str, int, int]]
+
+IGNORE_SCORES_TEMPERATURE = 1.0e9
 
 
 def compute_door_match_count_ss(counts: torch.Tensor, dim: int) -> torch.Tensor:
@@ -444,6 +447,7 @@ def create_generation_environment_groups_for_device(
         engine.create_environment_group(
             config.map_size,
             generation_group_environments,
+            config.generation.candidate_spatial_cell_size,
             seed=device_index * config.generation.pipeline_groups + group_index,
             frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
             frontier_neighbor_count=config.generation.frontier_neighbor_count,
@@ -459,20 +463,29 @@ def create_generate_config(
     episode_length: int,
     num_envs: int,
     device: torch.device,
+    ignore_scores: bool,
 ) -> GenerateConfig:
+    temperature = (
+        IGNORE_SCORES_TEMPERATURE if ignore_scores else config.generation.temperature
+    )
+    proposal_temperature = (
+        IGNORE_SCORES_TEMPERATURE
+        if ignore_scores
+        else config.generation.proposal_temperature
+    )
     return GenerateConfig(
         episode_length=episode_length,
         recommended_candidates=config.generation.recommended_candidates,
         shortlist_candidates=config.generation.shortlist_candidates,
         temperature=torch.full(
             [num_envs],
-            config.generation.temperature,
+            temperature,
             dtype=torch.float32,
             device=device,
         ),
         proposal_temperature=torch.full(
             [num_envs],
-            config.generation.proposal_temperature,
+            proposal_temperature,
             dtype=torch.float32,
             device=device,
         ),
@@ -498,6 +511,7 @@ class GenerationProcessState:
     envs: list
     model: torch.nn.Module
     profile: bool
+    ignore_scores: bool
 
 
 GENERATION_PROCESS_STATE: GenerationProcessState | None = None
@@ -509,6 +523,7 @@ def initialize_generation_process(
     device_text: str,
     device_index: int,
     profile: bool,
+    ignore_scores: bool,
 ) -> None:
     global GENERATION_PROCESS_STATE
     config = Config.model_validate_json(config_json)
@@ -536,6 +551,7 @@ def initialize_generation_process(
         envs=envs,
         model=model,
         profile=profile,
+        ignore_scores=ignore_scores,
     )
 
 
@@ -559,6 +575,7 @@ def run_generation_process_task(
             state.episode_length,
             env.num_envs,
             state.device,
+            state.ignore_scores,
         )
         for env in state.envs
     ]
@@ -1060,6 +1077,7 @@ class TrainingSession:
                 self.episode_length,
                 1,
                 self.device,
+                False,
             )
             balance_preds = self.balance_model(torch.log(generate_config.temperature))
             balance_door_match_ss = compute_balance_door_match_ss(balance_preds)
@@ -1368,6 +1386,11 @@ def parse_args() -> Args:
         action="store_true",
         help="log per-round Rust engine command timing",
     )
+    parser.add_argument(
+        "--ignore-scores",
+        action="store_true",
+        help="set generation temperature and proposal_temperature to a large finite value",
+    )
     namespace = parser.parse_args()
     return Args(
         config=namespace.config,
@@ -1375,6 +1398,7 @@ def parse_args() -> Args:
         device=namespace.device,
         load_checkpoint=namespace.load_checkpoint,
         profile=namespace.profile,
+        ignore_scores=namespace.ignore_scores,
     )
 
 
@@ -1470,6 +1494,11 @@ def setup_logging(config: Config, args: Args) -> str:
         logging.info("Loading checkpoint from %s", args.load_checkpoint)
     if args.profile:
         logging.info("Rust engine profiling enabled.")
+    if args.ignore_scores:
+        logging.info(
+            "Generation scores ignored with sampling temperatures set to %s.",
+            IGNORE_SCORES_TEMPERATURE,
+        )
     return run_path
 
 
@@ -1488,6 +1517,7 @@ def create_train_batch_environment_groups(config: Config, engine: Engine):
         engine.create_environment_group(
             config.map_size,
             config.train.batch_size,
+            config.generation.candidate_spatial_cell_size,
             frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
             frontier_neighbor_count=config.generation.frontier_neighbor_count,
             frontier_window_size=config.generation.frontier_window_size,
@@ -1523,6 +1553,7 @@ def create_generation_process_executors(
     rooms: list[dict],
     generation_devices: list[torch.device],
     profile: bool,
+    ignore_scores: bool,
 ) -> list[ProcessPoolExecutor]:
     logging.info(
         "Using %s generation process(es), one per generation device.",
@@ -1536,7 +1567,14 @@ def create_generation_process_executors(
             max_workers=1,
             mp_context=context,
             initializer=initialize_generation_process,
-            initargs=(config_json, rooms_json, str(generation_device), device_index, profile),
+            initargs=(
+                config_json,
+                rooms_json,
+                str(generation_device),
+                device_index,
+                profile,
+                ignore_scores,
+            ),
         )
         for device_index, generation_device in enumerate(generation_devices)
     ]
@@ -1597,6 +1635,7 @@ def build_session(args: Args) -> TrainingSession:
         rooms,
         generation_devices,
         args.profile,
+        args.ignore_scores,
     )
     initial_config = instantiate_scheduleable_config(config, 0)
     main_optimizer = create_main_optimizer(

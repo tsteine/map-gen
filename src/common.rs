@@ -4,6 +4,8 @@ use hashbrown::HashMap;
 use serde::Deserialize;
 
 pub type RoomIdx = u8; // index into provided room geometry JSON array
+pub type ActionIdx = u8; // index into an environment's placed action history
+pub type SpatialCellIdx = u8; // index into an environment's coarse spatial grid
 pub type GeometryIdx = u8; // flat index of unique room geometries (map + door layout)
 pub type ConnectionVariantIdx = u8; // flat index of unique room types (map + door layout + connections + room effects)
 pub type FrontierIdx = i16; // index into the sorted frontier feature rows

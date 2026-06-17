@@ -542,6 +542,7 @@ class Engine:
         self,
         map_size: tuple[int, int],
         num_envs: int,
+        candidate_spatial_cell_size: int,
         seed: Optional[int] = None,
         frontier_neighbor_count: int = 4,
         frontier_window_size: int = 16,
@@ -558,6 +559,7 @@ class Engine:
             seed,
             frontier_neighbor_count,
             frontier_window_size,
+            candidate_spatial_cell_size,
             num_threads,
             frontier_neighbor_algorithm,
         )

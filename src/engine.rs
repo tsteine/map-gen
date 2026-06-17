@@ -1827,7 +1827,7 @@ impl Engine {
         })
     }
 
-    #[pyo3(signature = (map_size, num_environments, seed, frontier_neighbor_count, frontier_window_size, num_threads=None, frontier_neighbor_algorithm="delaunay"))]
+    #[pyo3(signature = (map_size, num_environments, seed, frontier_neighbor_count, frontier_window_size, candidate_spatial_cell_size, num_threads=None, frontier_neighbor_algorithm="delaunay"))]
     fn create_environment_group(
         &self,
         map_size: (Coord, Coord),
@@ -1835,6 +1835,7 @@ impl Engine {
         seed: u64,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
+        candidate_spatial_cell_size: usize,
         num_threads: Option<usize>,
         frontier_neighbor_algorithm: &str,
     ) -> PyResult<EnvironmentGroup> {
@@ -1857,6 +1858,7 @@ impl Engine {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
+            candidate_spatial_cell_size,
             num_threads,
         )
     }
@@ -1922,8 +1924,14 @@ impl EnvironmentGroup {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
+        candidate_spatial_cell_size: usize,
         num_threads: Option<usize>,
     ) -> PyResult<Self> {
+        if candidate_spatial_cell_size == 0 {
+            return Err(PyValueError::new_err(
+                "candidate_spatial_cell_size must be greater than 0",
+            ));
+        }
         let requested_threads = requested_num_threads(num_threads)?;
         let worker_count = min(requested_threads, max(num_environments, 1));
 
@@ -1939,6 +1947,7 @@ impl EnvironmentGroup {
                 environments.push(Environment::new(
                     &common_data,
                     map_size,
+                    candidate_spatial_cell_size,
                     seed ^ env_idx as u64,
                 ));
             }

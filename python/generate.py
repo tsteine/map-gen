@@ -305,6 +305,7 @@ def create_generation_environment_groups(
             engine.create_environment_group(
                 config.map_size,
                 generation_group_environments,
+                config.generation.candidate_spatial_cell_size,
                 seed=device_index * config.generation.pipeline_groups + group_index,
                 frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
                 frontier_neighbor_count=config.generation.frontier_neighbor_count,
@@ -649,12 +650,13 @@ def select_candidate_actions(
 
         profile_time = profile_start(profile)
         # Replace dummy candidates to have -inf reward, so they are never selected unless there are no other candidates.
-        expected_reward = torch.where(
-            candidates.room_idx == num_rooms,
-            torch.full_like(expected_reward, float("-inf")),
-            expected_reward,
-        )
+        dummy_candidate = candidates.room_idx == num_rooms
         candidate_logits = expected_reward / torch.unsqueeze(group.config.temperature, 1)
+        candidate_logits = torch.where(
+            dummy_candidate,
+            torch.full_like(candidate_logits, float("-inf")),
+            candidate_logits,
+        )
         valid_row = torch.any(torch.isfinite(candidate_logits), dim=1)
         safe_candidate_logits = torch.where(
             valid_row.unsqueeze(1),
