@@ -125,25 +125,14 @@ def apply_frontier_door_invalid_logits(
     safe_row_snapshot_idx = row_snapshot_idx.clamp(0, snapshot_count - 1)
     safe_row_door_output_idx = row_door_output_idx.clamp(0, door_output_count - 1)
     row_lookup_idx = safe_row_snapshot_idx * door_output_count + safe_row_door_output_idx
-    door_lookup = door_invalid.new_zeros([snapshot_count * door_output_count])
-    door_lookup.scatter_add_(
-        0,
-        row_lookup_idx,
-        torch.where(valid_rows, frontier_door_invalid, 0),
+    door_invalid_flat = door_invalid.flatten().clone()
+    scatter_values = torch.where(
+        valid_rows,
+        frontier_door_invalid,
+        door_invalid_flat.detach().gather(0, row_lookup_idx),
     )
-    door_lookup_valid = door_invalid.new_zeros([snapshot_count * door_output_count])
-    door_lookup_valid.scatter_add_(
-        0,
-        row_lookup_idx,
-        valid_rows.to(door_invalid.dtype),
-    )
-    door_lookup = door_lookup.view(snapshot_count, 1, door_output_count)
-    door_lookup_valid = door_lookup_valid.view(snapshot_count, 1, door_output_count)
-    return torch.where(
-        door_lookup_valid > 0,
-        door_lookup,
-        door_invalid,
-    )
+    door_invalid_flat.scatter_(0, row_lookup_idx, scatter_values)
+    return door_invalid_flat.view_as(door_invalid)
 
 
 def normalize(x: torch.Tensor):

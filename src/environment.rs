@@ -188,6 +188,7 @@ pub enum FrontierNeighborAlgorithm {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frontier {
     dir_door_idx: DirDoorIdx,
+    door_output_idx: i16,
     room_part_idx: RoomPartIdx,
     component: usize,
     kind: DoorKind,
@@ -1894,8 +1895,14 @@ impl Environment {
                 let frontier_part = common.room_dir_door[door.direction as usize]
                     [door.dir_door_idx as usize]
                     .room_part_idx;
+                let door_output_idx = common.room_dir_door[..door.direction as usize]
+                    .iter()
+                    .map(Vec::len)
+                    .sum::<usize>()
+                    + door.dir_door_idx as usize;
                 let frontier = Frontier {
                     dir_door_idx: door.dir_door_idx,
+                    door_output_idx: door_output_idx as i16,
                     room_part_idx: frontier_part,
                     component: self.room_part_component(common, action.room_idx, door.part_idx),
                     kind: common.room_dir_door[door.direction as usize][door.dir_door_idx as usize]
@@ -2945,6 +2952,7 @@ impl Environment {
                     location,
                     Frontier {
                         dir_door_idx: frontier.dir_door_idx,
+                        door_output_idx: frontier.door_output_idx,
                         room_part_idx: frontier.room_part_idx,
                         component: frontier.component,
                         kind: frontier.kind,
@@ -3146,33 +3154,9 @@ impl Environment {
         profile_end(ProfileMetric::EnvFeaturesSortFrontiers, profile);
 
         let row_door_output_idx = if config.has_frontier_features() {
-            let door_output_idx_by_location = common
-                .room_dir_door
-                .iter()
-                .flatten()
-                .enumerate()
-                .filter_map(|(output_idx, door)| {
-                    if !self.room_used[door.room_idx as usize] {
-                        return None;
-                    }
-                    Some((
-                        DoorLocation::from_room_dir_door(
-                            door,
-                            self.room_x[door.room_idx as usize],
-                            self.room_y[door.room_idx as usize],
-                        ),
-                        output_idx as i16,
-                    ))
-                })
-                .collect::<HashMap<_, _>>();
             sorted_frontiers
                 .iter()
-                .map(|(location, _)| {
-                    door_output_idx_by_location
-                        .get(*location)
-                        .copied()
-                        .unwrap_or(-1)
-                })
+                .map(|(_, frontier)| frontier.door_output_idx)
                 .collect::<Vec<_>>()
         } else {
             vec![]
@@ -4039,6 +4023,7 @@ mod tests {
             door_location(0, 0, false),
             Frontier {
                 dir_door_idx: 0,
+                door_output_idx: -1,
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
@@ -4049,6 +4034,7 @@ mod tests {
             door_location(1, 0, false),
             Frontier {
                 dir_door_idx: 0,
+                door_output_idx: -1,
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
@@ -5088,6 +5074,7 @@ mod tests {
             door_location(0, 0, false),
             Frontier {
                 dir_door_idx: 0,
+                door_output_idx: -1,
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
@@ -5157,6 +5144,7 @@ mod tests {
                 door_location(idx, 0, false),
                 Frontier {
                     dir_door_idx: 0,
+                    door_output_idx: -1,
                     room_part_idx: frontier_part,
                     component: 0,
                     kind: 0,
