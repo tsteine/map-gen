@@ -138,6 +138,13 @@ def mean_distance_penalty(distance: torch.Tensor) -> torch.Tensor:
     return torch.mean(distance, dim=2)
 
 
+def mean_proximity_utility(utility: torch.Tensor) -> torch.Tensor:
+    utility = utility.to(torch.float32)
+    if utility.shape[2] == 0:
+        return torch.sum(utility, dim=2)
+    return torch.mean(utility, dim=2)
+
+
 # preds.door_invalid: [batch_size, max_candidates, num_outputs]
 # preds.connection_invalid: [batch_size, max_candidates, num_outputs]
 # preds.toilet_invalid: [batch_size, max_candidates]
@@ -170,8 +177,16 @@ def compute_expected_reward(
         + config.reward_toilet_balance * toilet_balance_scores
         - config.reward_frontier * preds.avg_frontiers.to(torch.float32)
         - config.reward_graph_diameter * preds.graph_diameter.to(torch.float32)
-        - config.reward_save_distance * mean_distance_penalty(preds.save_distance)
-        - config.reward_refill_distance * mean_distance_penalty(preds.refill_distance)
+        + config.reward_save_distance
+        * (
+            mean_proximity_utility(preds.save_to_room_utility)
+            + mean_proximity_utility(preds.save_from_room_utility)
+        )
+        + config.reward_refill_distance
+        * (
+            mean_proximity_utility(preds.refill_to_room_utility)
+            + mean_proximity_utility(preds.refill_from_room_utility)
+        )
         - (
             config.reward_missing_connect_distance
             * mean_distance_penalty(preds.missing_connect_distance)
@@ -622,12 +637,22 @@ def select_candidate_actions(
                 ),
                 avg_frontiers=preds.avg_frontiers.view(environment_count, candidate_count),
                 graph_diameter=preds.graph_diameter.view(environment_count, candidate_count),
-                save_distance=preds.save_distance.view(
+                save_to_room_utility=preds.save_to_room_utility.view(
                     environment_count,
                     candidate_count,
                     -1,
                 ),
-                refill_distance=preds.refill_distance.view(
+                save_from_room_utility=preds.save_from_room_utility.view(
+                    environment_count,
+                    candidate_count,
+                    -1,
+                ),
+                refill_to_room_utility=preds.refill_to_room_utility.view(
+                    environment_count,
+                    candidate_count,
+                    -1,
+                ),
+                refill_from_room_utility=preds.refill_from_room_utility.view(
                     environment_count,
                     candidate_count,
                     -1,
@@ -959,6 +984,12 @@ def merge_generation_results(
                         for _, episode_outcomes, _, _ in results
                     ]
                 ),
+                active_room_part_mask=torch.cat(
+                    [
+                        episode_outcomes.end_outcomes.active_room_part_mask
+                        for _, episode_outcomes, _, _ in results
+                    ]
+                ),
                 save_distance=torch.cat(
                     [
                         episode_outcomes.end_outcomes.save_distance
@@ -971,6 +1002,30 @@ def merge_generation_results(
                         for _, episode_outcomes, _, _ in results
                     ]
                 ),
+                save_to_room_distance=torch.cat(
+                    [
+                        episode_outcomes.end_outcomes.save_to_room_distance
+                        for _, episode_outcomes, _, _ in results
+                    ]
+                ),
+                save_to_room_distance_mask=torch.cat(
+                    [
+                        episode_outcomes.end_outcomes.save_to_room_distance_mask
+                        for _, episode_outcomes, _, _ in results
+                    ]
+                ),
+                save_from_room_distance=torch.cat(
+                    [
+                        episode_outcomes.end_outcomes.save_from_room_distance
+                        for _, episode_outcomes, _, _ in results
+                    ]
+                ),
+                save_from_room_distance_mask=torch.cat(
+                    [
+                        episode_outcomes.end_outcomes.save_from_room_distance_mask
+                        for _, episode_outcomes, _, _ in results
+                    ]
+                ),
                 refill_distance=torch.cat(
                     [
                         episode_outcomes.end_outcomes.refill_distance
@@ -980,6 +1035,30 @@ def merge_generation_results(
                 refill_distance_mask=torch.cat(
                     [
                         episode_outcomes.end_outcomes.refill_distance_mask
+                        for _, episode_outcomes, _, _ in results
+                    ]
+                ),
+                refill_to_room_distance=torch.cat(
+                    [
+                        episode_outcomes.end_outcomes.refill_to_room_distance
+                        for _, episode_outcomes, _, _ in results
+                    ]
+                ),
+                refill_to_room_distance_mask=torch.cat(
+                    [
+                        episode_outcomes.end_outcomes.refill_to_room_distance_mask
+                        for _, episode_outcomes, _, _ in results
+                    ]
+                ),
+                refill_from_room_distance=torch.cat(
+                    [
+                        episode_outcomes.end_outcomes.refill_from_room_distance
+                        for _, episode_outcomes, _, _ in results
+                    ]
+                ),
+                refill_from_room_distance_mask=torch.cat(
+                    [
+                        episode_outcomes.end_outcomes.refill_from_room_distance_mask
                         for _, episode_outcomes, _, _ in results
                     ]
                 ),

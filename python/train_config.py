@@ -148,6 +148,7 @@ class Config(StrictBaseModel):
     knot_episodes: list[int]
     checkpoint_period: int
     visualize: int
+    distance_proximity_scale: float
     model: ModelConfig
     optimizer: OptimizerConfig
     balance_model: BalanceModelConfig
@@ -211,6 +212,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("checkpoint_period must be greater than zero")
     if config.visualize < 0:
         raise ValueError("visualize must be greater than or equal to zero")
+    if config.distance_proximity_scale <= 0:
+        raise ValueError("distance_proximity_scale must be greater than zero")
     if config.model.global_embedding_width <= 0:
         raise ValueError("model.global_embedding_width must be greater than zero")
     if config.model.global_room_position_embedding_width <= 0:

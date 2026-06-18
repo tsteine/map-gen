@@ -34,10 +34,14 @@ class Predictions:
     avg_frontiers: torch.Tensor
     # Predicted graph diameter across placed room parts:
     graph_diameter: torch.Tensor
-    # Predicted save distance for each global room part:
-    save_distance: torch.Tensor
-    # Predicted refill distance for each global room part:
-    refill_distance: torch.Tensor
+    # Predicted save-to-room proximity utility for each global room part:
+    save_to_room_utility: torch.Tensor
+    # Predicted room-to-save proximity utility for each global room part:
+    save_from_room_utility: torch.Tensor
+    # Predicted refill-to-room proximity utility for each global room part:
+    refill_to_room_utility: torch.Tensor
+    # Predicted room-to-refill proximity utility for each global room part:
+    refill_from_room_utility: torch.Tensor
     # Predicted distance for each required missing connection:
     missing_connect_distance: torch.Tensor
     # Frontier-local proposal logits for door variants:
@@ -72,8 +76,10 @@ def get_predictions(raw_preds, output_sizes):
         toilet_balance_score=preds[4].squeeze(-1),
         avg_frontiers=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1]]),
         graph_diameter=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1]]),
-        save_distance=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
-        refill_distance=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
+        save_to_room_utility=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
+        save_from_room_utility=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
+        refill_to_room_utility=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
+        refill_from_room_utility=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         missing_connect_distance=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_score=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_state=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
@@ -475,8 +481,13 @@ class FrontierModel(torch.nn.Module):
         self.toilet_balance_score_output = torch.nn.Linear(embedding_width, 1)
         self.avg_frontiers_output = torch.nn.Linear(embedding_width, 1)
         self.graph_diameter_output = torch.nn.Linear(embedding_width, 1)
-        self.save_distance_output = torch.nn.Linear(embedding_width, self.num_room_parts)
-        self.refill_distance_output = torch.nn.Linear(embedding_width, self.num_room_parts)
+        self.save_to_room_utility_output = torch.nn.Linear(embedding_width, self.num_room_parts)
+        self.save_from_room_utility_output = torch.nn.Linear(embedding_width, self.num_room_parts)
+        self.refill_to_room_utility_output = torch.nn.Linear(embedding_width, self.num_room_parts)
+        self.refill_from_room_utility_output = torch.nn.Linear(
+            embedding_width,
+            self.num_room_parts,
+        )
         self.missing_connect_distance_output = torch.nn.Linear(
             embedding_width,
             self.num_connection_outputs,
@@ -937,8 +948,18 @@ class FrontierModel(torch.nn.Module):
         toilet_balance_score = self.toilet_balance_score_output(X)
         avg_frontiers = self.avg_frontiers_output(X).squeeze(-1).to(torch.float32)
         graph_diameter = self.graph_diameter_output(X).squeeze(-1).to(torch.float32)
-        save_distance = self.save_distance_output(X).to(torch.float32)
-        refill_distance = self.refill_distance_output(X).to(torch.float32)
+        save_to_room_utility = torch.sigmoid(
+            self.save_to_room_utility_output(X).to(torch.float32)
+        )
+        save_from_room_utility = torch.sigmoid(
+            self.save_from_room_utility_output(X).to(torch.float32)
+        )
+        refill_to_room_utility = torch.sigmoid(
+            self.refill_to_room_utility_output(X).to(torch.float32)
+        )
+        refill_from_room_utility = torch.sigmoid(
+            self.refill_from_room_utility_output(X).to(torch.float32)
+        )
         missing_connect_distance = self.missing_connect_distance_output(X).to(torch.float32)
         preds = get_predictions(
             torch.cat([door, connection, toilet, balance_score, toilet_balance_score], dim=-1),
@@ -968,8 +989,10 @@ class FrontierModel(torch.nn.Module):
             toilet_balance_score=preds.toilet_balance_score,
             avg_frontiers=avg_frontiers,
             graph_diameter=graph_diameter,
-            save_distance=save_distance,
-            refill_distance=refill_distance,
+            save_to_room_utility=save_to_room_utility,
+            save_from_room_utility=save_from_room_utility,
+            refill_to_room_utility=refill_to_room_utility,
+            refill_from_room_utility=refill_from_room_utility,
             missing_connect_distance=missing_connect_distance,
             proposal_score=proposal_score,
             proposal_state=proposal_state,

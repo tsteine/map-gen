@@ -37,6 +37,7 @@ from learn import (
     MainLossBreakdown,
     TrainRoundContext,
     compute_candidate_diagnostics,
+    distance_proximity_utility,
     train_round as run_train_round,
 )
 from loss import (
@@ -499,6 +500,7 @@ def create_generate_config(
         reward_save_distance=config.generation.reward_save_distance,
         reward_refill_distance=config.generation.reward_refill_distance,
         reward_missing_connect_distance=config.generation.reward_missing_connect_distance,
+        distance_proximity_scale=config.distance_proximity_scale,
         autocast=config.model.generation_autocast,
     )
 
@@ -882,6 +884,12 @@ class TrainingSession:
                     graph_diameter=torch.cat(
                         [outcomes.end_outcomes.graph_diameter for outcomes in outcome_iterations]
                     ),
+                    active_room_part_mask=torch.cat(
+                        [
+                            outcomes.end_outcomes.active_room_part_mask
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
                     save_distance=torch.cat(
                         [outcomes.end_outcomes.save_distance for outcomes in outcome_iterations]
                     ),
@@ -891,12 +899,60 @@ class TrainingSession:
                             for outcomes in outcome_iterations
                         ]
                     ),
+                    save_to_room_distance=torch.cat(
+                        [
+                            outcomes.end_outcomes.save_to_room_distance
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
+                    save_to_room_distance_mask=torch.cat(
+                        [
+                            outcomes.end_outcomes.save_to_room_distance_mask
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
+                    save_from_room_distance=torch.cat(
+                        [
+                            outcomes.end_outcomes.save_from_room_distance
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
+                    save_from_room_distance_mask=torch.cat(
+                        [
+                            outcomes.end_outcomes.save_from_room_distance_mask
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
                     refill_distance=torch.cat(
                         [outcomes.end_outcomes.refill_distance for outcomes in outcome_iterations]
                     ),
                     refill_distance_mask=torch.cat(
                         [
                             outcomes.end_outcomes.refill_distance_mask
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
+                    refill_to_room_distance=torch.cat(
+                        [
+                            outcomes.end_outcomes.refill_to_room_distance
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
+                    refill_to_room_distance_mask=torch.cat(
+                        [
+                            outcomes.end_outcomes.refill_to_room_distance_mask
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
+                    refill_from_room_distance=torch.cat(
+                        [
+                            outcomes.end_outcomes.refill_from_room_distance
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
+                    refill_from_room_distance_mask=torch.cat(
+                        [
+                            outcomes.end_outcomes.refill_from_room_distance_mask
                             for outcomes in outcome_iterations
                         ]
                     ),
@@ -1034,6 +1090,54 @@ class TrainingSession:
             end_outcomes.refill_distance.to(torch.float32) * refill_distance_mask
         ) / (refill_distance_mask_count + 1e-15)
         refill_distance_mask_fraction = torch.mean(refill_distance_mask)
+        active_room_part_mask = end_outcomes.active_room_part_mask.to(torch.float32)
+        active_room_part_count = torch.sum(active_room_part_mask)
+        save_to_room_distance_mask = end_outcomes.save_to_room_distance_mask.to(torch.float32)
+        save_from_room_distance_mask = end_outcomes.save_from_room_distance_mask.to(torch.float32)
+        refill_to_room_distance_mask = end_outcomes.refill_to_room_distance_mask.to(torch.float32)
+        refill_from_room_distance_mask = end_outcomes.refill_from_room_distance_mask.to(
+            torch.float32
+        )
+        save_to_room_utility = distance_proximity_utility(
+            end_outcomes.save_to_room_distance,
+            end_outcomes.save_to_room_distance_mask,
+            step_config.distance_proximity_scale,
+        )
+        save_from_room_utility = distance_proximity_utility(
+            end_outcomes.save_from_room_distance,
+            end_outcomes.save_from_room_distance_mask,
+            step_config.distance_proximity_scale,
+        )
+        refill_to_room_utility = distance_proximity_utility(
+            end_outcomes.refill_to_room_distance,
+            end_outcomes.refill_to_room_distance_mask,
+            step_config.distance_proximity_scale,
+        )
+        refill_from_room_utility = distance_proximity_utility(
+            end_outcomes.refill_from_room_distance,
+            end_outcomes.refill_from_room_distance_mask,
+            step_config.distance_proximity_scale,
+        )
+        save_proximity_utility = torch.sum(
+            (save_to_room_utility + save_from_room_utility) * active_room_part_mask
+        ) / (2.0 * active_room_part_count + 1e-15)
+        refill_proximity_utility = torch.sum(
+            (refill_to_room_utility + refill_from_room_utility) * active_room_part_mask
+        ) / (2.0 * active_room_part_count + 1e-15)
+        save_unreachable_fraction = torch.sum(
+            (
+                2.0 * active_room_part_mask
+                - save_to_room_distance_mask
+                - save_from_room_distance_mask
+            )
+        ) / (2.0 * active_room_part_count + 1e-15)
+        refill_unreachable_fraction = torch.sum(
+            (
+                2.0 * active_room_part_mask
+                - refill_to_room_distance_mask
+                - refill_from_room_distance_mask
+            )
+        ) / (2.0 * active_room_part_count + 1e-15)
         missing_connect_distance_mask = end_outcomes.missing_connect_distance_mask.to(
             torch.float32
         )
@@ -1147,8 +1251,12 @@ class TrainingSession:
             "graph_diameter": graph_diameter,
             "save_distance": save_distance,
             "save_distance_mask_fraction": save_distance_mask_fraction,
+            "save_proximity_utility": save_proximity_utility,
+            "save_unreachable_fraction": save_unreachable_fraction,
             "refill_distance": refill_distance,
             "refill_distance_mask_fraction": refill_distance_mask_fraction,
+            "refill_proximity_utility": refill_proximity_utility,
+            "refill_unreachable_fraction": refill_unreachable_fraction,
             "missing_connect_distance": missing_connect_distance,
             "missing_connect_distance_mask_fraction": missing_connect_distance_mask_fraction,
             "avg_door": avg_door,
@@ -1175,6 +1283,7 @@ class TrainingSession:
             "reward_missing_connect_distance": (
                 step_config.generation.reward_missing_connect_distance
             ),
+            "distance_proximity_scale": step_config.distance_proximity_scale,
             "ema_decay": step_config.train.ema_decay,
             "toilet_weight": step_config.train.toilet_weight,
             "toilet_balance_weight": step_config.train.toilet_balance_weight,
@@ -1662,6 +1771,7 @@ def build_session(args: Args) -> TrainingSession:
             save_distance_weight=config.train.save_distance_weight,
             refill_distance_weight=config.train.refill_distance_weight,
             missing_connect_distance_weight=config.train.missing_connect_distance_weight,
+            distance_proximity_scale=config.distance_proximity_scale,
         ),
         experience=ExperienceStorage(
             len(rooms),

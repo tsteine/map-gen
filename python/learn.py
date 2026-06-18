@@ -26,6 +26,17 @@ from loss import (
 from train_config import Config, episodes_per_round
 
 
+def distance_proximity_utility(
+    distance: torch.Tensor,
+    distance_mask: torch.Tensor,
+    scale: float,
+) -> torch.Tensor:
+    reachable = distance_mask.to(torch.bool)
+    scale_tensor = distance.new_tensor(scale, dtype=torch.float32)
+    utility = scale_tensor / (distance.to(torch.float32) + scale_tensor)
+    return torch.where(reachable, utility, torch.zeros_like(utility))
+
+
 @dataclass
 class TrainBatchTask:
     kind: Literal["fresh", "replay"]
@@ -594,15 +605,29 @@ def train_feature_batch_backward(
         dtype=torch.bool,
         device=context.device,
     )
-    save_distance_target = end_outcomes.save_distance.to(context.device).unsqueeze(1)
-    save_distance_mask = end_outcomes.save_distance_mask.to(
+    active_room_part_mask = end_outcomes.active_room_part_mask.to(
         device=context.device,
         dtype=torch.bool,
     ).unsqueeze(1)
-    refill_distance_target = end_outcomes.refill_distance.to(context.device).unsqueeze(1)
-    refill_distance_mask = end_outcomes.refill_distance_mask.to(
-        device=context.device,
-        dtype=torch.bool,
+    save_to_room_utility_target = distance_proximity_utility(
+        end_outcomes.save_to_room_distance.to(context.device),
+        end_outcomes.save_to_room_distance_mask.to(context.device),
+        context.loss_config.distance_proximity_scale,
+    ).unsqueeze(1)
+    save_from_room_utility_target = distance_proximity_utility(
+        end_outcomes.save_from_room_distance.to(context.device),
+        end_outcomes.save_from_room_distance_mask.to(context.device),
+        context.loss_config.distance_proximity_scale,
+    ).unsqueeze(1)
+    refill_to_room_utility_target = distance_proximity_utility(
+        end_outcomes.refill_to_room_distance.to(context.device),
+        end_outcomes.refill_to_room_distance_mask.to(context.device),
+        context.loss_config.distance_proximity_scale,
+    ).unsqueeze(1)
+    refill_from_room_utility_target = distance_proximity_utility(
+        end_outcomes.refill_from_room_distance.to(context.device),
+        end_outcomes.refill_from_room_distance_mask.to(context.device),
+        context.loss_config.distance_proximity_scale,
     ).unsqueeze(1)
     missing_connect_distance_target = end_outcomes.missing_connect_distance.to(
         context.device
@@ -645,10 +670,12 @@ def train_feature_batch_backward(
             avg_frontiers_mask,
             graph_diameter_target,
             graph_diameter_mask,
-            save_distance_target,
-            save_distance_mask,
-            refill_distance_target,
-            refill_distance_mask,
+            save_to_room_utility_target,
+            save_from_room_utility_target,
+            active_room_part_mask,
+            refill_to_room_utility_target,
+            refill_from_room_utility_target,
+            active_room_part_mask,
             missing_connect_distance_target,
             missing_connect_distance_mask,
             context.loss_config,

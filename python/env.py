@@ -31,6 +31,7 @@ class GenerateConfig:
     reward_save_distance: float
     reward_refill_distance: float
     reward_missing_connect_distance: float
+    distance_proximity_scale: float
     autocast: bool
 
 
@@ -148,10 +149,19 @@ class EndOutcomes:
     toilet_crossed_room_idx: torch.Tensor
     avg_frontiers: torch.Tensor
     graph_diameter: torch.Tensor
+    active_room_part_mask: torch.Tensor
     save_distance: torch.Tensor
     save_distance_mask: torch.Tensor
+    save_to_room_distance: torch.Tensor
+    save_to_room_distance_mask: torch.Tensor
+    save_from_room_distance: torch.Tensor
+    save_from_room_distance_mask: torch.Tensor
     refill_distance: torch.Tensor
     refill_distance_mask: torch.Tensor
+    refill_to_room_distance: torch.Tensor
+    refill_to_room_distance_mask: torch.Tensor
+    refill_from_room_distance: torch.Tensor
+    refill_from_room_distance_mask: torch.Tensor
     missing_connect_distance: torch.Tensor
     missing_connect_distance_mask: torch.Tensor
 
@@ -160,10 +170,19 @@ class EndOutcomes:
             toilet_crossed_room_idx=self.toilet_crossed_room_idx.to(device),
             avg_frontiers=self.avg_frontiers.to(device),
             graph_diameter=self.graph_diameter.to(device),
+            active_room_part_mask=self.active_room_part_mask.to(device),
             save_distance=self.save_distance.to(device),
             save_distance_mask=self.save_distance_mask.to(device),
+            save_to_room_distance=self.save_to_room_distance.to(device),
+            save_to_room_distance_mask=self.save_to_room_distance_mask.to(device),
+            save_from_room_distance=self.save_from_room_distance.to(device),
+            save_from_room_distance_mask=self.save_from_room_distance_mask.to(device),
             refill_distance=self.refill_distance.to(device),
             refill_distance_mask=self.refill_distance_mask.to(device),
+            refill_to_room_distance=self.refill_to_room_distance.to(device),
+            refill_to_room_distance_mask=self.refill_to_room_distance_mask.to(device),
+            refill_from_room_distance=self.refill_from_room_distance.to(device),
+            refill_from_room_distance_mask=self.refill_from_room_distance_mask.to(device),
             missing_connect_distance=self.missing_connect_distance.to(device),
             missing_connect_distance_mask=self.missing_connect_distance_mask.to(device),
         )
@@ -173,10 +192,19 @@ class EndOutcomes:
             toilet_crossed_room_idx=self.toilet_crossed_room_idx[start:end],
             avg_frontiers=self.avg_frontiers[start:end],
             graph_diameter=self.graph_diameter[start:end],
+            active_room_part_mask=self.active_room_part_mask[start:end],
             save_distance=self.save_distance[start:end],
             save_distance_mask=self.save_distance_mask[start:end],
+            save_to_room_distance=self.save_to_room_distance[start:end],
+            save_to_room_distance_mask=self.save_to_room_distance_mask[start:end],
+            save_from_room_distance=self.save_from_room_distance[start:end],
+            save_from_room_distance_mask=self.save_from_room_distance_mask[start:end],
             refill_distance=self.refill_distance[start:end],
             refill_distance_mask=self.refill_distance_mask[start:end],
+            refill_to_room_distance=self.refill_to_room_distance[start:end],
+            refill_to_room_distance_mask=self.refill_to_room_distance_mask[start:end],
+            refill_from_room_distance=self.refill_from_room_distance[start:end],
+            refill_from_room_distance_mask=self.refill_from_room_distance_mask[start:end],
             missing_connect_distance=self.missing_connect_distance[start:end],
             missing_connect_distance_mask=self.missing_connect_distance_mask[start:end],
         )
@@ -770,14 +798,41 @@ class EnvironmentGroup:
                 ),
                 avg_frontiers=torch.from_numpy(result.end_outcomes.avg_frontiers).to(device),
                 graph_diameter=torch.from_numpy(result.end_outcomes.graph_diameter).to(device),
+                active_room_part_mask=torch.from_numpy(
+                    result.end_outcomes.active_room_part_mask
+                ).to(device),
                 save_distance=torch.from_numpy(result.end_outcomes.save_distance).to(device),
                 save_distance_mask=torch.from_numpy(result.end_outcomes.save_distance_mask).to(
                     device
                 ),
+                save_to_room_distance=torch.from_numpy(
+                    result.end_outcomes.save_to_room_distance
+                ).to(device),
+                save_to_room_distance_mask=torch.from_numpy(
+                    result.end_outcomes.save_to_room_distance_mask
+                ).to(device),
+                save_from_room_distance=torch.from_numpy(
+                    result.end_outcomes.save_from_room_distance
+                ).to(device),
+                save_from_room_distance_mask=torch.from_numpy(
+                    result.end_outcomes.save_from_room_distance_mask
+                ).to(device),
                 refill_distance=torch.from_numpy(result.end_outcomes.refill_distance).to(device),
                 refill_distance_mask=torch.from_numpy(result.end_outcomes.refill_distance_mask).to(
                     device
                 ),
+                refill_to_room_distance=torch.from_numpy(
+                    result.end_outcomes.refill_to_room_distance
+                ).to(device),
+                refill_to_room_distance_mask=torch.from_numpy(
+                    result.end_outcomes.refill_to_room_distance_mask
+                ).to(device),
+                refill_from_room_distance=torch.from_numpy(
+                    result.end_outcomes.refill_from_room_distance
+                ).to(device),
+                refill_from_room_distance_mask=torch.from_numpy(
+                    result.end_outcomes.refill_from_room_distance_mask
+                ).to(device),
                 missing_connect_distance=torch.from_numpy(
                     result.end_outcomes.missing_connect_distance
                 ).to(device),

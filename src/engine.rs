@@ -288,10 +288,19 @@ enum WorkerCommand {
         toilet_crossed_room_idx: OutputShard<i16>,
         avg_frontiers: OutputShard<f32>,
         graph_diameter: OutputShard<f32>,
+        active_room_part_mask: OutputShard<u8>,
         save_distance: OutputShard<f32>,
         save_distance_mask: OutputShard<u8>,
+        save_to_room_distance: OutputShard<f32>,
+        save_to_room_distance_mask: OutputShard<u8>,
+        save_from_room_distance: OutputShard<f32>,
+        save_from_room_distance_mask: OutputShard<u8>,
         refill_distance: OutputShard<f32>,
         refill_distance_mask: OutputShard<u8>,
+        refill_to_room_distance: OutputShard<f32>,
+        refill_to_room_distance_mask: OutputShard<u8>,
+        refill_from_room_distance: OutputShard<f32>,
+        refill_from_room_distance_mask: OutputShard<u8>,
         missing_connect_distance: OutputShard<f32>,
         missing_connect_distance_mask: OutputShard<u8>,
     },
@@ -807,10 +816,19 @@ fn worker_loop(
                 toilet_crossed_room_idx,
                 avg_frontiers,
                 graph_diameter,
+                active_room_part_mask,
                 save_distance,
                 save_distance_mask,
+                save_to_room_distance,
+                save_to_room_distance_mask,
+                save_from_room_distance,
+                save_from_room_distance_mask,
                 refill_distance,
                 refill_distance_mask,
+                refill_to_room_distance,
+                refill_to_room_distance_mask,
+                refill_from_room_distance,
+                refill_from_room_distance_mask,
                 missing_connect_distance,
                 missing_connect_distance_mask,
             } => {
@@ -822,10 +840,24 @@ fn worker_loop(
                 let toilet_crossed_room_idx = unsafe { toilet_crossed_room_idx.into_mut_slice() };
                 let avg_frontiers = unsafe { avg_frontiers.into_mut_slice() };
                 let graph_diameter = unsafe { graph_diameter.into_mut_slice() };
+                let active_room_part_mask = unsafe { active_room_part_mask.into_mut_slice() };
                 let save_distance = unsafe { save_distance.into_mut_slice() };
                 let save_distance_mask = unsafe { save_distance_mask.into_mut_slice() };
+                let save_to_room_distance = unsafe { save_to_room_distance.into_mut_slice() };
+                let save_to_room_distance_mask =
+                    unsafe { save_to_room_distance_mask.into_mut_slice() };
+                let save_from_room_distance = unsafe { save_from_room_distance.into_mut_slice() };
+                let save_from_room_distance_mask =
+                    unsafe { save_from_room_distance_mask.into_mut_slice() };
                 let refill_distance = unsafe { refill_distance.into_mut_slice() };
                 let refill_distance_mask = unsafe { refill_distance_mask.into_mut_slice() };
+                let refill_to_room_distance = unsafe { refill_to_room_distance.into_mut_slice() };
+                let refill_to_room_distance_mask =
+                    unsafe { refill_to_room_distance_mask.into_mut_slice() };
+                let refill_from_room_distance =
+                    unsafe { refill_from_room_distance.into_mut_slice() };
+                let refill_from_room_distance_mask =
+                    unsafe { refill_from_room_distance_mask.into_mut_slice() };
                 let missing_connect_distance = unsafe { missing_connect_distance.into_mut_slice() };
                 let missing_connect_distance_mask =
                     unsafe { missing_connect_distance_mask.into_mut_slice() };
@@ -839,6 +871,10 @@ fn worker_loop(
                 debug_assert_eq!(avg_frontiers.len(), environments.len());
                 debug_assert_eq!(graph_diameter.len(), environments.len());
                 debug_assert_eq!(
+                    active_room_part_mask.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
                     save_distance.len(),
                     environments.len() * common_data.room_part.len()
                 );
@@ -847,11 +883,43 @@ fn worker_loop(
                     environments.len() * common_data.room_part.len()
                 );
                 debug_assert_eq!(
+                    save_to_room_distance.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
+                    save_to_room_distance_mask.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
+                    save_from_room_distance.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
+                    save_from_room_distance_mask.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
                     refill_distance.len(),
                     environments.len() * common_data.room_part.len()
                 );
                 debug_assert_eq!(
                     refill_distance_mask.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
+                    refill_to_room_distance.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
+                    refill_to_room_distance_mask.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
+                    refill_from_room_distance.len(),
+                    environments.len() * common_data.room_part.len()
+                );
+                debug_assert_eq!(
+                    refill_from_room_distance_mask.len(),
                     environments.len() * common_data.room_part.len()
                 );
                 debug_assert_eq!(
@@ -887,20 +955,51 @@ fn worker_loop(
                     debug_assert_eq!(outcomes.connections_valid.len(), connection_outcome_count);
                     avg_frontiers[env_idx] = avg_frontier_count;
                     graph_diameter[env_idx] = f32::from(env.graph_diameter());
+                    let env_active_room_part_mask = env.active_room_part_mask(&common_data);
                     let (env_save_distance, env_save_distance_mask) =
                         env.save_distances(&common_data);
+                    let (
+                        env_save_to_room_distance,
+                        env_save_to_room_distance_mask,
+                        env_save_from_room_distance,
+                        env_save_from_room_distance_mask,
+                    ) = env.directed_save_distances(&common_data);
                     let save_distance_start = env_idx * common_data.room_part.len();
                     let save_distance_end = save_distance_start + common_data.room_part.len();
+                    active_room_part_mask[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_active_room_part_mask);
                     save_distance[save_distance_start..save_distance_end]
                         .copy_from_slice(&env_save_distance);
                     save_distance_mask[save_distance_start..save_distance_end]
                         .copy_from_slice(&env_save_distance_mask);
+                    save_to_room_distance[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_save_to_room_distance);
+                    save_to_room_distance_mask[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_save_to_room_distance_mask);
+                    save_from_room_distance[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_save_from_room_distance);
+                    save_from_room_distance_mask[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_save_from_room_distance_mask);
                     let (env_refill_distance, env_refill_distance_mask) =
                         env.refill_distances(&common_data);
+                    let (
+                        env_refill_to_room_distance,
+                        env_refill_to_room_distance_mask,
+                        env_refill_from_room_distance,
+                        env_refill_from_room_distance_mask,
+                    ) = env.directed_refill_distances(&common_data);
                     refill_distance[save_distance_start..save_distance_end]
                         .copy_from_slice(&env_refill_distance);
                     refill_distance_mask[save_distance_start..save_distance_end]
                         .copy_from_slice(&env_refill_distance_mask);
+                    refill_to_room_distance[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_refill_to_room_distance);
+                    refill_to_room_distance_mask[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_refill_to_room_distance_mask);
+                    refill_from_room_distance[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_refill_from_room_distance);
+                    refill_from_room_distance_mask[save_distance_start..save_distance_end]
+                        .copy_from_slice(&env_refill_from_room_distance_mask);
                     let (env_missing_connect_distance, env_missing_connect_distance_mask) =
                         env.missing_connect_distances(&common_data);
                     let connection_row_start = env_idx * connection_outcome_count;
@@ -1245,10 +1344,19 @@ pub struct EndOutcomes {
     toilet_crossed_room_idx: Py<PyArray1<i16>>,
     avg_frontiers: Py<PyArray1<f32>>,
     graph_diameter: Py<PyArray1<f32>>,
+    active_room_part_mask: Py<PyArray2<u8>>,
     save_distance: Py<PyArray2<f32>>,
     save_distance_mask: Py<PyArray2<u8>>,
+    save_to_room_distance: Py<PyArray2<f32>>,
+    save_to_room_distance_mask: Py<PyArray2<u8>>,
+    save_from_room_distance: Py<PyArray2<f32>>,
+    save_from_room_distance_mask: Py<PyArray2<u8>>,
     refill_distance: Py<PyArray2<f32>>,
     refill_distance_mask: Py<PyArray2<u8>>,
+    refill_to_room_distance: Py<PyArray2<f32>>,
+    refill_to_room_distance_mask: Py<PyArray2<u8>>,
+    refill_from_room_distance: Py<PyArray2<f32>>,
+    refill_from_room_distance_mask: Py<PyArray2<u8>>,
     missing_connect_distance: Py<PyArray2<f32>>,
     missing_connect_distance_mask: Py<PyArray2<u8>>,
 }
@@ -1425,6 +1533,11 @@ impl EndOutcomes {
     }
 
     #[getter]
+    fn active_room_part_mask(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
+        self.active_room_part_mask.clone_ref(py)
+    }
+
+    #[getter]
     fn save_distance(&self, py: Python<'_>) -> Py<PyArray2<f32>> {
         self.save_distance.clone_ref(py)
     }
@@ -1435,6 +1548,26 @@ impl EndOutcomes {
     }
 
     #[getter]
+    fn save_to_room_distance(&self, py: Python<'_>) -> Py<PyArray2<f32>> {
+        self.save_to_room_distance.clone_ref(py)
+    }
+
+    #[getter]
+    fn save_to_room_distance_mask(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
+        self.save_to_room_distance_mask.clone_ref(py)
+    }
+
+    #[getter]
+    fn save_from_room_distance(&self, py: Python<'_>) -> Py<PyArray2<f32>> {
+        self.save_from_room_distance.clone_ref(py)
+    }
+
+    #[getter]
+    fn save_from_room_distance_mask(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
+        self.save_from_room_distance_mask.clone_ref(py)
+    }
+
+    #[getter]
     fn refill_distance(&self, py: Python<'_>) -> Py<PyArray2<f32>> {
         self.refill_distance.clone_ref(py)
     }
@@ -1442,6 +1575,26 @@ impl EndOutcomes {
     #[getter]
     fn refill_distance_mask(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
         self.refill_distance_mask.clone_ref(py)
+    }
+
+    #[getter]
+    fn refill_to_room_distance(&self, py: Python<'_>) -> Py<PyArray2<f32>> {
+        self.refill_to_room_distance.clone_ref(py)
+    }
+
+    #[getter]
+    fn refill_to_room_distance_mask(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
+        self.refill_to_room_distance_mask.clone_ref(py)
+    }
+
+    #[getter]
+    fn refill_from_room_distance(&self, py: Python<'_>) -> Py<PyArray2<f32>> {
+        self.refill_from_room_distance.clone_ref(py)
+    }
+
+    #[getter]
+    fn refill_from_room_distance_mask(&self, py: Python<'_>) -> Py<PyArray2<u8>> {
+        self.refill_from_room_distance_mask.clone_ref(py)
     }
 
     #[getter]
@@ -1472,10 +1625,28 @@ impl EpisodeOutcomes {
             toilet_crossed_room_idx: self.end_outcomes.toilet_crossed_room_idx.clone_ref(py),
             avg_frontiers: self.end_outcomes.avg_frontiers.clone_ref(py),
             graph_diameter: self.end_outcomes.graph_diameter.clone_ref(py),
+            active_room_part_mask: self.end_outcomes.active_room_part_mask.clone_ref(py),
             save_distance: self.end_outcomes.save_distance.clone_ref(py),
             save_distance_mask: self.end_outcomes.save_distance_mask.clone_ref(py),
+            save_to_room_distance: self.end_outcomes.save_to_room_distance.clone_ref(py),
+            save_to_room_distance_mask: self.end_outcomes.save_to_room_distance_mask.clone_ref(py),
+            save_from_room_distance: self.end_outcomes.save_from_room_distance.clone_ref(py),
+            save_from_room_distance_mask: self
+                .end_outcomes
+                .save_from_room_distance_mask
+                .clone_ref(py),
             refill_distance: self.end_outcomes.refill_distance.clone_ref(py),
             refill_distance_mask: self.end_outcomes.refill_distance_mask.clone_ref(py),
+            refill_to_room_distance: self.end_outcomes.refill_to_room_distance.clone_ref(py),
+            refill_to_room_distance_mask: self
+                .end_outcomes
+                .refill_to_room_distance_mask
+                .clone_ref(py),
+            refill_from_room_distance: self.end_outcomes.refill_from_room_distance.clone_ref(py),
+            refill_from_room_distance_mask: self
+                .end_outcomes
+                .refill_from_room_distance_mask
+                .clone_ref(py),
             missing_connect_distance: self.end_outcomes.missing_connect_distance.clone_ref(py),
             missing_connect_distance_mask: self
                 .end_outcomes
@@ -2630,10 +2801,19 @@ impl EnvironmentGroup {
         let mut avg_frontiers = vec![0.0; self.num_environments];
         let mut graph_diameter = vec![0.0; self.num_environments];
         let room_part_count = self.common_data.room_part.len();
+        let mut active_room_part_mask = vec![0; self.num_environments * room_part_count];
         let mut save_distance = vec![0.0; self.num_environments * room_part_count];
         let mut save_distance_mask = vec![0; self.num_environments * room_part_count];
+        let mut save_to_room_distance = vec![0.0; self.num_environments * room_part_count];
+        let mut save_to_room_distance_mask = vec![0; self.num_environments * room_part_count];
+        let mut save_from_room_distance = vec![0.0; self.num_environments * room_part_count];
+        let mut save_from_room_distance_mask = vec![0; self.num_environments * room_part_count];
         let mut refill_distance = vec![0.0; self.num_environments * room_part_count];
         let mut refill_distance_mask = vec![0; self.num_environments * room_part_count];
+        let mut refill_to_room_distance = vec![0.0; self.num_environments * room_part_count];
+        let mut refill_to_room_distance_mask = vec![0; self.num_environments * room_part_count];
+        let mut refill_from_room_distance = vec![0.0; self.num_environments * room_part_count];
+        let mut refill_from_room_distance_mask = vec![0; self.num_environments * room_part_count];
         let mut missing_connect_distance =
             vec![0.0; self.num_environments * connection_outcome_count];
         let mut missing_connect_distance_mask =
@@ -2677,17 +2857,44 @@ impl EnvironmentGroup {
                     graph_diameter: OutputShard::from_slice(
                         &mut graph_diameter[graph_diameter_start..graph_diameter_end],
                     ),
+                    active_room_part_mask: OutputShard::from_slice(
+                        &mut active_room_part_mask[save_distance_start..save_distance_end],
+                    ),
                     save_distance: OutputShard::from_slice(
                         &mut save_distance[save_distance_start..save_distance_end],
                     ),
                     save_distance_mask: OutputShard::from_slice(
                         &mut save_distance_mask[save_distance_start..save_distance_end],
                     ),
+                    save_to_room_distance: OutputShard::from_slice(
+                        &mut save_to_room_distance[save_distance_start..save_distance_end],
+                    ),
+                    save_to_room_distance_mask: OutputShard::from_slice(
+                        &mut save_to_room_distance_mask[save_distance_start..save_distance_end],
+                    ),
+                    save_from_room_distance: OutputShard::from_slice(
+                        &mut save_from_room_distance[save_distance_start..save_distance_end],
+                    ),
+                    save_from_room_distance_mask: OutputShard::from_slice(
+                        &mut save_from_room_distance_mask[save_distance_start..save_distance_end],
+                    ),
                     refill_distance: OutputShard::from_slice(
                         &mut refill_distance[save_distance_start..save_distance_end],
                     ),
                     refill_distance_mask: OutputShard::from_slice(
                         &mut refill_distance_mask[save_distance_start..save_distance_end],
+                    ),
+                    refill_to_room_distance: OutputShard::from_slice(
+                        &mut refill_to_room_distance[save_distance_start..save_distance_end],
+                    ),
+                    refill_to_room_distance_mask: OutputShard::from_slice(
+                        &mut refill_to_room_distance_mask[save_distance_start..save_distance_end],
+                    ),
+                    refill_from_room_distance: OutputShard::from_slice(
+                        &mut refill_from_room_distance[save_distance_start..save_distance_end],
+                    ),
+                    refill_from_room_distance_mask: OutputShard::from_slice(
+                        &mut refill_from_room_distance_mask[save_distance_start..save_distance_end],
                     ),
                     missing_connect_distance: OutputShard::from_slice(
                         &mut missing_connect_distance
@@ -2729,6 +2936,13 @@ impl EnvironmentGroup {
                 toilet_crossed_room_idx: toilet_crossed_room_idx.into_pyarray(py).unbind(),
                 avg_frontiers: avg_frontiers.into_pyarray(py).unbind(),
                 graph_diameter: graph_diameter.into_pyarray(py).unbind(),
+                active_room_part_mask: pyarray2_from_flat_vec(
+                    py,
+                    active_room_part_mask,
+                    self.num_environments,
+                    room_part_count,
+                )?
+                .unbind(),
                 save_distance: pyarray2_from_flat_vec(
                     py,
                     save_distance,
@@ -2743,6 +2957,34 @@ impl EnvironmentGroup {
                     room_part_count,
                 )?
                 .unbind(),
+                save_to_room_distance: pyarray2_from_flat_vec(
+                    py,
+                    save_to_room_distance,
+                    self.num_environments,
+                    room_part_count,
+                )?
+                .unbind(),
+                save_to_room_distance_mask: pyarray2_from_flat_vec(
+                    py,
+                    save_to_room_distance_mask,
+                    self.num_environments,
+                    room_part_count,
+                )?
+                .unbind(),
+                save_from_room_distance: pyarray2_from_flat_vec(
+                    py,
+                    save_from_room_distance,
+                    self.num_environments,
+                    room_part_count,
+                )?
+                .unbind(),
+                save_from_room_distance_mask: pyarray2_from_flat_vec(
+                    py,
+                    save_from_room_distance_mask,
+                    self.num_environments,
+                    room_part_count,
+                )?
+                .unbind(),
                 refill_distance: pyarray2_from_flat_vec(
                     py,
                     refill_distance,
@@ -2753,6 +2995,34 @@ impl EnvironmentGroup {
                 refill_distance_mask: pyarray2_from_flat_vec(
                     py,
                     refill_distance_mask,
+                    self.num_environments,
+                    room_part_count,
+                )?
+                .unbind(),
+                refill_to_room_distance: pyarray2_from_flat_vec(
+                    py,
+                    refill_to_room_distance,
+                    self.num_environments,
+                    room_part_count,
+                )?
+                .unbind(),
+                refill_to_room_distance_mask: pyarray2_from_flat_vec(
+                    py,
+                    refill_to_room_distance_mask,
+                    self.num_environments,
+                    room_part_count,
+                )?
+                .unbind(),
+                refill_from_room_distance: pyarray2_from_flat_vec(
+                    py,
+                    refill_from_room_distance,
+                    self.num_environments,
+                    room_part_count,
+                )?
+                .unbind(),
+                refill_from_room_distance_mask: pyarray2_from_flat_vec(
+                    py,
+                    refill_from_room_distance_mask,
                     self.num_environments,
                     room_part_count,
                 )?

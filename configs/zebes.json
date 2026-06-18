@@ -5,6 +5,7 @@
   "knot_episodes": [0, 100000, 500000, 4000000, 16000000],
   "checkpoint_period": 100,
   "visualize": 0,
+  "distance_proximity_scale": 1.0,
   "model": {
     "compile": true,
     "autocast": true,

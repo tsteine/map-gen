@@ -1432,6 +1432,14 @@ impl Environment {
             .unwrap_or(0)
     }
 
+    pub fn active_room_part_mask(&self, common: &CommonData) -> Vec<u8> {
+        let mut mask = vec![0; common.room_part.len()];
+        for &room_part in &self.active_room_parts {
+            mask[room_part as usize] = 1;
+        }
+        mask
+    }
+
     fn room_distances(
         &self,
         common: &CommonData,
@@ -1484,6 +1492,70 @@ impl Environment {
 
     pub fn refill_distances(&self, common: &CommonData) -> (Vec<f32>, Vec<u8>) {
         self.room_distances(common, |room| room.refill)
+    }
+
+    fn directed_room_distances(
+        &self,
+        common: &CommonData,
+        is_destination_room: impl Fn(&crate::common::RoomData) -> bool,
+    ) -> (Vec<f32>, Vec<u8>, Vec<f32>, Vec<u8>) {
+        let graph_size = common.room_part.len();
+        let mut to_room = vec![0.0; graph_size];
+        let mut to_room_mask = vec![0; graph_size];
+        let mut from_room = vec![0.0; graph_size];
+        let mut from_room_mask = vec![0; graph_size];
+        let destination_parts: Vec<_> = self
+            .active_room_parts
+            .iter()
+            .copied()
+            .filter(|&room_part| {
+                let (room_idx, _) = common.room_part[room_part as usize];
+                is_destination_room(&common.room[room_idx as usize])
+            })
+            .map(usize::from)
+            .collect();
+
+        if destination_parts.is_empty() {
+            return (to_room, to_room_mask, from_room, from_room_mask);
+        }
+
+        for &room_part in &self.active_room_parts {
+            let part = room_part as usize;
+            let nearest_to_room = destination_parts
+                .iter()
+                .map(|&destination_part| self.graph_distance[destination_part * graph_size + part])
+                .filter(|&distance| distance != UNREACHABLE_DISTANCE)
+                .min();
+            let nearest_from_room = destination_parts
+                .iter()
+                .map(|&destination_part| self.graph_distance[part * graph_size + destination_part])
+                .filter(|&distance| distance != UNREACHABLE_DISTANCE)
+                .min();
+            if let Some(distance) = nearest_to_room {
+                to_room[part] = f32::from(distance);
+                to_room_mask[part] = 1;
+            }
+            if let Some(distance) = nearest_from_room {
+                from_room[part] = f32::from(distance);
+                from_room_mask[part] = 1;
+            }
+        }
+
+        (to_room, to_room_mask, from_room, from_room_mask)
+    }
+
+    pub fn directed_save_distances(
+        &self,
+        common: &CommonData,
+    ) -> (Vec<f32>, Vec<u8>, Vec<f32>, Vec<u8>) {
+        self.directed_room_distances(common, |room| room.save)
+    }
+
+    pub fn directed_refill_distances(
+        &self,
+        common: &CommonData,
+    ) -> (Vec<f32>, Vec<u8>, Vec<f32>, Vec<u8>) {
+        self.directed_room_distances(common, |room| room.refill)
     }
 
     pub fn missing_connect_distances(&self, common: &CommonData) -> (Vec<f32>, Vec<u8>) {
@@ -4777,6 +4849,81 @@ mod tests {
 
         assert_eq!(distance, vec![0.0, 2.0, 2.0, 0.0]);
         assert_eq!(mask, vec![1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn directed_save_distances_report_each_direction() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "save": true,
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [
+                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    ],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [
+                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
+                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    ],
+                    "connections": [[0, 1]],
+                    "missing_connections": [[1, 0]]
+                },
+                {
+                    "save": true,
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [
+                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    ],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 8, 0);
+        env.step_known(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 1,
+                x: 1,
+                y: 0,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 2,
+                x: 2,
+                y: 0,
+            },
+            &common,
+        );
+
+        let (to_room, to_room_mask, from_room, from_room_mask) =
+            env.directed_save_distances(&common);
+
+        assert_eq!(to_room, vec![0.0, 1.0, 1.0, 0.0]);
+        assert_eq!(to_room_mask, vec![1, 1, 1, 1]);
+        assert_eq!(from_room, vec![0.0, 1.0, 1.0, 0.0]);
+        assert_eq!(from_room_mask, vec![1, 1, 1, 1]);
     }
 
     #[test]

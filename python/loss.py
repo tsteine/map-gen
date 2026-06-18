@@ -20,6 +20,7 @@ class LossConfig:
     save_distance_weight: float
     refill_distance_weight: float
     missing_connect_distance_weight: float
+    distance_proximity_scale: float
 
 
 @dataclass
@@ -105,10 +106,12 @@ def compute_loss_breakdown(
     avg_frontiers_mask: torch.Tensor,
     graph_diameter_target: torch.Tensor,
     graph_diameter_mask: torch.Tensor,
-    save_distance_target: torch.Tensor,
-    save_distance_mask: torch.Tensor,
-    refill_distance_target: torch.Tensor,
-    refill_distance_mask: torch.Tensor,
+    save_to_room_utility_target: torch.Tensor,
+    save_from_room_utility_target: torch.Tensor,
+    save_utility_mask: torch.Tensor,
+    refill_to_room_utility_target: torch.Tensor,
+    refill_from_room_utility_target: torch.Tensor,
+    refill_utility_mask: torch.Tensor,
     missing_connect_distance_target: torch.Tensor,
     missing_connect_distance_mask: torch.Tensor,
     config: LossConfig,
@@ -148,18 +151,34 @@ def compute_loss_breakdown(
         graph_diameter_mask,
         config.graph_diameter_weight,
     )
-    save_distance_loss, save_distance_wt = masked_mse_loss(
-        preds.save_distance,
-        save_distance_target,
-        save_distance_mask,
+    save_to_room_loss, save_to_room_wt = masked_mse_loss(
+        preds.save_to_room_utility,
+        save_to_room_utility_target,
+        save_utility_mask,
         config.save_distance_weight,
     )
-    refill_distance_loss, refill_distance_wt = masked_mse_loss(
-        preds.refill_distance,
-        refill_distance_target,
-        refill_distance_mask,
+    save_from_room_loss, save_from_room_wt = masked_mse_loss(
+        preds.save_from_room_utility,
+        save_from_room_utility_target,
+        save_utility_mask,
+        config.save_distance_weight,
+    )
+    save_distance_loss = save_to_room_loss + save_from_room_loss
+    save_distance_wt = save_to_room_wt + save_from_room_wt
+    refill_to_room_loss, refill_to_room_wt = masked_mse_loss(
+        preds.refill_to_room_utility,
+        refill_to_room_utility_target,
+        refill_utility_mask,
         config.refill_distance_weight,
     )
+    refill_from_room_loss, refill_from_room_wt = masked_mse_loss(
+        preds.refill_from_room_utility,
+        refill_from_room_utility_target,
+        refill_utility_mask,
+        config.refill_distance_weight,
+    )
+    refill_distance_loss = refill_to_room_loss + refill_from_room_loss
+    refill_distance_wt = refill_to_room_wt + refill_from_room_wt
     missing_connect_distance_loss, missing_connect_distance_wt = masked_mse_loss(
         preds.missing_connect_distance,
         missing_connect_distance_target,
