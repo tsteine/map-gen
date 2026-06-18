@@ -1221,7 +1221,7 @@ class TrainingSession:
             "b %.1f%%, tb %.1f%%, d %.1f%%, "
             "s %.1f%%, r %.1f%%, p %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
-            "conn %.2f (min %s), tube %.2f, diam %.2f, save %.2f, refill %.2f, ss %.3f, "
+            "conn %.2f (min %s), tube %.2f, diam %.2f, ss %.3f, "
             "p %.4f, "
             "frac %.4f",
             round_idx,
@@ -1244,8 +1244,6 @@ class TrainingSession:
             scalar(min_conn),
             scalar(avg_toilet),
             scalar(graph_diameter),
-            scalar(save_distance),
-            scalar(refill_distance),
             scalar(door_match_ss),
             scalar(candidate_diagnostics.selected_probability),
             schedule_progress,

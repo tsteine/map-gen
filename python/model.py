@@ -485,9 +485,12 @@ class FrontierModel(torch.nn.Module):
         self.pos_embedding_y = torch.nn.Parameter(
             torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width)
         )
-        self.door_output = FactorizedOutcomeHead(
-            output_metadata.door, output_metadata.num_door_variants, embedding_width
+        door_output_metadata = torch.tensor(output_metadata.door, dtype=torch.int64).reshape(
+            door_output_size,
+            2,
         )
+        self.register_buffer("door_variant_outcome_idx", door_output_metadata[:, 1])
+        self.door_output = torch.nn.Linear(embedding_width, output_metadata.num_door_variants)
         self.frontier_door_invalid_output = torch.nn.Linear(embedding_width, 1)
         self.connection_output = FactorizedOutcomeHead(
             output_metadata.connection, output_metadata.num_connection_variants, embedding_width
@@ -944,9 +947,8 @@ class FrontierModel(torch.nn.Module):
             )
         # X: [s, 1, e]
         X = pooled_state.unsqueeze(1)
-        door = self.door_output(
-            X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y
-        )
+        door_variant = self.door_output(X)
+        door = door_variant[..., self.door_variant_outcome_idx]
         connection = self.connection_output(
             X, room_x, room_y, room_placed, self.pos_embedding_x, self.pos_embedding_y
         )
