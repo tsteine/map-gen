@@ -367,6 +367,9 @@ pub struct Features {
     pub room_part_save_distance: Vec<u8>,
     pub room_part_refill_distance: Vec<u8>,
     pub room_part_frontier_distance: Vec<u8>,
+    // Snapshot-local frontier row index for each door output, or -1 when the
+    // door is not currently represented by an unmatched frontier.
+    pub door_frontier_idx: Vec<FrontierIdx>,
     // mask, x, y, vertical, kind
     pub frontier: Vec<i8>,
     // Occupied tiles in a square window centered on each frontier, packed row-major.
@@ -3143,6 +3146,35 @@ impl Environment {
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
         profile_end(ProfileMetric::EnvFeaturesSortFrontiers, profile);
 
+        let door_frontier_idx = if config.has_frontier_features() {
+            let frontier_idx_by_location = sorted_frontiers
+                .iter()
+                .enumerate()
+                .map(|(idx, (location, _))| (**location, idx as FrontierIdx))
+                .collect::<HashMap<_, _>>();
+            common
+                .room_dir_door
+                .iter()
+                .flatten()
+                .map(|door| {
+                    if !self.room_used[door.room_idx as usize] {
+                        return -1;
+                    }
+                    let location = DoorLocation::from_room_dir_door(
+                        door,
+                        self.room_x[door.room_idx as usize],
+                        self.room_y[door.room_idx as usize],
+                    );
+                    frontier_idx_by_location
+                        .get(&location)
+                        .copied()
+                        .unwrap_or(-1)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![-1; common.door_output.len()]
+        };
+
         let map_width = self.map_size.0 as usize;
         for (idx, (location, data)) in sorted_frontiers.iter().enumerate() {
             let row = idx * FEATURE_FRONTIER_WIDTH;
@@ -3360,6 +3392,7 @@ impl Environment {
             room_part_save_distance,
             room_part_refill_distance,
             room_part_frontier_distance,
+            door_frontier_idx,
             frontier,
             frontier_occupancy,
             frontier_neighbor,
@@ -5790,6 +5823,60 @@ mod tests {
             simulated,
             env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4)
         );
+    }
+
+    #[test]
+    fn door_frontier_indices_track_unmatched_placed_doors() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let config = FeatureConfig::all();
+        let mut env = Environment::new(&common, (4, 4), 8, 0);
+
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4);
+        assert_eq!(features.frontier.len() / FEATURE_FRONTIER_WIDTH, 1);
+        for (idx, output) in common.door_output.iter().enumerate() {
+            let expected = if output.room_idx == 0 { 0 } else { -1 };
+            assert_eq!(features.door_frontier_idx[idx], expected);
+        }
+
+        env.step(
+            Action {
+                room_idx: 1,
+                x: 1,
+                y: 0,
+            },
+            &common,
+        );
+        let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4);
+        assert!(features.door_frontier_idx.iter().all(|&idx| idx == -1));
     }
 
     #[test]
