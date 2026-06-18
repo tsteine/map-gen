@@ -107,57 +107,41 @@ def apply_frontier_door_invalid_logits(
     door_invalid: torch.Tensor,
     frontier_door_invalid: torch.Tensor,
     row_snapshot_idx: torch.Tensor,
-    row_frontier_idx: torch.Tensor,
-    door_frontier_idx: torch.Tensor,
+    row_door_output_idx: torch.Tensor,
 ) -> torch.Tensor:
-    if door_frontier_idx.shape[-1] == 0 or frontier_door_invalid.shape[0] == 0:
+    if door_invalid.shape[-1] == 0 or frontier_door_invalid.shape[0] == 0:
         return door_invalid
-    torch._assert(
-        door_frontier_idx.shape[-1] == door_invalid.shape[-1],
-        "door frontier indices must match door prediction width",
-    )
     snapshot_count = door_invalid.shape[0]
+    door_output_count = door_invalid.shape[-1]
     frontier_door_invalid = frontier_door_invalid.squeeze(-1).to(door_invalid.dtype)
     row_snapshot_idx = row_snapshot_idx.to(device=door_invalid.device, dtype=torch.int64)
-    row_frontier_idx = row_frontier_idx.to(device=door_invalid.device, dtype=torch.int64)
-    door_frontier_idx = door_frontier_idx.to(device=door_invalid.device, dtype=torch.int64)
-    frontier_count = door_invalid.shape[-1]
+    row_door_output_idx = row_door_output_idx.to(device=door_invalid.device, dtype=torch.int64)
     valid_rows = (
         (row_snapshot_idx >= 0)
         & (row_snapshot_idx < snapshot_count)
-        & (row_frontier_idx >= 0)
-        & (row_frontier_idx < frontier_count)
+        & (row_door_output_idx >= 0)
+        & (row_door_output_idx < door_output_count)
     )
     safe_row_snapshot_idx = row_snapshot_idx.clamp(0, snapshot_count - 1)
-    safe_row_frontier_idx = row_frontier_idx.clamp(0, frontier_count - 1)
-    row_lookup_idx = safe_row_snapshot_idx * frontier_count + safe_row_frontier_idx
-    frontier_lookup = door_invalid.new_zeros([snapshot_count * frontier_count])
-    frontier_lookup.scatter_add_(
+    safe_row_door_output_idx = row_door_output_idx.clamp(0, door_output_count - 1)
+    row_lookup_idx = safe_row_snapshot_idx * door_output_count + safe_row_door_output_idx
+    door_lookup = door_invalid.new_zeros([snapshot_count * door_output_count])
+    door_lookup.scatter_add_(
         0,
         row_lookup_idx,
         torch.where(valid_rows, frontier_door_invalid, 0),
     )
-    frontier_lookup_valid = door_invalid.new_zeros([snapshot_count * frontier_count])
-    frontier_lookup_valid.scatter_add_(
+    door_lookup_valid = door_invalid.new_zeros([snapshot_count * door_output_count])
+    door_lookup_valid.scatter_add_(
         0,
         row_lookup_idx,
         valid_rows.to(door_invalid.dtype),
     )
-    safe_door_frontier_idx = door_frontier_idx.clamp(0, frontier_count - 1)
-    snapshot_idx = torch.arange(
-        snapshot_count,
-        dtype=torch.int64,
-        device=door_invalid.device,
-    ).unsqueeze(1)
-    gathered_frontier_logits = frontier_lookup[
-        snapshot_idx * frontier_count + safe_door_frontier_idx
-    ].unsqueeze(1)
-    gathered_frontier_valid = frontier_lookup_valid[
-        snapshot_idx * frontier_count + safe_door_frontier_idx
-    ].unsqueeze(1)
+    door_lookup = door_lookup.view(snapshot_count, 1, door_output_count)
+    door_lookup_valid = door_lookup_valid.view(snapshot_count, 1, door_output_count)
     return torch.where(
-        (door_frontier_idx.unsqueeze(1) >= 0) & (gathered_frontier_valid > 0),
-        gathered_frontier_logits,
+        door_lookup_valid > 0,
+        door_lookup,
         door_invalid,
     )
 
@@ -975,8 +959,7 @@ class FrontierModel(torch.nn.Module):
             preds.door_invalid,
             frontier_door_invalid,
             row_snapshot_idx,
-            features.frontier_features.row_frontier_idx,
-            features.global_features.door_frontier_idx,
+            features.frontier_features.row_door_output_idx,
         )
         door_invalid = apply_known_invalid_logits(
             door_invalid,

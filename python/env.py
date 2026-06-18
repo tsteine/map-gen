@@ -397,7 +397,6 @@ class GlobalFeatures:
     room_part_save_distance: torch.Tensor
     room_part_refill_distance: torch.Tensor
     room_part_frontier_distance: torch.Tensor
-    door_frontier_idx: torch.Tensor
     log_temperature: torch.Tensor
     log_recommended_candidates: torch.Tensor
     lookahead_door_invalid: torch.Tensor
@@ -428,7 +427,6 @@ class GlobalFeatures:
             room_part_frontier_distance=self.room_part_frontier_distance.to(
                 device, non_blocking=non_blocking
             ),
-            door_frontier_idx=self.door_frontier_idx.to(device, non_blocking=non_blocking),
             log_temperature=self.log_temperature.to(device, non_blocking=non_blocking),
             log_recommended_candidates=self.log_recommended_candidates.to(
                 device, non_blocking=non_blocking
@@ -462,7 +460,6 @@ class GlobalFeatures:
             room_part_save_distance=self.room_part_save_distance.flatten(0, 1),
             room_part_refill_distance=self.room_part_refill_distance.flatten(0, 1),
             room_part_frontier_distance=self.room_part_frontier_distance.flatten(0, 1),
-            door_frontier_idx=self.door_frontier_idx.flatten(0, 1),
             log_temperature=self.log_temperature.flatten(0, 1),
             log_recommended_candidates=self.log_recommended_candidates.flatten(0, 1),
             lookahead_door_invalid=self.lookahead_door_invalid.flatten(0, 1),
@@ -483,6 +480,7 @@ class FrontierFeatures:
     frontier_connection_reachability: torch.Tensor
     row_snapshot_idx: torch.Tensor
     row_frontier_idx: torch.Tensor
+    row_door_output_idx: torch.Tensor
 
     def to(self, device: torch.device, non_blocking: bool = False) -> "FrontierFeatures":
         return FrontierFeatures(
@@ -497,6 +495,7 @@ class FrontierFeatures:
             ),
             row_snapshot_idx=self.row_snapshot_idx.to(device, non_blocking=non_blocking),
             row_frontier_idx=self.row_frontier_idx.to(device, non_blocking=non_blocking),
+            row_door_output_idx=self.row_door_output_idx.to(device, non_blocking=non_blocking),
         )
 
 
@@ -873,7 +872,6 @@ class EnvironmentGroup:
                     "room_part_save_distance": feature_slot.room_part_save_distance.numpy(),
                     "room_part_refill_distance": feature_slot.room_part_refill_distance.numpy(),
                     "room_part_frontier_distance": feature_slot.room_part_frontier_distance.numpy(),
-                    "door_frontier_idx": feature_slot.door_frontier_idx.numpy(),
                     "frontier": feature_slot.frontier.numpy(),
                     "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
                     "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),
@@ -883,6 +881,7 @@ class EnvironmentGroup:
                     "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
                     "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),
                     "row_frontier_idx": feature_slot.row_frontier_idx.numpy(),
+                    "row_door_output_idx": feature_slot.row_door_output_idx.numpy(),
                 }
             )
         )
@@ -907,7 +906,7 @@ class FeatureSlot:
     def __init__(self, env: EnvironmentGroup, pin_memory: bool):
         features = env.engine.features
         inventory_count, _, room_count = env.engine.get_feature_sizes()
-        door_count, connection_count = env.engine.get_output_sizes()
+        _, connection_count = env.engine.get_output_sizes()
         room_part_count = env.engine.get_output_metadata().num_room_parts
         self.inventory_width = inventory_count * int(features.inventory)
         self.room_width = room_count * int(features.room_position)
@@ -921,7 +920,6 @@ class FeatureSlot:
         self.room_part_frontier_distance_width = room_part_count * int(
             features.room_part_frontier_distance
         )
-        self.door_frontier_width = door_count
         self.frontier_occupancy_width = (
             (env.frontier_window_size * env.frontier_window_size + 7) // 8
         ) * int(features.frontier_occupancy)
@@ -950,7 +948,6 @@ class FeatureSlot:
         self.room_part_save_distance = None
         self.room_part_refill_distance = None
         self.room_part_frontier_distance = None
-        self.door_frontier_idx = None
         self.frontier = None
         self.frontier_occupancy = None
         self.frontier_neighbor = None
@@ -960,6 +957,7 @@ class FeatureSlot:
         self.toilet_crossed_room_idx = None
         self.row_snapshot_idx = None
         self.row_frontier_idx = None
+        self.row_door_output_idx = None
 
     def _empty(self, shape, dtype):
         return torch.empty(shape, dtype=dtype, pin_memory=self.pin_memory)
@@ -992,9 +990,6 @@ class FeatureSlot:
         self.room_part_frontier_distance = self._empty(
             (self.snapshot_capacity, self.room_part_frontier_distance_width), torch.uint8
         )
-        self.door_frontier_idx = self._empty(
-            (self.snapshot_capacity, self.door_frontier_width), torch.int16
-        )
         self.frontier = self._empty((self.frontier_row_capacity, 5), torch.int8)
         self.frontier_occupancy = self._empty(
             (self.frontier_row_capacity, self.frontier_occupancy_width), torch.uint8
@@ -1018,6 +1013,7 @@ class FeatureSlot:
         )
         self.row_snapshot_idx = self._empty((self.frontier_row_capacity,), torch.int64)
         self.row_frontier_idx = self._empty((self.frontier_row_capacity,), torch.int16)
+        self.row_door_output_idx = self._empty((self.frontier_row_capacity,), torch.int16)
 
     def state_features(
         self,
@@ -1081,7 +1077,6 @@ class FeatureSlot:
                 room_part_save_distance=self.room_part_save_distance[:environment_count],
                 room_part_refill_distance=self.room_part_refill_distance[:environment_count],
                 room_part_frontier_distance=self.room_part_frontier_distance[:environment_count],
-                door_frontier_idx=self.door_frontier_idx[:environment_count],
                 log_temperature=log_temperature,
                 log_recommended_candidates=log_recommended_candidates,
                 lookahead_door_invalid=lookahead_door_invalid,
@@ -1101,6 +1096,7 @@ class FeatureSlot:
                 ],
                 row_snapshot_idx=self.row_snapshot_idx[:frontier_row_count],
                 row_frontier_idx=self.row_frontier_idx[:frontier_row_count],
+                row_door_output_idx=self.row_door_output_idx[:frontier_row_count],
             ),
         )
 
@@ -1169,9 +1165,6 @@ class FeatureSlot:
                 room_part_frontier_distance=self.room_part_frontier_distance[
                     :snapshot_count
                 ].view(environment_count, candidate_count, self.room_part_frontier_distance_width),
-                door_frontier_idx=self.door_frontier_idx[:snapshot_count].view(
-                    environment_count, candidate_count, self.door_frontier_width
-                ),
                 log_temperature=log_temperature,
                 log_recommended_candidates=log_recommended_candidates,
                 lookahead_door_invalid=lookahead_door_invalid,
@@ -1195,6 +1188,7 @@ class FeatureSlot:
                 ],
                 row_snapshot_idx=self.row_snapshot_idx[:frontier_row_count],
                 row_frontier_idx=self.row_frontier_idx[:frontier_row_count],
+                row_door_output_idx=self.row_door_output_idx[:frontier_row_count],
             ),
         )
 
@@ -1231,7 +1225,6 @@ def extract_candidate_features(
                 "room_part_save_distance": feature_slot.room_part_save_distance.numpy(),
                 "room_part_refill_distance": feature_slot.room_part_refill_distance.numpy(),
                 "room_part_frontier_distance": feature_slot.room_part_frontier_distance.numpy(),
-                "door_frontier_idx": feature_slot.door_frontier_idx.numpy(),
                 "frontier": feature_slot.frontier.numpy(),
                 "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
                 "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),
@@ -1241,6 +1234,7 @@ def extract_candidate_features(
                 "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
                 "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),
                 "row_frontier_idx": feature_slot.row_frontier_idx.numpy(),
+                "row_door_output_idx": feature_slot.row_door_output_idx.numpy(),
             }
         )
     )

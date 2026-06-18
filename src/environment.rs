@@ -367,11 +367,10 @@ pub struct Features {
     pub room_part_save_distance: Vec<u8>,
     pub room_part_refill_distance: Vec<u8>,
     pub room_part_frontier_distance: Vec<u8>,
-    // Snapshot-local frontier row index for each door output, or -1 when the
-    // door is not currently represented by an unmatched frontier.
-    pub door_frontier_idx: Vec<FrontierIdx>,
     // mask, x, y, vertical, kind
     pub frontier: Vec<i8>,
+    // Global door output index for each frontier row, or -1 when unavailable.
+    pub row_door_output_idx: Vec<i16>,
     // Occupied tiles in a square window centered on each frontier, packed row-major.
     pub frontier_occupancy: Vec<u8>,
     // Indices into frontier. Semantics depend on FrontierNeighborAlgorithm.
@@ -3146,33 +3145,37 @@ impl Environment {
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
         profile_end(ProfileMetric::EnvFeaturesSortFrontiers, profile);
 
-        let door_frontier_idx = if config.has_frontier_features() {
-            let frontier_idx_by_location = sorted_frontiers
-                .iter()
-                .enumerate()
-                .map(|(idx, (location, _))| (**location, idx as FrontierIdx))
-                .collect::<HashMap<_, _>>();
-            common
+        let row_door_output_idx = if config.has_frontier_features() {
+            let door_output_idx_by_location = common
                 .room_dir_door
                 .iter()
                 .flatten()
-                .map(|door| {
+                .enumerate()
+                .filter_map(|(output_idx, door)| {
                     if !self.room_used[door.room_idx as usize] {
-                        return -1;
+                        return None;
                     }
-                    let location = DoorLocation::from_room_dir_door(
-                        door,
-                        self.room_x[door.room_idx as usize],
-                        self.room_y[door.room_idx as usize],
-                    );
-                    frontier_idx_by_location
-                        .get(&location)
+                    Some((
+                        DoorLocation::from_room_dir_door(
+                            door,
+                            self.room_x[door.room_idx as usize],
+                            self.room_y[door.room_idx as usize],
+                        ),
+                        output_idx as i16,
+                    ))
+                })
+                .collect::<HashMap<_, _>>();
+            sorted_frontiers
+                .iter()
+                .map(|(location, _)| {
+                    door_output_idx_by_location
+                        .get(*location)
                         .copied()
                         .unwrap_or(-1)
                 })
                 .collect::<Vec<_>>()
         } else {
-            vec![-1; common.door_output.len()]
+            vec![]
         };
 
         let map_width = self.map_size.0 as usize;
@@ -3392,8 +3395,8 @@ impl Environment {
             room_part_save_distance,
             room_part_refill_distance,
             room_part_frontier_distance,
-            door_frontier_idx,
             frontier,
+            row_door_output_idx,
             frontier_occupancy,
             frontier_neighbor,
             frontier_neighbor_pair,
@@ -5862,10 +5865,12 @@ mod tests {
         );
         let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4);
         assert_eq!(features.frontier.len() / FEATURE_FRONTIER_WIDTH, 1);
-        for (idx, output) in common.door_output.iter().enumerate() {
-            let expected = if output.room_idx == 0 { 0 } else { -1 };
-            assert_eq!(features.door_frontier_idx[idx], expected);
-        }
+        let placed_door_output_idx = common
+            .door_output
+            .iter()
+            .position(|output| output.room_idx == 0)
+            .unwrap() as i16;
+        assert_eq!(features.row_door_output_idx, vec![placed_door_output_idx]);
 
         env.step(
             Action {
@@ -5876,7 +5881,7 @@ mod tests {
             &common,
         );
         let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4);
-        assert!(features.door_frontier_idx.iter().all(|&idx| idx == -1));
+        assert!(features.row_door_output_idx.is_empty());
     }
 
     #[test]
