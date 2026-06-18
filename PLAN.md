@@ -16,19 +16,36 @@ available at each generation state:
 ## Current First Step
 
 Split the current room-part save/refill distance outcomes into directed
-components.
+proximity-utility components.
 
 The current save/refill distance outcome is a combined round-trip value:
 
 - nearest save/refill to room part
 - room part to nearest save/refill
 
-Replace this with separate directed outcomes:
+Replace this with separate directed utility outcomes:
 
-- distance from nearest save to room part
-- distance from room part to nearest save
-- distance from nearest refill to room part
-- distance from room part to nearest refill
+- proximity utility from nearest save to room part
+- proximity utility from room part to nearest save
+- proximity utility from nearest refill to room part
+- proximity utility from room part to nearest refill
+
+The utility for a finite directed distance `d` is:
+
+```text
+u(d) = scale / (d + scale)
+```
+
+Unreachable is treated as infinite distance, so its utility is the limiting
+value:
+
+```text
+u(unreachable) = 0
+```
+
+`scale` should be a required config value. Larger values make long finite
+distances retain more reward; smaller values concentrate the reward near short
+distances.
 
 The training and generation config can keep one weight for save distance and
 one weight for refill distance. Each weight applies to both directions.
@@ -54,22 +71,25 @@ Unreachable outcomes can also be finalized:
   any save to `p` and no current path from any frontier to `p`.
 - The same rules apply for refill distances.
 
-The finite known values should be substituted in model forward, using the same
-numeric scale as the target. This makes generation and training consume the same
-model output, while cutting gradients through finalized entries.
+Known values should be substituted in model forward as proximity utilities,
+using the same numeric scale as the target. Finite finalized distances use
+`scale / (d + scale)`. Finalized unreachable distances use `0`. This makes
+generation and training consume the same model output, while cutting gradients
+through finalized entries.
 
-Unreachable finalized outcomes need separate reward semantics. The current
-distance reward is an expected distance conditioned on reachability, which is
-ill-defined when reachability probability is zero. Do not force unreachable
-states into the existing distance scalar without first deciding the objective.
+The model should predict expected proximity utility, not expected distance
+conditioned on reachability. This keeps unreachable states well-defined without
+turning save/refill reachability into a separate validity objective.
 
 ## First Implementation Sequence
 
 1. Rename and split Rust outcome generation.
    - Replace combined save/refill room-part outcome vectors with directed
-     `to` and `from` vectors.
+     `to` and `from` utility vectors.
    - Keep masks direction-specific.
    - Add direction-specific finalized masks and known values.
+   - Add a required proximity-utility scale config value and use it to convert
+     distances to target utilities.
    - Preserve strict required fields across Python/Rust bindings.
 
 2. Split current room-part distance features.
@@ -89,36 +109,26 @@ states into the existing distance scalar without first deciding the objective.
 
 4. Update model heads and forward override.
    - Replace each combined save/refill output head with directed heads.
-   - In forward, substitute finalized finite known values with `torch.where`.
-   - Leave finalized unreachable entries out of the old distance reward/loss
-     until the unreachable objective is defined.
+   - Predict directed proximity utilities rather than raw distances.
+   - In forward, substitute finalized known utilities with `torch.where`.
+   - Use `0` for finalized unreachable utilities.
 
 5. Update loss and generation reward.
    - Apply the existing save/refill weights to both directed components.
-   - For now, compute distance loss/reward only on reachable directed outcomes.
-   - Track finalized-unreachable counts as metrics so the behavior is visible.
+   - Change generation reward from negative distance penalty to positive
+     proximity utility reward.
+   - Train with MSE against directed proximity utility targets.
+   - Keep logging the existing `save_distance` and `refill_distance` aggregates
+     as average round-trip distances conditioned on reachability, so new runs
+     remain comparable with previous experiments.
+   - Add finalized-unreachable frequency and average proximity utility metrics
+     so the new objective is visible.
 
 6. Test and validate.
    - Add Rust tests for directed distances and finalized masks.
    - Add Python smoke tests for shape compatibility and model forward.
    - Run `cargo test`, `maturin develop`, and Python compile/smoke checks in
      the `map-gen` conda environment.
-
-## Unreachable Reward Follow-Up
-
-The current reward estimates conditional expected distance given reachability.
-That is not enough once the model can know or predict unreachable states.
-
-Possible alternatives to evaluate:
-
-- Add explicit directed reachability outcomes and reward their log-probability.
-- Model expected cost as `P(reachable) * E(distance | reachable) +
-  P(unreachable) * unreachable_penalty`.
-- Treat unreachable save/refill as a separate invalidity-style outcome when the
-  design goal requires every relevant room part to reach save/refill.
-
-This should be decided before unreachable finalized values affect generation
-reward.
 
 ## Later Room-Part Node Architecture
 
@@ -167,9 +177,7 @@ when the pair-feature route is introduced.
 
 ## Open Design Checks
 
-- Decide the unreachable reward objective before using finalized unreachable
-  outcomes for generation reward.
-- Decide whether directed distance predictions should be represented as four
+- Decide whether directed utility predictions should be represented as four
   separate fields or grouped named objects in Python and PyO3 result classes.
 - Decide the sparse room-part row identity scheme before implementing
   room-part nodes.
