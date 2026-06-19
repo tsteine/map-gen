@@ -593,6 +593,8 @@ pub struct Environment {
     room_part_component: Vec<usize>,             // maps placed room door groups to SCC components
     scc_dag: SccDag, // DAG of strongly connected components (condensation graph)
     active_room_parts: Vec<RoomPartIdx>,
+    active_save_room_parts: Vec<RoomPartIdx>,
+    active_refill_room_parts: Vec<RoomPartIdx>,
     graph_distance: Vec<GraphDistance>,
     room_part_furthest_distance_cache: RoomPartFurthestDistanceCache,
     room_part_save_distance_cache: RoomPartSaveDistanceCache,
@@ -616,6 +618,8 @@ struct FeatureSnapshot {
     room_part_component: Vec<usize>,
     scc_dag: SccDag,
     active_room_parts_len: usize,
+    active_save_room_parts_len: usize,
+    active_refill_room_parts_len: usize,
     graph_distance_snapshot: GraphDistanceSnapshot,
     room_part_frontier_distance_cache: RoomPartFrontierDistanceCache,
 }
@@ -636,6 +640,8 @@ struct LookaheadSnapshot {
     room_part_component: Vec<usize>,
     scc_dag: SccDag,
     active_room_parts_len: usize,
+    active_save_room_parts_len: usize,
+    active_refill_room_parts_len: usize,
     graph_distance_snapshot: GraphDistanceSnapshot,
     room_part_frontier_distance_cache: RoomPartFrontierDistanceCache,
     placed_room_index_len: usize,
@@ -1207,6 +1213,8 @@ impl Environment {
             room_part_component: vec![NO_COMPONENT; common.room_part.len()],
             scc_dag: SccDag::default(),
             active_room_parts: Vec::new(),
+            active_save_room_parts: Vec::new(),
+            active_refill_room_parts: Vec::new(),
             graph_distance: vec![
                 UNREACHABLE_DISTANCE;
                 common.room_part.len() * common.room_part.len()
@@ -1251,6 +1259,8 @@ impl Environment {
         self.room_part_component.fill(NO_COMPONENT);
         self.scc_dag.clear();
         self.active_room_parts.clear();
+        self.active_save_room_parts.clear();
+        self.active_refill_room_parts.clear();
         self.graph_distance.fill(UNREACHABLE_DISTANCE);
         self.room_part_furthest_distance_cache.clear();
         self.room_part_save_distance_cache.clear();
@@ -1443,21 +1453,11 @@ impl Environment {
     fn room_distances(
         &self,
         common: &CommonData,
-        is_destination_room: impl Fn(&crate::common::RoomData) -> bool,
+        destination_parts: &[RoomPartIdx],
     ) -> (Vec<f32>, Vec<u8>) {
         let graph_size = common.room_part.len();
         let mut values = vec![0.0; graph_size];
         let mut mask = vec![0; graph_size];
-        let destination_parts: Vec<_> = self
-            .active_room_parts
-            .iter()
-            .copied()
-            .filter(|&room_part| {
-                let (room_idx, _) = common.room_part[room_part as usize];
-                is_destination_room(&common.room[room_idx as usize])
-            })
-            .map(usize::from)
-            .collect();
 
         if destination_parts.is_empty() {
             return (values, mask);
@@ -1465,19 +1465,16 @@ impl Environment {
 
         for &room_part in &self.active_room_parts {
             let part = room_part as usize;
-            let nearest_from_destination = destination_parts
-                .iter()
-                .map(|&destination_part| self.graph_distance[destination_part * graph_size + part])
-                .filter(|&distance| distance != UNREACHABLE_DISTANCE)
-                .min();
-            let nearest_to_destination = destination_parts
-                .iter()
-                .map(|&destination_part| self.graph_distance[part * graph_size + destination_part])
-                .filter(|&distance| distance != UNREACHABLE_DISTANCE)
-                .min();
-            if let (Some(from_destination), Some(to_destination)) =
-                (nearest_from_destination, nearest_to_destination)
-            {
+            let mut from_destination = UNREACHABLE_DISTANCE;
+            let mut to_destination = UNREACHABLE_DISTANCE;
+            for &destination_part in destination_parts {
+                let destination_part = destination_part as usize;
+                from_destination =
+                    from_destination.min(self.graph_distance[destination_part * graph_size + part]);
+                to_destination =
+                    to_destination.min(self.graph_distance[part * graph_size + destination_part]);
+            }
+            if from_destination != UNREACHABLE_DISTANCE && to_destination != UNREACHABLE_DISTANCE {
                 values[part] = f32::from(from_destination) + f32::from(to_destination);
                 mask[part] = 1;
             }
@@ -1487,33 +1484,23 @@ impl Environment {
     }
 
     pub fn save_distances(&self, common: &CommonData) -> (Vec<f32>, Vec<u8>) {
-        self.room_distances(common, |room| room.save)
+        self.room_distances(common, &self.active_save_room_parts)
     }
 
     pub fn refill_distances(&self, common: &CommonData) -> (Vec<f32>, Vec<u8>) {
-        self.room_distances(common, |room| room.refill)
+        self.room_distances(common, &self.active_refill_room_parts)
     }
 
     fn directed_room_distances(
         &self,
         common: &CommonData,
-        is_destination_room: impl Fn(&crate::common::RoomData) -> bool,
+        destination_parts: &[RoomPartIdx],
     ) -> (Vec<f32>, Vec<u8>, Vec<f32>, Vec<u8>) {
         let graph_size = common.room_part.len();
         let mut to_room = vec![0.0; graph_size];
         let mut to_room_mask = vec![0; graph_size];
         let mut from_room = vec![0.0; graph_size];
         let mut from_room_mask = vec![0; graph_size];
-        let destination_parts: Vec<_> = self
-            .active_room_parts
-            .iter()
-            .copied()
-            .filter(|&room_part| {
-                let (room_idx, _) = common.room_part[room_part as usize];
-                is_destination_room(&common.room[room_idx as usize])
-            })
-            .map(usize::from)
-            .collect();
 
         if destination_parts.is_empty() {
             return (to_room, to_room_mask, from_room, from_room_mask);
@@ -1521,22 +1508,21 @@ impl Environment {
 
         for &room_part in &self.active_room_parts {
             let part = room_part as usize;
-            let nearest_to_room = destination_parts
-                .iter()
-                .map(|&destination_part| self.graph_distance[destination_part * graph_size + part])
-                .filter(|&distance| distance != UNREACHABLE_DISTANCE)
-                .min();
-            let nearest_from_room = destination_parts
-                .iter()
-                .map(|&destination_part| self.graph_distance[part * graph_size + destination_part])
-                .filter(|&distance| distance != UNREACHABLE_DISTANCE)
-                .min();
-            if let Some(distance) = nearest_to_room {
-                to_room[part] = f32::from(distance);
+            let mut nearest_to_room = UNREACHABLE_DISTANCE;
+            let mut nearest_from_room = UNREACHABLE_DISTANCE;
+            for &destination_part in destination_parts {
+                let destination_part = destination_part as usize;
+                nearest_to_room =
+                    nearest_to_room.min(self.graph_distance[destination_part * graph_size + part]);
+                nearest_from_room = nearest_from_room
+                    .min(self.graph_distance[part * graph_size + destination_part]);
+            }
+            if nearest_to_room != UNREACHABLE_DISTANCE {
+                to_room[part] = f32::from(nearest_to_room);
                 to_room_mask[part] = 1;
             }
-            if let Some(distance) = nearest_from_room {
-                from_room[part] = f32::from(distance);
+            if nearest_from_room != UNREACHABLE_DISTANCE {
+                from_room[part] = f32::from(nearest_from_room);
                 from_room_mask[part] = 1;
             }
         }
@@ -1548,14 +1534,14 @@ impl Environment {
         &self,
         common: &CommonData,
     ) -> (Vec<f32>, Vec<u8>, Vec<f32>, Vec<u8>) {
-        self.directed_room_distances(common, |room| room.save)
+        self.directed_room_distances(common, &self.active_save_room_parts)
     }
 
     pub fn directed_refill_distances(
         &self,
         common: &CommonData,
     ) -> (Vec<f32>, Vec<u8>, Vec<f32>, Vec<u8>) {
-        self.directed_room_distances(common, |room| room.refill)
+        self.directed_room_distances(common, &self.active_refill_room_parts)
     }
 
     pub fn missing_connect_distances(&self, common: &CommonData) -> (Vec<f32>, Vec<u8>) {
@@ -1719,14 +1705,11 @@ impl Environment {
     #[cfg(test)]
     fn slow_room_part_save_distance_features(&self, common: &CommonData) -> Vec<u8> {
         let graph_size = common.room_part.len();
-        let save_parts = self
-            .active_room_parts
+        let save_parts = common
+            .save_room_part
             .iter()
             .copied()
-            .filter(|&room_part| {
-                let (room_idx, _) = common.room_part[room_part as usize];
-                common.room[room_idx as usize].save
-            })
+            .filter(|room_part| self.active_room_parts.contains(room_part))
             .map(usize::from)
             .collect::<Vec<_>>();
         (0..graph_size)
@@ -2134,6 +2117,8 @@ impl Environment {
             self.active_room_parts
                 .push((room.door_group_offset + local_part) as RoomPartIdx);
         }
+        let new_room_part_start = room.door_group_offset as RoomPartIdx;
+        let new_room_part_end = new_room_part_start + room.door_group_count as RoomPartIdx;
         if let [(room_part, attached_part)] = external_edges {
             self.add_single_attachment_room_distances(
                 common,
@@ -2149,25 +2134,29 @@ impl Environment {
                 self.add_graph_distance_edge(common, attached_part, room_part, 1);
             }
         }
-        if room.save {
-            for local_part in 0..room.door_group_count {
-                self.room_part_save_distance_cache.add_save_part(
-                    &self.graph_distance,
-                    graph_size,
-                    &self.active_room_parts,
-                    room.door_group_offset + local_part,
-                );
+        for &room_part in &common.save_room_part {
+            if room_part < new_room_part_start || room_part >= new_room_part_end {
+                continue;
             }
+            self.active_save_room_parts.push(room_part);
+            self.room_part_save_distance_cache.add_save_part(
+                &self.graph_distance,
+                graph_size,
+                &self.active_room_parts,
+                room_part as usize,
+            );
         }
-        if room.refill {
-            for local_part in 0..room.door_group_count {
-                self.room_part_refill_distance_cache.add_save_part(
-                    &self.graph_distance,
-                    graph_size,
-                    &self.active_room_parts,
-                    room.door_group_offset + local_part,
-                );
+        for &room_part in &common.refill_room_part {
+            if room_part < new_room_part_start || room_part >= new_room_part_end {
+                continue;
             }
+            self.active_refill_room_parts.push(room_part);
+            self.room_part_refill_distance_cache.add_save_part(
+                &self.graph_distance,
+                graph_size,
+                &self.active_room_parts,
+                room_part as usize,
+            );
         }
     }
 
@@ -2970,6 +2959,8 @@ impl Environment {
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
             active_room_parts_len: self.active_room_parts.len(),
+            active_save_room_parts_len: self.active_save_room_parts.len(),
+            active_refill_room_parts_len: self.active_refill_room_parts.len(),
             graph_distance_snapshot,
             room_part_frontier_distance_cache: self.room_part_frontier_distance_cache.clone(),
             placed_room_index_len: self.placed_room_index.insertion_len(),
@@ -3004,6 +2995,10 @@ impl Environment {
         self.scc_dag = snapshot.scc_dag;
         self.active_room_parts
             .truncate(snapshot.active_room_parts_len);
+        self.active_save_room_parts
+            .truncate(snapshot.active_save_room_parts_len);
+        self.active_refill_room_parts
+            .truncate(snapshot.active_refill_room_parts_len);
         self.restore_graph_distance_snapshot(common, snapshot.graph_distance_snapshot);
         self.room_part_frontier_distance_cache = snapshot.room_part_frontier_distance_cache;
         self.placed_room_index
@@ -3046,6 +3041,8 @@ impl Environment {
             room_part_component: self.room_part_component.clone(),
             scc_dag: self.scc_dag.clone(),
             active_room_parts_len: self.active_room_parts.len(),
+            active_save_room_parts_len: self.active_save_room_parts.len(),
+            active_refill_room_parts_len: self.active_refill_room_parts.len(),
             graph_distance_snapshot,
             room_part_frontier_distance_cache: self.room_part_frontier_distance_cache.clone(),
         };
@@ -3073,6 +3070,10 @@ impl Environment {
         self.scc_dag = snapshot.scc_dag;
         self.active_room_parts
             .truncate(snapshot.active_room_parts_len);
+        self.active_save_room_parts
+            .truncate(snapshot.active_save_room_parts_len);
+        self.active_refill_room_parts
+            .truncate(snapshot.active_refill_room_parts_len);
         self.restore_graph_distance_snapshot(common, snapshot.graph_distance_snapshot);
         self.room_part_frontier_distance_cache = snapshot.room_part_frontier_distance_cache;
     }
@@ -4479,6 +4480,82 @@ mod tests {
                 .iter()
                 .all(|&distance| distance == GraphDistance::MAX)
         );
+    }
+
+    #[test]
+    fn active_save_refill_room_parts_track_placement_and_restore() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "save": true,
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [
+                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    ],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "refill": true,
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [
+                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    ],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        assert_eq!(common.save_room_part, vec![0]);
+        assert_eq!(common.refill_room_part, vec![1]);
+        let mut env = Environment::new(&common, (4, 4), 8, 0);
+
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+            },
+            &common,
+        );
+        assert_eq!(env.active_save_room_parts, vec![0]);
+        assert!(env.active_refill_room_parts.is_empty());
+
+        let candidate = Action {
+            room_idx: 1,
+            x: 1,
+            y: 0,
+        };
+        let config = FeatureConfig::all();
+        let expected_active_save_room_parts = env.active_save_room_parts.clone();
+        let expected_active_refill_room_parts = env.active_refill_room_parts.clone();
+        env.features_after_candidate(
+            &common,
+            candidate,
+            &config,
+            FrontierNeighborAlgorithm::Delaunay,
+            4,
+            4,
+        );
+        assert_eq!(env.active_save_room_parts, expected_active_save_room_parts);
+        assert_eq!(
+            env.active_refill_room_parts,
+            expected_active_refill_room_parts
+        );
+
+        env.step(candidate, &common);
+        assert_eq!(env.active_save_room_parts, vec![0]);
+        assert_eq!(env.active_refill_room_parts, vec![1]);
+
+        env.clear(&common);
+        assert!(env.active_save_room_parts.is_empty());
+        assert!(env.active_refill_room_parts.is_empty());
     }
 
     #[test]

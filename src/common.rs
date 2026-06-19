@@ -174,8 +174,6 @@ pub struct OutputData {
 }
 
 pub struct RoomData {
-    pub save: bool,
-    pub refill: bool,
     pub geometry_idx: GeometryIdx,
     pub connection_variant_idx: ConnectionVariantIdx,
     pub doors: Vec<RoomDoorData>,
@@ -243,6 +241,8 @@ pub struct CommonData {
     // for each direction, number of room doors in that direction across all rooms
     pub room_dir_door: [Vec<RoomDirDoorData>; NUM_DIRS],
     pub room_part: Vec<(RoomIdx, PartIdx)>,
+    pub save_room_part: Vec<RoomPartIdx>,
+    pub refill_room_part: Vec<RoomPartIdx>,
     pub room_connection: Vec<RoomConnectionData>,
     pub door_output: Vec<OutputData>,
     pub connection_output: Vec<OutputData>,
@@ -481,6 +481,8 @@ impl CommonData {
         let mut connection_variant_rooms = vec![];
         let mut door_group_count = 0;
         let mut room_part = vec![];
+        let mut save_room_part = vec![];
+        let mut refill_room_part = vec![];
         let mut room_connection = vec![];
         let mut geometry_by_key = HashMap::new();
         let mut connection_variant_by_key = HashMap::new();
@@ -624,7 +626,14 @@ impl CommonData {
             geometry_rooms[geometry_idx as usize].push(room_idx as RoomIdx);
             connection_variant_rooms[connection_variant_idx as usize].push(room_idx as RoomIdx);
             for part_idx in 0..room.doors.len() {
+                let room_part_idx = room_part.len() as RoomPartIdx;
                 room_part.push((room_idx as RoomIdx, part_idx as PartIdx));
+                if room.save {
+                    save_room_part.push(room_part_idx);
+                }
+                if room.refill {
+                    refill_room_part.push(room_part_idx);
+                }
             }
             for &(from_part, to_part) in &room.missing_connections {
                 room_connection.push(RoomConnectionData {
@@ -634,8 +643,6 @@ impl CommonData {
                 });
             }
             room_data.push(RoomData {
-                save: room.save,
-                refill: room.refill,
                 geometry_idx,
                 connection_variant_idx,
                 doors: door_data,
@@ -708,6 +715,8 @@ impl CommonData {
             geometry_dir_door,
             room_dir_door,
             room_part,
+            save_room_part,
+            refill_room_part,
             room_connection,
             door_output,
             connection_output,
