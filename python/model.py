@@ -109,29 +109,6 @@ def apply_known_invalid_logits(
     return torch.where(known_invalid >= 0, deterministic_logits, invalid_logits)
 
 
-def apply_known_distance_proximity_utilities(
-    predicted_utility: torch.Tensor,
-    known_distance: torch.Tensor,
-    distance_proximity_scale: float,
-    outcome_name: str,
-) -> torch.Tensor:
-    torch._assert(
-        known_distance.shape[-1] == predicted_utility.shape[-1],
-        f"known {outcome_name} distances must match {outcome_name} prediction width",
-    )
-    while known_distance.ndim < predicted_utility.ndim:
-        known_distance = known_distance.unsqueeze(1)
-    known_distance = known_distance.to(device=predicted_utility.device)
-    finite_distance = (known_distance.to(predicted_utility.dtype) - 2).clamp_min(0)
-    scale = predicted_utility.new_tensor(distance_proximity_scale)
-    known_utility = torch.where(
-        known_distance == 1,
-        predicted_utility.new_zeros(()),
-        scale / (finite_distance + scale),
-    )
-    return torch.where(known_distance == 0, predicted_utility, known_utility)
-
-
 def apply_frontier_door_invalid_logits(
     door_invalid: torch.Tensor,
     frontier_door_invalid: torch.Tensor,
@@ -236,12 +213,10 @@ class FrontierModel(torch.nn.Module):
         num_layers,
         door_counts,
         frontier_window_size,
-        distance_proximity_scale,
         features: FeatureConfig,
     ):
         super().__init__()
         self.features = features
-        self.distance_proximity_scale = distance_proximity_scale
         self.num_rooms = num_rooms
         self.map_x = map_x
         self.map_y = map_y
@@ -352,6 +327,7 @@ class FrontierModel(torch.nn.Module):
             + self.num_room_parts * int(self.features.room_part_save_distance)
             + self.num_room_parts * int(self.features.room_part_refill_distance)
             + self.num_room_parts * int(self.features.room_part_frontier_distance)
+            + 4 * self.num_room_parts
             + (door_match_embedding_width + 2 * connection_output_size + 2)
             * int(self.features.lookahead_outcomes)
             + (toilet_crossed_room_embedding_width * int(self.features.toilet_crossed_room))
@@ -374,6 +350,7 @@ class FrontierModel(torch.nn.Module):
             + (door_match_embedding_width + 2 * connection_output_size + 2)
             * int(self.features.lookahead_outcomes)
             + (toilet_crossed_room_embedding_width * int(self.features.toilet_crossed_room))
+            + 4 * self.num_room_parts
         )
         self.pooled_mlp = (
             torch.nn.Sequential(
@@ -427,6 +404,7 @@ class FrontierModel(torch.nn.Module):
         self.room_part_frontier_distance_embedding = (
             torch.nn.Embedding(256, 1) if self.features.room_part_frontier_distance else None
         )
+        self.known_distance_embedding = torch.nn.Embedding(256, 1)
         self.frontier_pos_embedding_x = (
             torch.nn.Parameter(
                 torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width)
@@ -689,6 +667,22 @@ class FrontierModel(torch.nn.Module):
         distances = features.global_features.room_part_frontier_distance.to(torch.int64)
         return self.room_part_frontier_distance_embedding(distances).flatten(1).to(dtype)
 
+    def _known_distance_features(
+        self,
+        features: Features,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        distances = torch.cat(
+            [
+                features.global_features.known_save_from_room_distance,
+                features.global_features.known_save_to_room_distance,
+                features.global_features.known_refill_from_room_distance,
+                features.global_features.known_refill_to_room_distance,
+            ],
+            dim=-1,
+        ).to(torch.int64)
+        return self.known_distance_embedding(distances).flatten(1).to(dtype)
+
     def _relative_position_features(self, features, neighbor):
         if self.frontier_relative_pos_embedding_x is None:
             return None
@@ -804,6 +798,7 @@ class FrontierModel(torch.nn.Module):
             features,
             X.dtype,
         )
+        known_distance_features = self._known_distance_features(features, X.dtype)
         global_inputs = []
         if inventory_features is not None:
             global_inputs.append(inventory_features)
@@ -827,6 +822,7 @@ class FrontierModel(torch.nn.Module):
             global_inputs.append(room_part_refill_distance_features)
         if room_part_frontier_distance_features is not None:
             global_inputs.append(room_part_frontier_distance_features)
+        global_inputs.append(known_distance_features)
         global_state = (
             self.global_mlp(torch.cat(global_inputs, dim=-1))
             if self.global_mlp is not None
@@ -934,6 +930,7 @@ class FrontierModel(torch.nn.Module):
             pooled_inputs.append(toilet_crossed_room_features)
         if global_room_position_features is not None:
             pooled_inputs.append(global_room_position_features)
+        pooled_inputs.append(known_distance_features)
         pooled_state = (
             self.pooled_mlp(torch.cat(pooled_inputs, dim=-1))
             if self.pooled_mlp is not None
@@ -984,30 +981,6 @@ class FrontierModel(torch.nn.Module):
         )
         refill_from_room_utility = torch.sigmoid(
             self.refill_from_room_utility_output(X).to(torch.float32)
-        )
-        save_to_room_utility = apply_known_distance_proximity_utilities(
-            save_to_room_utility,
-            features.global_features.known_save_to_room_distance,
-            self.distance_proximity_scale,
-            "save-to-room",
-        )
-        save_from_room_utility = apply_known_distance_proximity_utilities(
-            save_from_room_utility,
-            features.global_features.known_save_from_room_distance,
-            self.distance_proximity_scale,
-            "save-from-room",
-        )
-        refill_to_room_utility = apply_known_distance_proximity_utilities(
-            refill_to_room_utility,
-            features.global_features.known_refill_to_room_distance,
-            self.distance_proximity_scale,
-            "refill-to-room",
-        )
-        refill_from_room_utility = apply_known_distance_proximity_utilities(
-            refill_from_room_utility,
-            features.global_features.known_refill_from_room_distance,
-            self.distance_proximity_scale,
-            "refill-from-room",
         )
         missing_connect_distance = self.missing_connect_distance_output(X).to(torch.float32)
         preds = get_predictions(

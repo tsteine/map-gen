@@ -293,7 +293,6 @@ def frontier_model_kwargs(
             count_room_doors_by_direction(rooms, "down"),
         ),
         "frontier_window_size": config.generation.frontier_window_size,
-        "distance_proximity_scale": config.distance_proximity_scale,
         "features": config.features,
     }
 
