@@ -19,7 +19,23 @@ use crate::scc_dag::SccDag;
 
 const NO_COMPONENT: usize = usize::MAX;
 const UNREACHABLE_DISTANCE: GraphDistance = GraphDistance::MAX;
+const KNOWN_DISTANCE_UNKNOWN: u8 = 0;
+const KNOWN_DISTANCE_UNREACHABLE: u8 = 1;
 pub const FEATURE_FRONTIER_WIDTH: usize = 5;
+
+fn encode_known_finalized_distance(
+    current_distance: GraphDistance,
+    frontier_distance: GraphDistance,
+) -> u8 {
+    if current_distance != UNREACHABLE_DISTANCE && current_distance <= frontier_distance {
+        current_distance.min(253) + 2
+    } else if current_distance == UNREACHABLE_DISTANCE && frontier_distance == UNREACHABLE_DISTANCE
+    {
+        KNOWN_DISTANCE_UNREACHABLE
+    } else {
+        KNOWN_DISTANCE_UNKNOWN
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StepMode {
@@ -368,6 +384,10 @@ pub struct Features {
     pub room_part_save_distance: Vec<u8>,
     pub room_part_refill_distance: Vec<u8>,
     pub room_part_frontier_distance: Vec<u8>,
+    pub known_save_from_room_distance: Vec<u8>,
+    pub known_save_to_room_distance: Vec<u8>,
+    pub known_refill_from_room_distance: Vec<u8>,
+    pub known_refill_to_room_distance: Vec<u8>,
     // mask, x, y, vertical, kind
     pub frontier: Vec<i8>,
     // Global door output index for each frontier row, or -1 when unavailable.
@@ -1660,6 +1680,33 @@ impl Environment {
                 }
             })
             .collect()
+    }
+
+    fn known_save_refill_distance_features(
+        &self,
+        common: &CommonData,
+        save_distance_cache: &RoomPartSaveDistanceCache,
+    ) -> (Vec<u8>, Vec<u8>) {
+        debug_assert_eq!(
+            save_distance_cache.nearest_save_destination.len(),
+            common.room_part.len()
+        );
+        let mut from_room = vec![KNOWN_DISTANCE_UNKNOWN; common.room_part.len()];
+        let mut to_room = vec![KNOWN_DISTANCE_UNKNOWN; common.room_part.len()];
+        for &part in &self.active_room_parts {
+            let part = part as usize;
+            from_room[part] = encode_known_finalized_distance(
+                save_distance_cache.nearest_save_destination[part],
+                self.room_part_frontier_distance_cache
+                    .nearest_frontier_destination[part],
+            );
+            to_room[part] = encode_known_finalized_distance(
+                save_distance_cache.nearest_save_source[part],
+                self.room_part_frontier_distance_cache
+                    .nearest_frontier_source[part],
+            );
+        }
+        (from_room, to_room)
     }
 
     #[cfg(test)]
@@ -3187,6 +3234,10 @@ impl Environment {
         } else {
             vec![]
         };
+        let (known_save_from_room_distance, known_save_to_room_distance) =
+            self.known_save_refill_distance_features(common, &self.room_part_save_distance_cache);
+        let (known_refill_from_room_distance, known_refill_to_room_distance) =
+            self.known_save_refill_distance_features(common, &self.room_part_refill_distance_cache);
         let mut frontier = vec![0; frontier_count * FEATURE_FRONTIER_WIDTH];
         let frontier_window_area = frontier_window_size * frontier_window_size;
         let packed_frontier_window_size = frontier_window_area.div_ceil(8);
@@ -3452,6 +3503,10 @@ impl Environment {
             room_part_save_distance,
             room_part_refill_distance,
             room_part_frontier_distance,
+            known_save_from_room_distance,
+            known_save_to_room_distance,
+            known_refill_from_room_distance,
+            known_refill_to_room_distance,
             frontier,
             row_door_output_idx,
             frontier_occupancy,
@@ -5252,6 +5307,139 @@ mod tests {
             vec![1, 1, 255]
         );
         env.assert_room_part_save_distance_cache_matches_slow(&common);
+    }
+
+    #[test]
+    fn known_finalized_distance_encoding_handles_all_states() {
+        assert_eq!(encode_known_finalized_distance(7, 7), 9);
+        assert_eq!(encode_known_finalized_distance(7, 8), 9);
+        assert_eq!(
+            encode_known_finalized_distance(8, 7),
+            KNOWN_DISTANCE_UNKNOWN
+        );
+        assert_eq!(
+            encode_known_finalized_distance(UNREACHABLE_DISTANCE, UNREACHABLE_DISTANCE),
+            KNOWN_DISTANCE_UNREACHABLE
+        );
+        assert_eq!(
+            encode_known_finalized_distance(UNREACHABLE_DISTANCE, 9),
+            KNOWN_DISTANCE_UNKNOWN
+        );
+        assert_eq!(
+            encode_known_finalized_distance(254, UNREACHABLE_DISTANCE),
+            255
+        );
+    }
+
+    #[test]
+    fn features_include_known_finalized_reachable_directed_distances() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "save": true,
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 8, 0);
+        let graph_size = common.room_part.len();
+        env.active_room_parts = vec![0, 1];
+        for part in 0..graph_size {
+            env.set_graph_distance(graph_size, part, part, 0);
+        }
+        env.set_graph_distance(graph_size, 1, 0, 4);
+        env.set_graph_distance(graph_size, 0, 1, 3);
+        env.set_graph_distance(graph_size, 1, 2, 5);
+        env.set_graph_distance(graph_size, 2, 1, 2);
+        let active_room_parts = env.active_room_parts.clone();
+        env.room_part_save_distance_cache.add_save_part(
+            &env.graph_distance,
+            graph_size,
+            &active_room_parts,
+            0,
+        );
+        env.room_part_frontier_distance_cache.add_frontier_part(
+            &env.graph_distance,
+            graph_size,
+            &active_room_parts,
+            2,
+        );
+
+        let features = env.features(
+            &common,
+            &FeatureConfig::all_disabled(),
+            FrontierNeighborAlgorithm::Nearest,
+            1,
+            1,
+        );
+
+        assert_eq!(features.known_save_from_room_distance, vec![2, 6, 0]);
+        assert_eq!(features.known_save_to_room_distance, vec![2, 0, 0]);
+        assert_eq!(features.known_refill_from_room_distance, vec![1, 0, 0]);
+        assert_eq!(features.known_refill_to_room_distance, vec![1, 0, 0]);
+    }
+
+    #[test]
+    fn features_include_known_finalized_unreachable_directed_distances() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (5, 5), 8, 0);
+        env.active_room_parts = vec![0];
+
+        let features = env.features(
+            &common,
+            &FeatureConfig::all_disabled(),
+            FrontierNeighborAlgorithm::Nearest,
+            1,
+            1,
+        );
+
+        assert_eq!(features.known_save_from_room_distance, vec![1, 0]);
+        assert_eq!(features.known_save_to_room_distance, vec![1, 0]);
+        assert_eq!(features.known_refill_from_room_distance, vec![1, 0]);
+        assert_eq!(features.known_refill_to_room_distance, vec![1, 0]);
     }
 
     #[test]

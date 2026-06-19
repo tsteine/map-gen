@@ -13,42 +13,12 @@ available at each generation state:
   so generation reward uses the known value and training gradients are masked
   for that entry.
 
-## Current First Step
+## Current Step
 
-Split the current room-part save/refill distance outcomes into directed
-proximity-utility components.
-
-The current save/refill distance outcome is a combined round-trip value:
-
-- nearest save/refill to room part
-- room part to nearest save/refill
-
-Replace this with separate directed utility outcomes:
-
-- proximity utility from nearest save to room part
-- proximity utility from room part to nearest save
-- proximity utility from nearest refill to room part
-- proximity utility from room part to nearest refill
-
-The utility for a finite directed distance `d` is:
-
-```text
-u(d) = scale / (d + scale)
-```
-
-Unreachable is treated as infinite distance, so its utility is the limiting
-value:
-
-```text
-u(unreachable) = 0
-```
-
-`scale` should be a required config value. Larger values make long finite
-distances retain more reward; smaller values concentrate the reward near short
-distances.
-
-The training and generation config can keep one weight for save distance and
-one weight for refill distance. Each weight applies to both directions.
+Add known-finalized overrides for directed save/refill proximity utilities.
+The model already predicts four directed proximity utilities for save/refill
+reachability quality; this step adds deterministic overrides for values that
+are known from the current graph state.
 
 ## Known Directed Distance Outcomes
 
@@ -81,16 +51,15 @@ The model should predict expected proximity utility, not expected distance
 conditioned on reachability. This keeps unreachable states well-defined without
 turning save/refill reachability into a separate validity objective.
 
-## First Implementation Sequence
+The existing save/refill reward and loss weights continue to apply to both
+directions for each category.
 
-1. Rename and split Rust outcome generation.
-   - Replace combined save/refill room-part outcome vectors with directed
-     `to` and `from` utility vectors.
-   - Keep masks direction-specific.
-   - Add direction-specific finalized masks and known values.
-   - Add a required proximity-utility scale config value and use it to convert
-     distances to target utilities.
-   - Preserve strict required fields across Python/Rust bindings.
+## Implementation Sequence
+
+1. Add direction-specific finalized masks and known values.
+   - Compute finalized-known state in Rust.
+   - Use active save/refill room-part lists and frontier distance information.
+   - Preserve required fields across Python/Rust bindings.
 
 2. Split current room-part distance features.
    - Replace combined save/refill feature encodings with directed feature
@@ -101,31 +70,18 @@ turning save/refill reachability into a separate validity objective.
      room-part nodes in this step.
 
 3. Update Python data plumbing.
-   - Update `EndOutcomes`, feature dataclasses, buffer allocation, and transfer
-     code to carry directed fields.
-   - Update training batch construction, generated outcome concatenation, and
-     metrics.
+   - Extend `EndOutcomes`, feature dataclasses, buffer allocation, and transfer
+     code to carry finalized-known fields.
+   - Update training batch construction and generated outcome concatenation.
    - Use named dataclass construction throughout.
 
-4. Update model heads and forward override.
-   - Replace each combined save/refill output head with directed heads.
-   - Predict directed proximity utilities rather than raw distances.
+4. Update model forward override.
    - In forward, substitute finalized known utilities with `torch.where`.
    - Use `0` for finalized unreachable utilities.
+   - Ensure substituted entries cut gradients to learned predictions.
 
-5. Update loss and generation reward.
-   - Apply the existing save/refill weights to both directed components.
-   - Change generation reward from negative distance penalty to positive
-     proximity utility reward.
-   - Train with MSE against directed proximity utility targets.
-   - Keep logging the existing `save_distance` and `refill_distance` aggregates
-     as average round-trip distances conditioned on reachability, so new runs
-     remain comparable with previous experiments.
-   - Add finalized-unreachable frequency and average proximity utility metrics
-     so the new objective is visible.
-
-6. Test and validate.
-   - Add Rust tests for directed distances and finalized masks.
+5. Test and validate.
+   - Add Rust tests for finalized masks.
    - Add Python smoke tests for shape compatibility and model forward.
    - Run `cargo test`, `maturin develop`, and Python compile/smoke checks in
      the `map-gen` conda environment.
@@ -177,8 +133,6 @@ when the pair-feature route is introduced.
 
 ## Open Design Checks
 
-- Decide whether directed utility predictions should be represented as four
-  separate fields or grouped named objects in Python and PyO3 result classes.
 - Decide the sparse room-part row identity scheme before implementing
   room-part nodes.
 - Check the cost of frontier/frontier graph-distance pair features before

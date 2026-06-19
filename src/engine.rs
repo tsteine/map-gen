@@ -1419,6 +1419,10 @@ pub struct FeatureBuffers {
     room_part_save_distance: Py<PyArray2<u8>>,
     room_part_refill_distance: Py<PyArray2<u8>>,
     room_part_frontier_distance: Py<PyArray2<u8>>,
+    known_save_from_room_distance: Py<PyArray2<u8>>,
+    known_save_to_room_distance: Py<PyArray2<u8>>,
+    known_refill_from_room_distance: Py<PyArray2<u8>>,
+    known_refill_to_room_distance: Py<PyArray2<u8>>,
     frontier: Py<PyArray2<i8>>,
     frontier_occupancy: Py<PyArray2<u8>>,
     frontier_neighbor: Py<PyArray2<i16>>,
@@ -1480,6 +1484,19 @@ impl FeatureBuffers {
             room_part_save_distance: required_py_field!(fields, "room_part_save_distance"),
             room_part_refill_distance: required_py_field!(fields, "room_part_refill_distance"),
             room_part_frontier_distance: required_py_field!(fields, "room_part_frontier_distance"),
+            known_save_from_room_distance: required_py_field!(
+                fields,
+                "known_save_from_room_distance"
+            ),
+            known_save_to_room_distance: required_py_field!(fields, "known_save_to_room_distance"),
+            known_refill_from_room_distance: required_py_field!(
+                fields,
+                "known_refill_from_room_distance"
+            ),
+            known_refill_to_room_distance: required_py_field!(
+                fields,
+                "known_refill_to_room_distance"
+            ),
             frontier: required_py_field!(fields, "frontier"),
             frontier_occupancy: required_py_field!(fields, "frontier_occupancy"),
             frontier_neighbor: required_py_field!(fields, "frontier_neighbor"),
@@ -1702,6 +1719,10 @@ struct GlobalFeatureOutputShards {
     room_part_save_distance: OutputShard<u8>,
     room_part_refill_distance: OutputShard<u8>,
     room_part_frontier_distance: OutputShard<u8>,
+    known_save_from_room_distance: OutputShard<u8>,
+    known_save_to_room_distance: OutputShard<u8>,
+    known_refill_from_room_distance: OutputShard<u8>,
+    known_refill_to_room_distance: OutputShard<u8>,
     connection_reachability: OutputShard<u8>,
     toilet_crossed_room_idx: OutputShard<i16>,
     inventory_count: usize,
@@ -1710,6 +1731,7 @@ struct GlobalFeatureOutputShards {
     room_part_save_distance_count: usize,
     room_part_refill_distance_count: usize,
     room_part_frontier_distance_count: usize,
+    known_distance_count: usize,
     connection_count: usize,
     toilet_crossed_room_count: usize,
 }
@@ -1735,6 +1757,10 @@ struct GlobalFeatureOutputSlices<'a> {
     room_part_save_distance: &'a mut [u8],
     room_part_refill_distance: &'a mut [u8],
     room_part_frontier_distance: &'a mut [u8],
+    known_save_from_room_distance: &'a mut [u8],
+    known_save_to_room_distance: &'a mut [u8],
+    known_refill_from_room_distance: &'a mut [u8],
+    known_refill_to_room_distance: &'a mut [u8],
     connection_reachability: &'a mut [u8],
     toilet_crossed_room_idx: &'a mut [i16],
     inventory_count: usize,
@@ -1743,6 +1769,7 @@ struct GlobalFeatureOutputSlices<'a> {
     room_part_save_distance_count: usize,
     room_part_refill_distance_count: usize,
     room_part_frontier_distance_count: usize,
+    known_distance_count: usize,
     connection_count: usize,
     toilet_crossed_room_count: usize,
 }
@@ -1774,6 +1801,18 @@ impl GlobalFeatureOutputShards {
             room_part_frontier_distance: unsafe {
                 self.room_part_frontier_distance.into_mut_slice()
             },
+            known_save_from_room_distance: unsafe {
+                self.known_save_from_room_distance.into_mut_slice()
+            },
+            known_save_to_room_distance: unsafe {
+                self.known_save_to_room_distance.into_mut_slice()
+            },
+            known_refill_from_room_distance: unsafe {
+                self.known_refill_from_room_distance.into_mut_slice()
+            },
+            known_refill_to_room_distance: unsafe {
+                self.known_refill_to_room_distance.into_mut_slice()
+            },
             connection_reachability: unsafe { self.connection_reachability.into_mut_slice() },
             toilet_crossed_room_idx: unsafe { self.toilet_crossed_room_idx.into_mut_slice() },
             inventory_count: self.inventory_count,
@@ -1782,6 +1821,7 @@ impl GlobalFeatureOutputShards {
             room_part_save_distance_count: self.room_part_save_distance_count,
             room_part_refill_distance_count: self.room_part_refill_distance_count,
             room_part_frontier_distance_count: self.room_part_frontier_distance_count,
+            known_distance_count: self.known_distance_count,
             connection_count: self.connection_count,
             toilet_crossed_room_count: self.toilet_crossed_room_count,
         }
@@ -1857,6 +1897,30 @@ impl GlobalFeatureOutputSlices<'_> {
             &features.room_part_frontier_distance,
             idx,
             self.room_part_frontier_distance_count,
+        );
+        copy_row(
+            &mut self.known_save_from_room_distance,
+            &features.known_save_from_room_distance,
+            idx,
+            self.known_distance_count,
+        );
+        copy_row(
+            &mut self.known_save_to_room_distance,
+            &features.known_save_to_room_distance,
+            idx,
+            self.known_distance_count,
+        );
+        copy_row(
+            &mut self.known_refill_from_room_distance,
+            &features.known_refill_from_room_distance,
+            idx,
+            self.known_distance_count,
+        );
+        copy_row(
+            &mut self.known_refill_to_room_distance,
+            &features.known_refill_to_room_distance,
+            idx,
+            self.known_distance_count,
         );
         copy_row(
             &mut self.connection_reachability,
@@ -2237,6 +2301,10 @@ mod tests {
             room_part_save_distance: OutputShard::empty(),
             room_part_refill_distance: OutputShard::empty(),
             room_part_frontier_distance: OutputShard::empty(),
+            known_save_from_room_distance: OutputShard::empty(),
+            known_save_to_room_distance: OutputShard::empty(),
+            known_refill_from_room_distance: OutputShard::empty(),
+            known_refill_to_room_distance: OutputShard::empty(),
             connection_reachability: OutputShard::empty(),
             toilet_crossed_room_idx: OutputShard::empty(),
             inventory_count: 0,
@@ -2245,6 +2313,7 @@ mod tests {
             room_part_save_distance_count: 0,
             room_part_refill_distance_count: 0,
             room_part_frontier_distance_count: 0,
+            known_distance_count: 0,
             connection_count: 0,
             toilet_crossed_room_count: 0,
         }
@@ -3322,6 +3391,14 @@ impl EnvironmentGroup {
         let mut room_part_refill_distance = buffers.room_part_refill_distance.bind(py).readwrite();
         let mut room_part_frontier_distance =
             buffers.room_part_frontier_distance.bind(py).readwrite();
+        let mut known_save_from_room_distance =
+            buffers.known_save_from_room_distance.bind(py).readwrite();
+        let mut known_save_to_room_distance =
+            buffers.known_save_to_room_distance.bind(py).readwrite();
+        let mut known_refill_from_room_distance =
+            buffers.known_refill_from_room_distance.bind(py).readwrite();
+        let mut known_refill_to_room_distance =
+            buffers.known_refill_to_room_distance.bind(py).readwrite();
         let mut frontier = buffers.frontier.bind(py).readwrite();
         let mut frontier_occupancy = buffers.frontier_occupancy.bind(py).readwrite();
         let mut frontier_neighbor = buffers.frontier_neighbor.bind(py).readwrite();
@@ -3356,6 +3433,7 @@ impl EnvironmentGroup {
             room_part_count * usize::from(self.features.room_part_refill_distance);
         let room_part_frontier_distance_width =
             room_part_count * usize::from(self.features.room_part_frontier_distance);
+        let known_distance_width = room_part_count;
         let frontier_occupancy_width = (self.frontier_window_size * self.frontier_window_size)
             .div_ceil(8)
             * usize::from(self.features.frontier_occupancy);
@@ -3380,6 +3458,14 @@ impl EnvironmentGroup {
         let room_part_refill_distance_shape = room_part_refill_distance.as_array().shape().to_vec();
         let room_part_frontier_distance_shape =
             room_part_frontier_distance.as_array().shape().to_vec();
+        let known_save_from_room_distance_shape =
+            known_save_from_room_distance.as_array().shape().to_vec();
+        let known_save_to_room_distance_shape =
+            known_save_to_room_distance.as_array().shape().to_vec();
+        let known_refill_from_room_distance_shape =
+            known_refill_from_room_distance.as_array().shape().to_vec();
+        let known_refill_to_room_distance_shape =
+            known_refill_to_room_distance.as_array().shape().to_vec();
         let frontier_shape = frontier.as_array().shape().to_vec();
         let frontier_occupancy_shape = frontier_occupancy.as_array().shape().to_vec();
         let frontier_neighbor_shape = frontier_neighbor.as_array().shape().to_vec();
@@ -3400,6 +3486,10 @@ impl EnvironmentGroup {
             || room_part_save_distance_shape[0] < snapshot_count
             || room_part_refill_distance_shape[0] < snapshot_count
             || room_part_frontier_distance_shape[0] < snapshot_count
+            || known_save_from_room_distance_shape[0] < snapshot_count
+            || known_save_to_room_distance_shape[0] < snapshot_count
+            || known_refill_from_room_distance_shape[0] < snapshot_count
+            || known_refill_to_room_distance_shape[0] < snapshot_count
             || connection_reachability_shape[0] < snapshot_count
             || toilet_crossed_room_shape[0] < snapshot_count
             || frontier_shape[0] < frontier_row_count
@@ -3443,6 +3533,26 @@ impl EnvironmentGroup {
             "room_part_frontier_distance",
             room_part_frontier_distance_shape[1],
             room_part_frontier_distance_width,
+        )?;
+        check_dim(
+            "known_save_from_room_distance",
+            known_save_from_room_distance_shape[1],
+            known_distance_width,
+        )?;
+        check_dim(
+            "known_save_to_room_distance",
+            known_save_to_room_distance_shape[1],
+            known_distance_width,
+        )?;
+        check_dim(
+            "known_refill_from_room_distance",
+            known_refill_from_room_distance_shape[1],
+            known_distance_width,
+        )?;
+        check_dim(
+            "known_refill_to_room_distance",
+            known_refill_to_room_distance_shape[1],
+            known_distance_width,
         )?;
         check_dim("frontier", frontier_shape[1], FEATURE_FRONTIER_WIDTH)?;
         check_dim(
@@ -3504,6 +3614,22 @@ impl EnvironmentGroup {
         let room_part_frontier_distance = room_part_frontier_distance
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("room_part_frontier_distance must be contiguous"))?;
+        let known_save_from_room_distance =
+            known_save_from_room_distance.as_slice_mut().map_err(|_| {
+                PyValueError::new_err("known_save_from_room_distance must be contiguous")
+            })?;
+        let known_save_to_room_distance = known_save_to_room_distance
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("known_save_to_room_distance must be contiguous"))?;
+        let known_refill_from_room_distance = known_refill_from_room_distance
+            .as_slice_mut()
+            .map_err(|_| {
+                PyValueError::new_err("known_refill_from_room_distance must be contiguous")
+            })?;
+        let known_refill_to_room_distance =
+            known_refill_to_room_distance.as_slice_mut().map_err(|_| {
+                PyValueError::new_err("known_refill_to_room_distance must be contiguous")
+            })?;
         let frontier = frontier
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("frontier must be contiguous"))?;
@@ -3601,6 +3727,23 @@ impl EnvironmentGroup {
                                 ..(snapshot_start + snapshot_count)
                                     * room_part_frontier_distance_width],
                         ),
+                        known_save_from_room_distance: OutputShard::from_slice(
+                            &mut known_save_from_room_distance[snapshot_start * known_distance_width
+                                ..(snapshot_start + snapshot_count) * known_distance_width],
+                        ),
+                        known_save_to_room_distance: OutputShard::from_slice(
+                            &mut known_save_to_room_distance[snapshot_start * known_distance_width
+                                ..(snapshot_start + snapshot_count) * known_distance_width],
+                        ),
+                        known_refill_from_room_distance: OutputShard::from_slice(
+                            &mut known_refill_from_room_distance[snapshot_start
+                                * known_distance_width
+                                ..(snapshot_start + snapshot_count) * known_distance_width],
+                        ),
+                        known_refill_to_room_distance: OutputShard::from_slice(
+                            &mut known_refill_to_room_distance[snapshot_start * known_distance_width
+                                ..(snapshot_start + snapshot_count) * known_distance_width],
+                        ),
                         connection_reachability: OutputShard::from_slice(
                             &mut connection_reachability[snapshot_start
                                 * connection_reachability_width
@@ -3617,6 +3760,7 @@ impl EnvironmentGroup {
                         room_part_save_distance_count: room_part_save_distance_width,
                         room_part_refill_distance_count: room_part_refill_distance_width,
                         room_part_frontier_distance_count: room_part_frontier_distance_width,
+                        known_distance_count: known_distance_width,
                         connection_count: connection_reachability_width,
                         toilet_crossed_room_count: toilet_crossed_room_width,
                     },

@@ -425,6 +425,10 @@ class GlobalFeatures:
     room_part_save_distance: torch.Tensor
     room_part_refill_distance: torch.Tensor
     room_part_frontier_distance: torch.Tensor
+    known_save_from_room_distance: torch.Tensor
+    known_save_to_room_distance: torch.Tensor
+    known_refill_from_room_distance: torch.Tensor
+    known_refill_to_room_distance: torch.Tensor
     log_temperature: torch.Tensor
     log_recommended_candidates: torch.Tensor
     lookahead_door_invalid: torch.Tensor
@@ -453,6 +457,18 @@ class GlobalFeatures:
                 device, non_blocking=non_blocking
             ),
             room_part_frontier_distance=self.room_part_frontier_distance.to(
+                device, non_blocking=non_blocking
+            ),
+            known_save_from_room_distance=self.known_save_from_room_distance.to(
+                device, non_blocking=non_blocking
+            ),
+            known_save_to_room_distance=self.known_save_to_room_distance.to(
+                device, non_blocking=non_blocking
+            ),
+            known_refill_from_room_distance=self.known_refill_from_room_distance.to(
+                device, non_blocking=non_blocking
+            ),
+            known_refill_to_room_distance=self.known_refill_to_room_distance.to(
                 device, non_blocking=non_blocking
             ),
             log_temperature=self.log_temperature.to(device, non_blocking=non_blocking),
@@ -488,6 +504,10 @@ class GlobalFeatures:
             room_part_save_distance=self.room_part_save_distance.flatten(0, 1),
             room_part_refill_distance=self.room_part_refill_distance.flatten(0, 1),
             room_part_frontier_distance=self.room_part_frontier_distance.flatten(0, 1),
+            known_save_from_room_distance=self.known_save_from_room_distance.flatten(0, 1),
+            known_save_to_room_distance=self.known_save_to_room_distance.flatten(0, 1),
+            known_refill_from_room_distance=self.known_refill_from_room_distance.flatten(0, 1),
+            known_refill_to_room_distance=self.known_refill_to_room_distance.flatten(0, 1),
             log_temperature=self.log_temperature.flatten(0, 1),
             log_recommended_candidates=self.log_recommended_candidates.flatten(0, 1),
             lookahead_door_invalid=self.lookahead_door_invalid.flatten(0, 1),
@@ -927,6 +947,18 @@ class EnvironmentGroup:
                     "room_part_save_distance": feature_slot.room_part_save_distance.numpy(),
                     "room_part_refill_distance": feature_slot.room_part_refill_distance.numpy(),
                     "room_part_frontier_distance": feature_slot.room_part_frontier_distance.numpy(),
+                    "known_save_from_room_distance": (
+                        feature_slot.known_save_from_room_distance.numpy()
+                    ),
+                    "known_save_to_room_distance": (
+                        feature_slot.known_save_to_room_distance.numpy()
+                    ),
+                    "known_refill_from_room_distance": (
+                        feature_slot.known_refill_from_room_distance.numpy()
+                    ),
+                    "known_refill_to_room_distance": (
+                        feature_slot.known_refill_to_room_distance.numpy()
+                    ),
                     "frontier": feature_slot.frontier.numpy(),
                     "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
                     "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),
@@ -975,6 +1007,7 @@ class FeatureSlot:
         self.room_part_frontier_distance_width = room_part_count * int(
             features.room_part_frontier_distance
         )
+        self.known_distance_width = room_part_count
         self.frontier_occupancy_width = (
             (env.frontier_window_size * env.frontier_window_size + 7) // 8
         ) * int(features.frontier_occupancy)
@@ -1003,6 +1036,10 @@ class FeatureSlot:
         self.room_part_save_distance = None
         self.room_part_refill_distance = None
         self.room_part_frontier_distance = None
+        self.known_save_from_room_distance = None
+        self.known_save_to_room_distance = None
+        self.known_refill_from_room_distance = None
+        self.known_refill_to_room_distance = None
         self.frontier = None
         self.frontier_occupancy = None
         self.frontier_neighbor = None
@@ -1044,6 +1081,18 @@ class FeatureSlot:
         )
         self.room_part_frontier_distance = self._empty(
             (self.snapshot_capacity, self.room_part_frontier_distance_width), torch.uint8
+        )
+        self.known_save_from_room_distance = self._empty(
+            (self.snapshot_capacity, self.known_distance_width), torch.uint8
+        )
+        self.known_save_to_room_distance = self._empty(
+            (self.snapshot_capacity, self.known_distance_width), torch.uint8
+        )
+        self.known_refill_from_room_distance = self._empty(
+            (self.snapshot_capacity, self.known_distance_width), torch.uint8
+        )
+        self.known_refill_to_room_distance = self._empty(
+            (self.snapshot_capacity, self.known_distance_width), torch.uint8
         )
         self.frontier = self._empty((self.frontier_row_capacity, 5), torch.int8)
         self.frontier_occupancy = self._empty(
@@ -1132,6 +1181,16 @@ class FeatureSlot:
                 room_part_save_distance=self.room_part_save_distance[:environment_count],
                 room_part_refill_distance=self.room_part_refill_distance[:environment_count],
                 room_part_frontier_distance=self.room_part_frontier_distance[:environment_count],
+                known_save_from_room_distance=self.known_save_from_room_distance[
+                    :environment_count
+                ],
+                known_save_to_room_distance=self.known_save_to_room_distance[:environment_count],
+                known_refill_from_room_distance=self.known_refill_from_room_distance[
+                    :environment_count
+                ],
+                known_refill_to_room_distance=self.known_refill_to_room_distance[
+                    :environment_count
+                ],
                 log_temperature=log_temperature,
                 log_recommended_candidates=log_recommended_candidates,
                 lookahead_door_invalid=lookahead_door_invalid,
@@ -1220,6 +1279,18 @@ class FeatureSlot:
                 room_part_frontier_distance=self.room_part_frontier_distance[
                     :snapshot_count
                 ].view(environment_count, candidate_count, self.room_part_frontier_distance_width),
+                known_save_from_room_distance=self.known_save_from_room_distance[
+                    :snapshot_count
+                ].view(environment_count, candidate_count, self.known_distance_width),
+                known_save_to_room_distance=self.known_save_to_room_distance[
+                    :snapshot_count
+                ].view(environment_count, candidate_count, self.known_distance_width),
+                known_refill_from_room_distance=self.known_refill_from_room_distance[
+                    :snapshot_count
+                ].view(environment_count, candidate_count, self.known_distance_width),
+                known_refill_to_room_distance=self.known_refill_to_room_distance[
+                    :snapshot_count
+                ].view(environment_count, candidate_count, self.known_distance_width),
                 log_temperature=log_temperature,
                 log_recommended_candidates=log_recommended_candidates,
                 lookahead_door_invalid=lookahead_door_invalid,
@@ -1280,6 +1351,18 @@ def extract_candidate_features(
                 "room_part_save_distance": feature_slot.room_part_save_distance.numpy(),
                 "room_part_refill_distance": feature_slot.room_part_refill_distance.numpy(),
                 "room_part_frontier_distance": feature_slot.room_part_frontier_distance.numpy(),
+                "known_save_from_room_distance": (
+                    feature_slot.known_save_from_room_distance.numpy()
+                ),
+                "known_save_to_room_distance": (
+                    feature_slot.known_save_to_room_distance.numpy()
+                ),
+                "known_refill_from_room_distance": (
+                    feature_slot.known_refill_from_room_distance.numpy()
+                ),
+                "known_refill_to_room_distance": (
+                    feature_slot.known_refill_to_room_distance.numpy()
+                ),
                 "frontier": feature_slot.frontier.numpy(),
                 "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
                 "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),

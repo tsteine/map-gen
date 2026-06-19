@@ -109,6 +109,29 @@ def apply_known_invalid_logits(
     return torch.where(known_invalid >= 0, deterministic_logits, invalid_logits)
 
 
+def apply_known_distance_proximity_utilities(
+    predicted_utility: torch.Tensor,
+    known_distance: torch.Tensor,
+    distance_proximity_scale: float,
+    outcome_name: str,
+) -> torch.Tensor:
+    torch._assert(
+        known_distance.shape[-1] == predicted_utility.shape[-1],
+        f"known {outcome_name} distances must match {outcome_name} prediction width",
+    )
+    while known_distance.ndim < predicted_utility.ndim:
+        known_distance = known_distance.unsqueeze(1)
+    known_distance = known_distance.to(device=predicted_utility.device)
+    finite_distance = (known_distance.to(predicted_utility.dtype) - 2).clamp_min(0)
+    scale = predicted_utility.new_tensor(distance_proximity_scale)
+    known_utility = torch.where(
+        known_distance == 1,
+        predicted_utility.new_zeros(()),
+        scale / (finite_distance + scale),
+    )
+    return torch.where(known_distance == 0, predicted_utility, known_utility)
+
+
 def apply_frontier_door_invalid_logits(
     door_invalid: torch.Tensor,
     frontier_door_invalid: torch.Tensor,
@@ -213,10 +236,12 @@ class FrontierModel(torch.nn.Module):
         num_layers,
         door_counts,
         frontier_window_size,
+        distance_proximity_scale,
         features: FeatureConfig,
     ):
         super().__init__()
         self.features = features
+        self.distance_proximity_scale = distance_proximity_scale
         self.num_rooms = num_rooms
         self.map_x = map_x
         self.map_y = map_y
@@ -959,6 +984,30 @@ class FrontierModel(torch.nn.Module):
         )
         refill_from_room_utility = torch.sigmoid(
             self.refill_from_room_utility_output(X).to(torch.float32)
+        )
+        save_to_room_utility = apply_known_distance_proximity_utilities(
+            save_to_room_utility,
+            features.global_features.known_save_to_room_distance,
+            self.distance_proximity_scale,
+            "save-to-room",
+        )
+        save_from_room_utility = apply_known_distance_proximity_utilities(
+            save_from_room_utility,
+            features.global_features.known_save_from_room_distance,
+            self.distance_proximity_scale,
+            "save-from-room",
+        )
+        refill_to_room_utility = apply_known_distance_proximity_utilities(
+            refill_to_room_utility,
+            features.global_features.known_refill_to_room_distance,
+            self.distance_proximity_scale,
+            "refill-to-room",
+        )
+        refill_from_room_utility = apply_known_distance_proximity_utilities(
+            refill_from_room_utility,
+            features.global_features.known_refill_from_room_distance,
+            self.distance_proximity_scale,
+            "refill-from-room",
         )
         missing_connect_distance = self.missing_connect_distance_output(X).to(torch.float32)
         preds = get_predictions(
