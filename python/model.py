@@ -703,8 +703,7 @@ class FrontierModel(torch.nn.Module):
     def forward(
         self,
         features: Features,
-        include_proposal: bool,
-        return_proposal_state: bool = False,
+        return_proposal_state: bool,
     ):
         # Shapes below use: s=snapshot, r=frontier row, k=neighbors, e=embedding width,
         # h=message hidden width.
@@ -906,9 +905,6 @@ class FrontierModel(torch.nn.Module):
                     axis=0,
                 )
             max_pool = torch.where(torch.isfinite(max_pool), max_pool, 0)
-        proposal_score = (
-            self.proposal_output(X) if include_proposal else X.new_empty([row_count, 0])
-        )
         frontier_door_invalid = self.frontier_door_invalid_output(X)
         proposal_state = X if return_proposal_state else X.new_empty([row_count, 0])
         # mean_pool, max_pool, pooled_state: [s, e]
@@ -1016,16 +1012,14 @@ class FrontierModel(torch.nn.Module):
             refill_to_room_utility=refill_to_room_utility,
             refill_from_room_utility=refill_from_room_utility,
             missing_connect_distance=missing_connect_distance,
-            proposal_score=proposal_score,
+            proposal_score=X.new_empty([row_count, 0]),
             proposal_state=proposal_state,
             proposal_row_snapshot_idx=(
-                row_snapshot_idx
-                if return_proposal_state or include_proposal
-                else row_snapshot_idx.new_empty([0])
+                row_snapshot_idx if return_proposal_state else row_snapshot_idx.new_empty([0])
             ),
             proposal_row_frontier_idx=(
                 features.frontier_features.row_frontier_idx
-                if return_proposal_state or include_proposal
+                if return_proposal_state
                 else features.frontier_features.row_frontier_idx.new_empty([0])
             ),
         )

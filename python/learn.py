@@ -533,7 +533,8 @@ def proposal_batch_loss(
 
 
 def proposal_scores_for_frontier(
-    proposal_score: torch.Tensor,
+    proposal_output: torch.nn.Linear,
+    proposal_state: torch.Tensor,
     row_snapshot_idx: torch.Tensor,
     row_frontier_idx: torch.Tensor,
     frontier_idx: torch.Tensor,
@@ -541,12 +542,12 @@ def proposal_scores_for_frontier(
 ) -> torch.Tensor:
     frontier_idx = frontier_idx.to(device)
     result = torch.full(
-        (frontier_idx.shape[0], proposal_score.shape[1]),
+        (frontier_idx.shape[0], proposal_output.out_features),
         float("-inf"),
-        dtype=proposal_score.dtype,
+        dtype=proposal_output.weight.dtype,
         device=device,
     )
-    if proposal_score.shape[0] == 0:
+    if proposal_state.shape[0] == 0:
         return result
     row_snapshot_idx = row_snapshot_idx.to(device)
     row_frontier_idx = row_frontier_idx.to(device)
@@ -556,7 +557,9 @@ def proposal_scores_for_frontier(
         & (row_frontier_idx == frontier_idx[row_snapshot_idx])
     )
     if torch.any(row_valid):
-        result[row_snapshot_idx[row_valid]] = proposal_score[row_valid]
+        result[row_snapshot_idx[row_valid]] = proposal_output(
+            proposal_state[row_valid].to(proposal_output.weight.dtype)
+        )
     return result
 
 
@@ -646,7 +649,7 @@ def train_feature_batch_backward(
 
     for feature_batch in prepared_batch.feature_batches:
         features = feature_batch.features.to(context.device)
-        include_proposal = (
+        return_proposal_state = (
             prepared_batch.kind == "fresh"
             and feature_batch.proposal_frontier_idx is not None
             and feature_batch.proposal_door_variant_idx is not None
@@ -657,7 +660,10 @@ def train_feature_batch_backward(
             dtype=torch.bfloat16,
             enabled=context.device.type == "cuda" and context.config.model.autocast,
         ):
-            preds = context.main_model(features, include_proposal=include_proposal)
+            preds = context.main_model(
+                features,
+                return_proposal_state=return_proposal_state,
+            )
         prefix_loss = compute_loss_breakdown(
             preds,
             repeated_outcomes,
@@ -718,9 +724,10 @@ def train_feature_batch_backward(
         total_loss.missing_connect_distance_contribution += (
             prefix_loss.missing_connect_distance_contribution.item() * prefix_weight
         )
-        if include_proposal:
+        if return_proposal_state:
             proposal_score = proposal_scores_for_frontier(
-                preds.proposal_score,
+                context.main_model.proposal_output,
+                preds.proposal_state,
                 preds.proposal_row_snapshot_idx,
                 preds.proposal_row_frontier_idx,
                 feature_batch.proposal_frontier_idx,

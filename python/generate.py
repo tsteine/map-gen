@@ -371,21 +371,21 @@ def unpack_proposal_mask(mask: ProposalCandidateMask, device: torch.device) -> t
 
 
 def row_scores_for_mask(
-    row_scores: torch.Tensor,
+    proposal_output: torch.nn.Linear,
+    proposal_state: torch.Tensor,
     row_snapshot_idx: torch.Tensor,
     row_frontier_idx: torch.Tensor,
     proposal_mask: ProposalCandidateMask,
     device: torch.device,
 ) -> torch.Tensor:
     proposal_frontier_idx = proposal_mask.proposal_frontier_idx.to(device)
-    door_variant_count = row_scores.shape[1]
     result = torch.full(
-        (proposal_frontier_idx.shape[0], door_variant_count),
+        (proposal_frontier_idx.shape[0], proposal_output.out_features),
         float("-inf"),
-        dtype=row_scores.dtype,
+        dtype=proposal_output.weight.dtype,
         device=device,
     )
-    if row_scores.shape[0] == 0:
+    if proposal_state.shape[0] == 0:
         return result
     row_snapshot_idx = row_snapshot_idx.to(device)
     row_frontier_idx = row_frontier_idx.to(device)
@@ -395,7 +395,9 @@ def row_scores_for_mask(
         & (row_frontier_idx == proposal_frontier_idx[row_snapshot_idx])
     )
     if torch.any(row_valid):
-        result[row_snapshot_idx[row_valid]] = row_scores[row_valid]
+        result[row_snapshot_idx[row_valid]] = proposal_output(
+            proposal_state[row_valid].to(proposal_output.weight.dtype)
+        )
     return result
 
 
@@ -611,11 +613,10 @@ def select_candidate_actions(
             dtype=torch.bfloat16,
             enabled=device.type == "cuda" and group.config.autocast,
         ):
-            include_proposal = group.config.recommended_candidates > 0
+            return_proposal_state = group.config.recommended_candidates > 0
             preds = model(
                 env_features,
-                include_proposal=False,
-                return_proposal_state=include_proposal,
+                return_proposal_state=return_proposal_state,
             )
         sync_profile_device(device, profile)
         profiler.add("python.score.model_forward", profile_time)
@@ -700,7 +701,7 @@ def select_candidate_actions(
 
         profile_time = profile_start(profile)
         selected_proposal_scores = None
-        if include_proposal:
+        if return_proposal_state:
             proposal_row_snapshot_idx = preds.proposal_row_snapshot_idx
             row_count_by_snapshot = torch.bincount(
                 proposal_row_snapshot_idx,
@@ -735,9 +736,10 @@ def compute_proposal_scores(
             dtype=torch.bfloat16,
             enabled=device.type == "cuda" and group.config.autocast,
         ):
-            preds = model(env_features, include_proposal=True)
+            preds = model(env_features, return_proposal_state=True)
         return row_scores_for_mask(
-            preds.proposal_score,
+            model.proposal_output,
+            preds.proposal_state,
             preds.proposal_row_snapshot_idx,
             preds.proposal_row_frontier_idx,
             proposal_mask,
