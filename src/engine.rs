@@ -1416,9 +1416,12 @@ pub struct FeatureBuffers {
     room_placed: Py<PyArray2<u8>>,
     room_part_furthest_destination: Py<PyArray2<u8>>,
     room_part_furthest_source: Py<PyArray2<u8>>,
-    room_part_save_distance: Py<PyArray2<u8>>,
-    room_part_refill_distance: Py<PyArray2<u8>>,
-    room_part_frontier_distance: Py<PyArray2<u8>>,
+    room_part_save_from_room_distance: Py<PyArray2<u8>>,
+    room_part_save_to_room_distance: Py<PyArray2<u8>>,
+    room_part_refill_from_room_distance: Py<PyArray2<u8>>,
+    room_part_refill_to_room_distance: Py<PyArray2<u8>>,
+    room_part_frontier_from_room_distance: Py<PyArray2<u8>>,
+    room_part_frontier_to_room_distance: Py<PyArray2<u8>>,
     known_save_from_room_distance: Py<PyArray2<u8>>,
     known_save_to_room_distance: Py<PyArray2<u8>>,
     known_refill_from_room_distance: Py<PyArray2<u8>>,
@@ -1481,9 +1484,30 @@ impl FeatureBuffers {
                 "room_part_furthest_destination"
             ),
             room_part_furthest_source: required_py_field!(fields, "room_part_furthest_source"),
-            room_part_save_distance: required_py_field!(fields, "room_part_save_distance"),
-            room_part_refill_distance: required_py_field!(fields, "room_part_refill_distance"),
-            room_part_frontier_distance: required_py_field!(fields, "room_part_frontier_distance"),
+            room_part_save_from_room_distance: required_py_field!(
+                fields,
+                "room_part_save_from_room_distance"
+            ),
+            room_part_save_to_room_distance: required_py_field!(
+                fields,
+                "room_part_save_to_room_distance"
+            ),
+            room_part_refill_from_room_distance: required_py_field!(
+                fields,
+                "room_part_refill_from_room_distance"
+            ),
+            room_part_refill_to_room_distance: required_py_field!(
+                fields,
+                "room_part_refill_to_room_distance"
+            ),
+            room_part_frontier_from_room_distance: required_py_field!(
+                fields,
+                "room_part_frontier_from_room_distance"
+            ),
+            room_part_frontier_to_room_distance: required_py_field!(
+                fields,
+                "room_part_frontier_to_room_distance"
+            ),
             known_save_from_room_distance: required_py_field!(
                 fields,
                 "known_save_from_room_distance"
@@ -1716,9 +1740,12 @@ struct GlobalFeatureOutputShards {
     room_placed: OutputShard<u8>,
     room_part_furthest_destination: OutputShard<u8>,
     room_part_furthest_source: OutputShard<u8>,
-    room_part_save_distance: OutputShard<u8>,
-    room_part_refill_distance: OutputShard<u8>,
-    room_part_frontier_distance: OutputShard<u8>,
+    room_part_save_from_room_distance: OutputShard<u8>,
+    room_part_save_to_room_distance: OutputShard<u8>,
+    room_part_refill_from_room_distance: OutputShard<u8>,
+    room_part_refill_to_room_distance: OutputShard<u8>,
+    room_part_frontier_from_room_distance: OutputShard<u8>,
+    room_part_frontier_to_room_distance: OutputShard<u8>,
     known_save_from_room_distance: OutputShard<u8>,
     known_save_to_room_distance: OutputShard<u8>,
     known_refill_from_room_distance: OutputShard<u8>,
@@ -1754,9 +1781,12 @@ struct GlobalFeatureOutputSlices<'a> {
     room_placed: &'a mut [u8],
     room_part_furthest_destination: &'a mut [u8],
     room_part_furthest_source: &'a mut [u8],
-    room_part_save_distance: &'a mut [u8],
-    room_part_refill_distance: &'a mut [u8],
-    room_part_frontier_distance: &'a mut [u8],
+    room_part_save_from_room_distance: &'a mut [u8],
+    room_part_save_to_room_distance: &'a mut [u8],
+    room_part_refill_from_room_distance: &'a mut [u8],
+    room_part_refill_to_room_distance: &'a mut [u8],
+    room_part_frontier_from_room_distance: &'a mut [u8],
+    room_part_frontier_to_room_distance: &'a mut [u8],
     known_save_from_room_distance: &'a mut [u8],
     known_save_to_room_distance: &'a mut [u8],
     known_refill_from_room_distance: &'a mut [u8],
@@ -1796,10 +1826,23 @@ impl GlobalFeatureOutputShards {
                 self.room_part_furthest_destination.into_mut_slice()
             },
             room_part_furthest_source: unsafe { self.room_part_furthest_source.into_mut_slice() },
-            room_part_save_distance: unsafe { self.room_part_save_distance.into_mut_slice() },
-            room_part_refill_distance: unsafe { self.room_part_refill_distance.into_mut_slice() },
-            room_part_frontier_distance: unsafe {
-                self.room_part_frontier_distance.into_mut_slice()
+            room_part_save_from_room_distance: unsafe {
+                self.room_part_save_from_room_distance.into_mut_slice()
+            },
+            room_part_save_to_room_distance: unsafe {
+                self.room_part_save_to_room_distance.into_mut_slice()
+            },
+            room_part_refill_from_room_distance: unsafe {
+                self.room_part_refill_from_room_distance.into_mut_slice()
+            },
+            room_part_refill_to_room_distance: unsafe {
+                self.room_part_refill_to_room_distance.into_mut_slice()
+            },
+            room_part_frontier_from_room_distance: unsafe {
+                self.room_part_frontier_from_room_distance.into_mut_slice()
+            },
+            room_part_frontier_to_room_distance: unsafe {
+                self.room_part_frontier_to_room_distance.into_mut_slice()
             },
             known_save_from_room_distance: unsafe {
                 self.known_save_from_room_distance.into_mut_slice()
@@ -1881,20 +1924,38 @@ impl GlobalFeatureOutputSlices<'_> {
             self.room_part_furthest_count,
         );
         copy_row(
-            &mut self.room_part_save_distance,
-            &features.room_part_save_distance,
+            &mut self.room_part_save_from_room_distance,
+            &features.room_part_save_from_room_distance,
             idx,
             self.room_part_save_distance_count,
         );
         copy_row(
-            &mut self.room_part_refill_distance,
-            &features.room_part_refill_distance,
+            &mut self.room_part_save_to_room_distance,
+            &features.room_part_save_to_room_distance,
+            idx,
+            self.room_part_save_distance_count,
+        );
+        copy_row(
+            &mut self.room_part_refill_from_room_distance,
+            &features.room_part_refill_from_room_distance,
             idx,
             self.room_part_refill_distance_count,
         );
         copy_row(
-            &mut self.room_part_frontier_distance,
-            &features.room_part_frontier_distance,
+            &mut self.room_part_refill_to_room_distance,
+            &features.room_part_refill_to_room_distance,
+            idx,
+            self.room_part_refill_distance_count,
+        );
+        copy_row(
+            &mut self.room_part_frontier_from_room_distance,
+            &features.room_part_frontier_from_room_distance,
+            idx,
+            self.room_part_frontier_distance_count,
+        );
+        copy_row(
+            &mut self.room_part_frontier_to_room_distance,
+            &features.room_part_frontier_to_room_distance,
             idx,
             self.room_part_frontier_distance_count,
         );
@@ -2298,9 +2359,12 @@ mod tests {
             room_placed: OutputShard::empty(),
             room_part_furthest_destination: OutputShard::empty(),
             room_part_furthest_source: OutputShard::empty(),
-            room_part_save_distance: OutputShard::empty(),
-            room_part_refill_distance: OutputShard::empty(),
-            room_part_frontier_distance: OutputShard::empty(),
+            room_part_save_from_room_distance: OutputShard::empty(),
+            room_part_save_to_room_distance: OutputShard::empty(),
+            room_part_refill_from_room_distance: OutputShard::empty(),
+            room_part_refill_to_room_distance: OutputShard::empty(),
+            room_part_frontier_from_room_distance: OutputShard::empty(),
+            room_part_frontier_to_room_distance: OutputShard::empty(),
             known_save_from_room_distance: OutputShard::empty(),
             known_save_to_room_distance: OutputShard::empty(),
             known_refill_from_room_distance: OutputShard::empty(),
@@ -3387,10 +3451,28 @@ impl EnvironmentGroup {
         let mut room_part_furthest_destination =
             buffers.room_part_furthest_destination.bind(py).readwrite();
         let mut room_part_furthest_source = buffers.room_part_furthest_source.bind(py).readwrite();
-        let mut room_part_save_distance = buffers.room_part_save_distance.bind(py).readwrite();
-        let mut room_part_refill_distance = buffers.room_part_refill_distance.bind(py).readwrite();
-        let mut room_part_frontier_distance =
-            buffers.room_part_frontier_distance.bind(py).readwrite();
+        let mut room_part_save_from_room_distance = buffers
+            .room_part_save_from_room_distance
+            .bind(py)
+            .readwrite();
+        let mut room_part_save_to_room_distance =
+            buffers.room_part_save_to_room_distance.bind(py).readwrite();
+        let mut room_part_refill_from_room_distance = buffers
+            .room_part_refill_from_room_distance
+            .bind(py)
+            .readwrite();
+        let mut room_part_refill_to_room_distance = buffers
+            .room_part_refill_to_room_distance
+            .bind(py)
+            .readwrite();
+        let mut room_part_frontier_from_room_distance = buffers
+            .room_part_frontier_from_room_distance
+            .bind(py)
+            .readwrite();
+        let mut room_part_frontier_to_room_distance = buffers
+            .room_part_frontier_to_room_distance
+            .bind(py)
+            .readwrite();
         let mut known_save_from_room_distance =
             buffers.known_save_from_room_distance.bind(py).readwrite();
         let mut known_save_to_room_distance =
@@ -3454,10 +3536,28 @@ impl EnvironmentGroup {
         let room_part_furthest_destination_shape =
             room_part_furthest_destination.as_array().shape().to_vec();
         let room_part_furthest_source_shape = room_part_furthest_source.as_array().shape().to_vec();
-        let room_part_save_distance_shape = room_part_save_distance.as_array().shape().to_vec();
-        let room_part_refill_distance_shape = room_part_refill_distance.as_array().shape().to_vec();
-        let room_part_frontier_distance_shape =
-            room_part_frontier_distance.as_array().shape().to_vec();
+        let room_part_save_from_room_distance_shape = room_part_save_from_room_distance
+            .as_array()
+            .shape()
+            .to_vec();
+        let room_part_save_to_room_distance_shape =
+            room_part_save_to_room_distance.as_array().shape().to_vec();
+        let room_part_refill_from_room_distance_shape = room_part_refill_from_room_distance
+            .as_array()
+            .shape()
+            .to_vec();
+        let room_part_refill_to_room_distance_shape = room_part_refill_to_room_distance
+            .as_array()
+            .shape()
+            .to_vec();
+        let room_part_frontier_from_room_distance_shape = room_part_frontier_from_room_distance
+            .as_array()
+            .shape()
+            .to_vec();
+        let room_part_frontier_to_room_distance_shape = room_part_frontier_to_room_distance
+            .as_array()
+            .shape()
+            .to_vec();
         let known_save_from_room_distance_shape =
             known_save_from_room_distance.as_array().shape().to_vec();
         let known_save_to_room_distance_shape =
@@ -3483,9 +3583,12 @@ impl EnvironmentGroup {
             || room_placed_shape[0] < snapshot_count
             || room_part_furthest_destination_shape[0] < snapshot_count
             || room_part_furthest_source_shape[0] < snapshot_count
-            || room_part_save_distance_shape[0] < snapshot_count
-            || room_part_refill_distance_shape[0] < snapshot_count
-            || room_part_frontier_distance_shape[0] < snapshot_count
+            || room_part_save_from_room_distance_shape[0] < snapshot_count
+            || room_part_save_to_room_distance_shape[0] < snapshot_count
+            || room_part_refill_from_room_distance_shape[0] < snapshot_count
+            || room_part_refill_to_room_distance_shape[0] < snapshot_count
+            || room_part_frontier_from_room_distance_shape[0] < snapshot_count
+            || room_part_frontier_to_room_distance_shape[0] < snapshot_count
             || known_save_from_room_distance_shape[0] < snapshot_count
             || known_save_to_room_distance_shape[0] < snapshot_count
             || known_refill_from_room_distance_shape[0] < snapshot_count
@@ -3520,18 +3623,33 @@ impl EnvironmentGroup {
             room_part_furthest_width,
         )?;
         check_dim(
-            "room_part_save_distance",
-            room_part_save_distance_shape[1],
+            "room_part_save_from_room_distance",
+            room_part_save_from_room_distance_shape[1],
             room_part_save_distance_width,
         )?;
         check_dim(
-            "room_part_refill_distance",
-            room_part_refill_distance_shape[1],
+            "room_part_save_to_room_distance",
+            room_part_save_to_room_distance_shape[1],
+            room_part_save_distance_width,
+        )?;
+        check_dim(
+            "room_part_refill_from_room_distance",
+            room_part_refill_from_room_distance_shape[1],
             room_part_refill_distance_width,
         )?;
         check_dim(
-            "room_part_frontier_distance",
-            room_part_frontier_distance_shape[1],
+            "room_part_refill_to_room_distance",
+            room_part_refill_to_room_distance_shape[1],
+            room_part_refill_distance_width,
+        )?;
+        check_dim(
+            "room_part_frontier_from_room_distance",
+            room_part_frontier_from_room_distance_shape[1],
+            room_part_frontier_distance_width,
+        )?;
+        check_dim(
+            "room_part_frontier_to_room_distance",
+            room_part_frontier_to_room_distance_shape[1],
             room_part_frontier_distance_width,
         )?;
         check_dim(
@@ -3605,15 +3723,36 @@ impl EnvironmentGroup {
         let room_part_furthest_source = room_part_furthest_source
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("room_part_furthest_source must be contiguous"))?;
-        let room_part_save_distance = room_part_save_distance
+        let room_part_save_from_room_distance = room_part_save_from_room_distance
             .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_part_save_distance must be contiguous"))?;
-        let room_part_refill_distance = room_part_refill_distance
+            .map_err(|_| {
+                PyValueError::new_err("room_part_save_from_room_distance must be contiguous")
+            })?;
+        let room_part_save_to_room_distance = room_part_save_to_room_distance
             .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_part_refill_distance must be contiguous"))?;
-        let room_part_frontier_distance = room_part_frontier_distance
+            .map_err(|_| {
+                PyValueError::new_err("room_part_save_to_room_distance must be contiguous")
+            })?;
+        let room_part_refill_from_room_distance = room_part_refill_from_room_distance
             .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("room_part_frontier_distance must be contiguous"))?;
+            .map_err(|_| {
+                PyValueError::new_err("room_part_refill_from_room_distance must be contiguous")
+            })?;
+        let room_part_refill_to_room_distance = room_part_refill_to_room_distance
+            .as_slice_mut()
+            .map_err(|_| {
+                PyValueError::new_err("room_part_refill_to_room_distance must be contiguous")
+            })?;
+        let room_part_frontier_from_room_distance = room_part_frontier_from_room_distance
+            .as_slice_mut()
+            .map_err(|_| {
+                PyValueError::new_err("room_part_frontier_from_room_distance must be contiguous")
+            })?;
+        let room_part_frontier_to_room_distance = room_part_frontier_to_room_distance
+            .as_slice_mut()
+            .map_err(|_| {
+                PyValueError::new_err("room_part_frontier_to_room_distance must be contiguous")
+            })?;
         let known_save_from_room_distance =
             known_save_from_room_distance.as_slice_mut().map_err(|_| {
                 PyValueError::new_err("known_save_from_room_distance must be contiguous")
@@ -3709,20 +3848,38 @@ impl EnvironmentGroup {
                             &mut room_part_furthest_source[snapshot_start * room_part_furthest_width
                                 ..(snapshot_start + snapshot_count) * room_part_furthest_width],
                         ),
-                        room_part_save_distance: OutputShard::from_slice(
-                            &mut room_part_save_distance[snapshot_start
+                        room_part_save_from_room_distance: OutputShard::from_slice(
+                            &mut room_part_save_from_room_distance[snapshot_start
                                 * room_part_save_distance_width
                                 ..(snapshot_start + snapshot_count)
                                     * room_part_save_distance_width],
                         ),
-                        room_part_refill_distance: OutputShard::from_slice(
-                            &mut room_part_refill_distance[snapshot_start
+                        room_part_save_to_room_distance: OutputShard::from_slice(
+                            &mut room_part_save_to_room_distance[snapshot_start
+                                * room_part_save_distance_width
+                                ..(snapshot_start + snapshot_count)
+                                    * room_part_save_distance_width],
+                        ),
+                        room_part_refill_from_room_distance: OutputShard::from_slice(
+                            &mut room_part_refill_from_room_distance[snapshot_start
                                 * room_part_refill_distance_width
                                 ..(snapshot_start + snapshot_count)
                                     * room_part_refill_distance_width],
                         ),
-                        room_part_frontier_distance: OutputShard::from_slice(
-                            &mut room_part_frontier_distance[snapshot_start
+                        room_part_refill_to_room_distance: OutputShard::from_slice(
+                            &mut room_part_refill_to_room_distance[snapshot_start
+                                * room_part_refill_distance_width
+                                ..(snapshot_start + snapshot_count)
+                                    * room_part_refill_distance_width],
+                        ),
+                        room_part_frontier_from_room_distance: OutputShard::from_slice(
+                            &mut room_part_frontier_from_room_distance[snapshot_start
+                                * room_part_frontier_distance_width
+                                ..(snapshot_start + snapshot_count)
+                                    * room_part_frontier_distance_width],
+                        ),
+                        room_part_frontier_to_room_distance: OutputShard::from_slice(
+                            &mut room_part_frontier_to_room_distance[snapshot_start
                                 * room_part_frontier_distance_width
                                 ..(snapshot_start + snapshot_count)
                                     * room_part_frontier_distance_width],

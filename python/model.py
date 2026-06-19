@@ -351,9 +351,9 @@ class FrontierModel(torch.nn.Module):
             + int(self.features.recommended_candidates)
             + global_room_position_embedding_width * int(self.features.global_room_position)
             + 2 * self.num_room_parts * int(self.features.room_part_furthest_distance)
-            + self.num_room_parts * int(self.features.room_part_save_distance)
-            + self.num_room_parts * int(self.features.room_part_refill_distance)
-            + self.num_room_parts * int(self.features.room_part_frontier_distance)
+            + 2 * self.num_room_parts * int(self.features.room_part_save_distance)
+            + 2 * self.num_room_parts * int(self.features.room_part_refill_distance)
+            + 2 * self.num_room_parts * int(self.features.room_part_frontier_distance)
             + 4 * self.num_room_parts
             + (door_match_embedding_width + 2 * connection_output_size + 2)
             * int(self.features.lookahead_outcomes)
@@ -670,7 +670,13 @@ class FrontierModel(torch.nn.Module):
     ) -> torch.Tensor | None:
         if self.room_part_save_distance_embedding is None:
             return None
-        distances = features.global_features.room_part_save_distance.to(torch.int64)
+        distances = torch.cat(
+            [
+                features.global_features.room_part_save_from_room_distance,
+                features.global_features.room_part_save_to_room_distance,
+            ],
+            dim=-1,
+        ).to(torch.int64)
         return self.room_part_save_distance_embedding(distances).flatten(1).to(dtype)
 
     def _room_part_refill_distance_features(
@@ -680,7 +686,13 @@ class FrontierModel(torch.nn.Module):
     ) -> torch.Tensor | None:
         if self.room_part_refill_distance_embedding is None:
             return None
-        distances = features.global_features.room_part_refill_distance.to(torch.int64)
+        distances = torch.cat(
+            [
+                features.global_features.room_part_refill_from_room_distance,
+                features.global_features.room_part_refill_to_room_distance,
+            ],
+            dim=-1,
+        ).to(torch.int64)
         return self.room_part_refill_distance_embedding(distances).flatten(1).to(dtype)
 
     def _room_part_frontier_distance_features(
@@ -690,7 +702,13 @@ class FrontierModel(torch.nn.Module):
     ) -> torch.Tensor | None:
         if self.room_part_frontier_distance_embedding is None:
             return None
-        distances = features.global_features.room_part_frontier_distance.to(torch.int64)
+        distances = torch.cat(
+            [
+                features.global_features.room_part_frontier_from_room_distance,
+                features.global_features.room_part_frontier_to_room_distance,
+            ],
+            dim=-1,
+        ).to(torch.int64)
         return self.room_part_frontier_distance_embedding(distances).flatten(1).to(dtype)
 
     def _known_distance_features(

@@ -28,18 +28,12 @@ small number of proposed candidates.
 - Let frontier and room-part nodes exchange messages in both directions at each
   layer. The final frontier node state remains the proposal state.
 
-## Step 1: Directed Save/Refill/Frontier Features
+## Current State: Directed Save/Refill/Frontier Features
 
-Refine the existing room-part distance features so they expose directional
-information instead of round-trip/compressed distances.
+The global room-part distance features now expose directional information
+instead of round-trip/compressed distances.
 
-The current save/refill/frontier room-part features are based on round-trip
-distance encodings. That loses directional structure even though the training
-targets and rewards distinguish both directions. The near-term soundness change
-should split these into explicit directed feature channels without
-deterministic output overrides.
-
-Per room part, expose:
+Per room part, the global features include:
 
 - distance from room part to nearest save
 - distance from nearest save to room part
@@ -50,23 +44,15 @@ Per room part, expose:
 - furthest destination distance
 - furthest source distance
 
-Use the existing compact distance encoding convention:
+These features use the compact distance encoding convention:
 
 - `0` for unreachable or absent
 - `distance + 1` for finite distances, saturated as needed
 
-Implementation work:
+The model still uses the current global-feature route for these signals. No
+deterministic finalized-known utilities are substituted into outputs.
 
-- Split Rust feature computation for save/refill/frontier distance features
-  into directed source/destination channels.
-- Carry required fields through PyO3 bindings and Python dataclasses.
-- Replace the current single-channel save/refill/frontier embedding paths with
-  directional channels.
-- Keep the current global-feature route initially.
-- Do not substitute finalized-known utilities into model outputs in this step.
-- Keep existing save/refill reward and loss weights and directed targets.
-
-## Step 2: Unresolved Room-Part Nodes
+## Step 1: Unresolved Room-Part Nodes
 
 Add a second sparse node type for placed room parts whose local outcomes are not
 fully determined.
@@ -122,7 +108,7 @@ Before enabling these overrides for generation, validate that the proposal
 representation can model long-term tradeoffs well enough that deterministic
 short-term reward improvements do not dominate candidate selection.
 
-## Step 3: Bounded Part-Frontier Message Passing
+## Step 2: Bounded Part-Frontier Message Passing
 
 Add bidirectional sparse edges between unresolved room-part nodes and relevant
 frontier nodes.
@@ -168,7 +154,7 @@ Track truncation diagnostics:
 If truncation is frequent and appears quality-limiting, raise caps or consider a
 COO/segment-reduce representation for only the affected edge direction.
 
-## Step 4: Local Outcome Heads
+## Step 3: Local Outcome Heads
 
 Route local outcomes through local node/query representations.
 
@@ -198,11 +184,10 @@ Door/frontier proposal outcomes:
 - Do not add a separate proposal-only integration path unless diagnostics show
   the final frontier state is not carrying local information effectively.
 
-## Step 5: Tests And Validation
+## Tests And Validation
 
 Rust tests:
 
-- directed save/refill/frontier feature encodings
 - unresolved room-part node selection
 - part-frontier top-k edge packing and cap/truncation diagnostics
 - missing-connect endpoint/query metadata

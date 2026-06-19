@@ -381,9 +381,12 @@ pub struct Features {
     pub room_placed: Vec<u8>,
     pub room_part_furthest_destination: Vec<u8>,
     pub room_part_furthest_source: Vec<u8>,
-    pub room_part_save_distance: Vec<u8>,
-    pub room_part_refill_distance: Vec<u8>,
-    pub room_part_frontier_distance: Vec<u8>,
+    pub room_part_save_from_room_distance: Vec<u8>,
+    pub room_part_save_to_room_distance: Vec<u8>,
+    pub room_part_refill_from_room_distance: Vec<u8>,
+    pub room_part_refill_to_room_distance: Vec<u8>,
+    pub room_part_frontier_from_room_distance: Vec<u8>,
+    pub room_part_frontier_to_room_distance: Vec<u8>,
     pub known_save_from_room_distance: Vec<u8>,
     pub known_save_to_room_distance: Vec<u8>,
     pub known_refill_from_room_distance: Vec<u8>,
@@ -1615,71 +1618,67 @@ impl Environment {
         )
     }
 
-    fn room_part_save_distance_features(&self, common: &CommonData) -> Vec<u8> {
+    fn encode_room_part_directed_distance_features(
+        destination: &[GraphDistance],
+        source: &[GraphDistance],
+    ) -> (Vec<u8>, Vec<u8>) {
+        fn encode_distance(distance: GraphDistance) -> u8 {
+            if distance == UNREACHABLE_DISTANCE {
+                0
+            } else {
+                distance.saturating_add(1)
+            }
+        }
+
+        (
+            destination.iter().copied().map(encode_distance).collect(),
+            source.iter().copied().map(encode_distance).collect(),
+        )
+    }
+
+    fn room_part_save_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
         debug_assert_eq!(
             self.room_part_save_distance_cache
                 .nearest_save_destination
                 .len(),
             common.room_part.len()
         );
-        self.room_part_save_distance_cache
-            .nearest_save_destination
-            .iter()
-            .zip(&self.room_part_save_distance_cache.nearest_save_source)
-            .map(|(&to_save, &from_save)| {
-                if to_save == UNREACHABLE_DISTANCE || from_save == UNREACHABLE_DISTANCE {
-                    0
-                } else {
-                    to_save.saturating_add(from_save).saturating_add(1)
-                }
-            })
-            .collect()
+        Self::encode_room_part_directed_distance_features(
+            &self.room_part_save_distance_cache.nearest_save_destination,
+            &self.room_part_save_distance_cache.nearest_save_source,
+        )
     }
 
-    fn room_part_refill_distance_features(&self, common: &CommonData) -> Vec<u8> {
+    fn room_part_refill_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
         debug_assert_eq!(
             self.room_part_refill_distance_cache
                 .nearest_save_destination
                 .len(),
             common.room_part.len()
         );
-        self.room_part_refill_distance_cache
-            .nearest_save_destination
-            .iter()
-            .zip(&self.room_part_refill_distance_cache.nearest_save_source)
-            .map(|(&to_refill, &from_refill)| {
-                if to_refill == UNREACHABLE_DISTANCE || from_refill == UNREACHABLE_DISTANCE {
-                    0
-                } else {
-                    to_refill.saturating_add(from_refill).saturating_add(1)
-                }
-            })
-            .collect()
+        Self::encode_room_part_directed_distance_features(
+            &self
+                .room_part_refill_distance_cache
+                .nearest_save_destination,
+            &self.room_part_refill_distance_cache.nearest_save_source,
+        )
     }
 
-    fn room_part_frontier_distance_features(&self, common: &CommonData) -> Vec<u8> {
+    fn room_part_frontier_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
         debug_assert_eq!(
             self.room_part_frontier_distance_cache
                 .nearest_frontier_destination
                 .len(),
             common.room_part.len()
         );
-        self.room_part_frontier_distance_cache
-            .nearest_frontier_destination
-            .iter()
-            .zip(
-                &self
-                    .room_part_frontier_distance_cache
-                    .nearest_frontier_source,
-            )
-            .map(|(&to_frontier, &from_frontier)| {
-                if to_frontier == UNREACHABLE_DISTANCE || from_frontier == UNREACHABLE_DISTANCE {
-                    0
-                } else {
-                    to_frontier.saturating_add(from_frontier).saturating_add(1)
-                }
-            })
-            .collect()
+        Self::encode_room_part_directed_distance_features(
+            &self
+                .room_part_frontier_distance_cache
+                .nearest_frontier_destination,
+            &self
+                .room_part_frontier_distance_cache
+                .nearest_frontier_source,
+        )
     }
 
     fn known_save_refill_distance_features(
@@ -1750,7 +1749,15 @@ impl Environment {
     }
 
     #[cfg(test)]
-    fn slow_room_part_save_distance_features(&self, common: &CommonData) -> Vec<u8> {
+    fn slow_room_part_save_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
+        fn encode_distance(distance: GraphDistance) -> u8 {
+            if distance == UNREACHABLE_DISTANCE {
+                0
+            } else {
+                distance.saturating_add(1)
+            }
+        }
+
         let graph_size = common.room_part.len();
         let save_parts = common
             .save_room_part
@@ -1759,62 +1766,58 @@ impl Environment {
             .filter(|room_part| self.active_room_parts.contains(room_part))
             .map(usize::from)
             .collect::<Vec<_>>();
-        (0..graph_size)
-            .map(|part| {
-                let nearest_save_destination = save_parts
-                    .iter()
-                    .map(|&save_part| self.graph_distance[part * graph_size + save_part])
-                    .min()
-                    .unwrap_or(UNREACHABLE_DISTANCE);
-                let nearest_save_source = save_parts
-                    .iter()
-                    .map(|&save_part| self.graph_distance[save_part * graph_size + part])
-                    .min()
-                    .unwrap_or(UNREACHABLE_DISTANCE);
-                if nearest_save_destination == UNREACHABLE_DISTANCE
-                    || nearest_save_source == UNREACHABLE_DISTANCE
-                {
-                    0
-                } else {
-                    nearest_save_destination
-                        .saturating_add(nearest_save_source)
-                        .saturating_add(1)
-                }
-            })
-            .collect()
+        let mut destination = Vec::with_capacity(graph_size);
+        let mut source = Vec::with_capacity(graph_size);
+        for part in 0..graph_size {
+            let nearest_save_destination = save_parts
+                .iter()
+                .map(|&save_part| self.graph_distance[part * graph_size + save_part])
+                .min()
+                .unwrap_or(UNREACHABLE_DISTANCE);
+            let nearest_save_source = save_parts
+                .iter()
+                .map(|&save_part| self.graph_distance[save_part * graph_size + part])
+                .min()
+                .unwrap_or(UNREACHABLE_DISTANCE);
+            destination.push(encode_distance(nearest_save_destination));
+            source.push(encode_distance(nearest_save_source));
+        }
+        (destination, source)
     }
 
     #[cfg(test)]
-    fn slow_room_part_frontier_distance_features(&self, common: &CommonData) -> Vec<u8> {
+    fn slow_room_part_frontier_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
+        fn encode_distance(distance: GraphDistance) -> u8 {
+            if distance == UNREACHABLE_DISTANCE {
+                0
+            } else {
+                distance.saturating_add(1)
+            }
+        }
+
         let graph_size = common.room_part.len();
         let frontier_parts = self
             .frontier
             .values()
             .map(|frontier| frontier.room_part_idx as usize)
             .collect::<Vec<_>>();
-        (0..graph_size)
-            .map(|part| {
-                let nearest_frontier_destination = frontier_parts
-                    .iter()
-                    .map(|&frontier_part| self.graph_distance[part * graph_size + frontier_part])
-                    .min()
-                    .unwrap_or(UNREACHABLE_DISTANCE);
-                let nearest_frontier_source = frontier_parts
-                    .iter()
-                    .map(|&frontier_part| self.graph_distance[frontier_part * graph_size + part])
-                    .min()
-                    .unwrap_or(UNREACHABLE_DISTANCE);
-                if nearest_frontier_destination == UNREACHABLE_DISTANCE
-                    || nearest_frontier_source == UNREACHABLE_DISTANCE
-                {
-                    0
-                } else {
-                    nearest_frontier_destination
-                        .saturating_add(nearest_frontier_source)
-                        .saturating_add(1)
-                }
-            })
-            .collect()
+        let mut destination = Vec::with_capacity(graph_size);
+        let mut source = Vec::with_capacity(graph_size);
+        for part in 0..graph_size {
+            let nearest_frontier_destination = frontier_parts
+                .iter()
+                .map(|&frontier_part| self.graph_distance[part * graph_size + frontier_part])
+                .min()
+                .unwrap_or(UNREACHABLE_DISTANCE);
+            let nearest_frontier_source = frontier_parts
+                .iter()
+                .map(|&frontier_part| self.graph_distance[frontier_part * graph_size + part])
+                .min()
+                .unwrap_or(UNREACHABLE_DISTANCE);
+            destination.push(encode_distance(nearest_frontier_destination));
+            source.push(encode_distance(nearest_frontier_source));
+        }
+        (destination, source)
     }
 
     #[cfg(test)]
@@ -3219,21 +3222,24 @@ impl Environment {
             } else {
                 (vec![], vec![])
             };
-        let room_part_save_distance = if config.room_part_save_distance {
-            self.room_part_save_distance_features(common)
-        } else {
-            vec![]
-        };
-        let room_part_refill_distance = if config.room_part_refill_distance {
-            self.room_part_refill_distance_features(common)
-        } else {
-            vec![]
-        };
-        let room_part_frontier_distance = if config.room_part_frontier_distance {
-            self.room_part_frontier_distance_features(common)
-        } else {
-            vec![]
-        };
+        let (room_part_save_from_room_distance, room_part_save_to_room_distance) =
+            if config.room_part_save_distance {
+                self.room_part_save_distance_features(common)
+            } else {
+                (vec![], vec![])
+            };
+        let (room_part_refill_from_room_distance, room_part_refill_to_room_distance) =
+            if config.room_part_refill_distance {
+                self.room_part_refill_distance_features(common)
+            } else {
+                (vec![], vec![])
+            };
+        let (room_part_frontier_from_room_distance, room_part_frontier_to_room_distance) =
+            if config.room_part_frontier_distance {
+                self.room_part_frontier_distance_features(common)
+            } else {
+                (vec![], vec![])
+            };
         let (known_save_from_room_distance, known_save_to_room_distance) =
             self.known_save_refill_distance_features(common, &self.room_part_save_distance_cache);
         let (known_refill_from_room_distance, known_refill_to_room_distance) =
@@ -3500,9 +3506,12 @@ impl Environment {
             room_placed,
             room_part_furthest_destination,
             room_part_furthest_source,
-            room_part_save_distance,
-            room_part_refill_distance,
-            room_part_frontier_distance,
+            room_part_save_from_room_distance,
+            room_part_save_to_room_distance,
+            room_part_refill_from_room_distance,
+            room_part_refill_to_room_distance,
+            room_part_frontier_from_room_distance,
+            room_part_frontier_to_room_distance,
             known_save_from_room_distance,
             known_save_to_room_distance,
             known_refill_from_room_distance,
@@ -5180,7 +5189,7 @@ mod tests {
     }
 
     #[test]
-    fn room_part_save_distance_features_encode_nearest_round_trip_save_distance() {
+    fn room_part_save_distance_features_encode_directed_save_distances() {
         let rooms: Vec<Room> = serde_json::from_str(
             r#"
             [
@@ -5228,7 +5237,10 @@ mod tests {
             0,
         );
 
-        assert_eq!(env.room_part_save_distance_features(&common), vec![1, 7, 0]);
+        assert_eq!(
+            env.room_part_save_distance_features(&common),
+            (vec![1, 3, 6], vec![1, 5, 0])
+        );
         env.assert_room_part_save_distance_cache_matches_slow(&common);
     }
 
@@ -5291,20 +5303,20 @@ mod tests {
 
         assert_eq!(
             env.room_part_save_distance_features(&common),
-            vec![1, 1, 31]
+            (vec![1, 1, 21], vec![1, 1, 11])
         );
 
         env.set_graph_distance(graph_size, 1, 2, 5);
         assert_eq!(
             env.room_part_save_distance_features(&common),
-            vec![1, 1, 26]
+            (vec![1, 1, 21], vec![1, 1, 6])
         );
 
         env.set_graph_distance(graph_size, 2, 1, 250);
         env.set_graph_distance(graph_size, 1, 2, 250);
         assert_eq!(
             env.room_part_save_distance_features(&common),
-            vec![1, 1, 255]
+            (vec![1, 1, 251], vec![1, 1, 11])
         );
         env.assert_room_part_save_distance_cache_matches_slow(&common);
     }
@@ -5443,7 +5455,7 @@ mod tests {
     }
 
     #[test]
-    fn room_part_frontier_distance_features_encode_nearest_round_trip_frontier_distance() {
+    fn room_part_frontier_distance_features_encode_directed_frontier_distances() {
         let rooms: Vec<Room> = serde_json::from_str(
             r#"
             [
@@ -5503,7 +5515,7 @@ mod tests {
 
         assert_eq!(
             env.room_part_frontier_distance_features(&common),
-            vec![1, 7, 0]
+            (vec![1, 3, 6], vec![1, 5, 0])
         );
         env.assert_room_part_frontier_distance_cache_matches_slow(&common);
     }
@@ -5573,13 +5585,13 @@ mod tests {
 
         assert_eq!(
             env.room_part_frontier_distance_features(&common),
-            vec![1, 1, 31]
+            (vec![1, 1, 21], vec![1, 1, 11])
         );
 
         env.set_graph_distance(graph_size, 1, 2, 5);
         assert_eq!(
             env.room_part_frontier_distance_features(&common),
-            vec![1, 1, 26]
+            (vec![1, 1, 21], vec![1, 1, 6])
         );
 
         env.frontier.remove(&door_location(1, 0, false));
@@ -5591,7 +5603,7 @@ mod tests {
         );
         assert_eq!(
             env.room_part_frontier_distance_features(&common),
-            vec![1, 1, 26]
+            (vec![1, 1, 21], vec![1, 1, 6])
         );
 
         env.frontier.remove(&door_location(2, 0, false));
@@ -5603,7 +5615,7 @@ mod tests {
         );
         assert_eq!(
             env.room_part_frontier_distance_features(&common),
-            vec![1, 0, 255]
+            (vec![1, 0, 251], vec![1, 0, 11])
         );
         env.assert_room_part_frontier_distance_cache_matches_slow(&common);
     }
@@ -5672,7 +5684,7 @@ mod tests {
         );
         assert_eq!(
             env.room_part_frontier_distance_features(&common),
-            vec![1, 1, 11]
+            (vec![1, 1, 6], vec![1, 1, 6])
         );
 
         env.room_part_frontier_distance_cache.remove_frontier_part(
@@ -5688,7 +5700,7 @@ mod tests {
         );
         assert_eq!(
             env.room_part_frontier_distance_features(&common),
-            vec![1, 0, 11]
+            (vec![1, 0, 6], vec![1, 0, 6])
         );
         env.room_part_frontier_distance_cache.add_frontier_part(
             &env.graph_distance,
@@ -5714,7 +5726,7 @@ mod tests {
         );
         assert_eq!(
             env.room_part_frontier_distance_features(&common),
-            vec![0, 1, 11]
+            (vec![0, 1, 6], vec![0, 1, 6])
         );
 
         env.room_part_frontier_distance_cache.clear();
