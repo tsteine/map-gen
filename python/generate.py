@@ -1326,10 +1326,18 @@ def run_generation_groups(
                     target_logits[:, : candidate_logits.shape[1]] = candidate_logits.to(
                         torch.float32
                     )
-                group_proposal_frontier_idx[group_index].append(frontier_idx)
-                group_proposal_door_variant_idx[group_index].append(door_variant_idx)
-                group_selected_candidate[group_index].append(action_index)
-                group_proposal_target_logits[group_index].append(target_logits)
+                group_proposal_frontier_idx[group_index].append(
+                    frontier_idx.to(device="cpu", copy=True)
+                )
+                group_proposal_door_variant_idx[group_index].append(
+                    door_variant_idx.to(device="cpu", copy=True)
+                )
+                group_selected_candidate[group_index].append(
+                    action_index.to(device="cpu", copy=True)
+                )
+                group_proposal_target_logits[group_index].append(
+                    target_logits.to(device="cpu", copy=True)
+                )
                 profiler.add("python.record_proposal_data", profile_time)
                 profile_time = profile_start(profile)
                 step.group.previous_lookahead_outcomes = select_outcomes(
