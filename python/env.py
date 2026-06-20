@@ -569,6 +569,16 @@ class FrontierFeatures:
             row_door_output_idx=self.row_door_output_idx.to(device, non_blocking=non_blocking),
         )
 
+    def mark_dynamic(self) -> None:
+        torch._dynamo.mark_dynamic(self.frontier, 0)
+        torch._dynamo.mark_dynamic(self.frontier_occupancy, 0)
+        torch._dynamo.mark_dynamic(self.frontier_neighbor, 0)
+        torch._dynamo.mark_dynamic(self.frontier_neighbor_pair, 0)
+        torch._dynamo.mark_dynamic(self.frontier_connection_reachability, 0)
+        torch._dynamo.mark_dynamic(self.row_snapshot_idx, 0)
+        torch._dynamo.mark_dynamic(self.row_frontier_idx, 0)
+        torch._dynamo.mark_dynamic(self.row_door_output_idx, 0)
+
 
 @dataclass
 class MissingConnectQueryFeatures:
@@ -601,6 +611,18 @@ class MissingConnectQueryFeatures:
             target_cap_hit=self.target_cap_hit.to(device, non_blocking=non_blocking),
         )
 
+    def mark_dynamic(self) -> None:
+        torch._dynamo.mark_dynamic(self.query_snapshot_idx, 0)
+        torch._dynamo.mark_dynamic(self.query_connection_idx, 0)
+        torch._dynamo.mark_dynamic(self.source_frontier, 0)
+        torch._dynamo.mark_dynamic(self.target_frontier, 0)
+        torch._dynamo.mark_dynamic(self.source_distance, 0)
+        torch._dynamo.mark_dynamic(self.target_distance, 0)
+        torch._dynamo.mark_dynamic(self.source_count, 0)
+        torch._dynamo.mark_dynamic(self.target_count, 0)
+        torch._dynamo.mark_dynamic(self.source_cap_hit, 0)
+        torch._dynamo.mark_dynamic(self.target_cap_hit, 0)
+
 
 @dataclass
 class Features:
@@ -617,6 +639,10 @@ class Features:
                 non_blocking=non_blocking,
             ),
         )
+
+    def mark_dynamic(self) -> None:
+        self.frontier_features.mark_dynamic()
+        self.missing_connect_query_features.mark_dynamic()
 
     def flatten_candidates(self) -> "Features":
         return Features(

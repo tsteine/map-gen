@@ -200,13 +200,16 @@ def transfer_features(
     transfer_stream: torch.cuda.Stream | None = None,
 ) -> Features:
     if transfer_stream is None or device.type != "cuda":
-        return features.to(device)
+        result = features.to(device)
+        result.mark_dynamic()
+        return result
     current_stream = torch.cuda.current_stream(device)
     with torch.cuda.device(device), torch.cuda.stream(transfer_stream):
         result = features.to(device, non_blocking=True)
         ready = torch.cuda.Event()
         ready.record(transfer_stream)
     current_stream.wait_event(ready)
+    result.mark_dynamic()
     return result
 
 

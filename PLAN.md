@@ -20,8 +20,9 @@ This should preserve the useful part of the previous direction:
   room connections;
 - better data efficiency by reusing frontier representations tied to the
   possible future actions;
-- proposal relevance, by explicitly exposing query participation information to
-  proposal scoring.
+- proposal relevance and broader outcome consistency, by exposing query
+  structure to the shared frontier representation rather than only to output
+  heads.
 
 But it should avoid the main costs and risks of the room-part-node approach:
 
@@ -33,8 +34,8 @@ But it should avoid the main costs and risks of the room-part-node approach:
 ## Core Idea
 
 For an output whose truth depends on future connections through frontiers,
-construct one or more frontier sets and aggregate the final frontier states over
-those sets.
+construct one or more frontier sets and aggregate frontier states over those
+sets.
 
 For a missing-connect outcome `r -> s`:
 
@@ -43,9 +44,15 @@ For a missing-connect outcome `r -> s`:
 - the connection can become valid if future placements create some path from a
   frontier in `F` to a frontier in `G`.
 
-The query head receives aggregate embeddings for `F` and `G`, plus small
-scalar/count features, and predicts a residual or replacement for the
-corresponding output.
+The direct query head receives aggregate embeddings for `F` and `G`, plus small
+scalar/count features, and predicts the corresponding output.
+
+The next step is to build a query summary that mirrors the same whole-query
+construction using the initial frontier states, then scatter the resulting query
+embeddings back to the participating frontiers before frontier-frontier message
+passing. This gives proposal scoring and other output heads access to the
+structure of active missing-connect constraints, not only the final
+missing-connect output head.
 
 The current code already computes the key missing-connect masks as
 `frontier_connection_reachability`: bit 1 means `r -> frontier`, and bit 2 means
@@ -53,28 +60,25 @@ The current code already computes the key missing-connect masks as
 
 ## Design Preference
 
-Use query heads as zero-initialized residuals on top of the existing global
-heads, not as immediate hard replacements.
+Missing-connect validity should be predicted by the query path for query rows
+rather than added as a residual on top of the global connection head. The
+missing-connect outcome is intended to depend on whether some frontier in `F`
+will connect to some frontier in `G`, not on the identity of the room part where
+the missing-connect originated. Using the query prediction as the replacement
+keeps that symmetry clearer.
 
-For example:
+New conditioning paths should still be initialized conservatively. In
+particular, the projection that injects a query summary into the initial
+frontier state should be zero-initialized:
 
 ```text
-connection_logit = global_connection_logit + query_connection_delta
+initial_frontier_state =
+    initial_frontier_state + zero_init_projection(query_summary)
 ```
 
-with the final query projection initialized to zero. This keeps initial behavior
-equivalent to the current model and lets training turn on the new path only when
-it helps.
-
-This is safer than replacing the existing head because the existing global head
-already learns useful broad context, and the query head may initially be
-under-calibrated.
-
-Also expose query information to the proposal state. Query heads can improve
-full-scored logits, but proposal scoring only sees the frontier proposal state.
-If query information is absent from that state, proposal distillation can only
-learn an incomplete approximation. The proposal-query summary should be added as
-its own step after the first output-query experiment is working.
+This keeps initial behavior unchanged while allowing training to decide how
+much query structure should affect message passing, proposal scoring, and other
+output heads.
 
 ## Step 1: Missing-Connect Frontier Query Head
 
@@ -85,7 +89,8 @@ rows so memory and fan-in are controlled.
 
 Implementation shape:
 
-- Keep the existing global `connection_output`.
+- Keep the existing global `connection_output` for connection outputs that do
+  not have query rows.
 - Add a `MissingConnectFrontierQueryHead`.
 - Input:
   - final frontier states `X`: `[frontier_row, embedding_width]`;
@@ -109,8 +114,8 @@ Implementation shape:
   - include count/empty features for both sets;
   - feed `[source_pool, target_pool, count_features, optional_global_state]`
     into a small MLP;
-  - scatter-add the zero-initialized output as a delta to the corresponding
-    `connection_invalid` logit.
+  - scatter the query prediction to the corresponding `connection_invalid`
+    logit and use it in place of the global prediction for that queried output.
 
 The existing dense `frontier_connection_reachability` feature can remain as a
 baseline or temporary implementation aid, but the planned query representation
@@ -148,49 +153,112 @@ Fallback/upgrade:
   - low-rank/bilinear compatibility summaries;
   - attention from one set into the other with bounded k.
 
-## Step 2: Proposal Query Summary
+## Step 2: Early Whole-Query Summary
 
-After the missing-connect output query head is working, expose the same query
-information to proposal scoring.
+After the missing-connect output query head is working, expose the structure of
+active missing-connect queries to the shared frontier representation before
+frontier-frontier message passing.
 
-Construct per-frontier summaries of query participation:
-
-- source-side participation: missing-connect queries where the frontier is in
-  `F`;
-- target-side participation: missing-connect queries where the frontier is in
-  `G`;
-- optional aggregate query context: projected connection/query embeddings or
-  global query pools;
-- count/empty features, normalized to avoid scale shifts when many queries are
-  active.
-
-Initial integration should be late and proposal-specific:
+The summary should mirror the direct query construction, but use the initial
+frontier state instead of the final frontier state:
 
 ```text
-proposal_state = frontier_state + zero_init_projection(query_summary)
+source_pool_q = pool(initial_frontier_state over F_q)
+target_pool_q = pool(initial_frontier_state over G_q)
+
+query_embedding_q = QuerySummaryMLP([
+    source_pool_q,
+    target_pool_q,
+    source_count/count flags/distances,
+    target_count/count flags/distances,
+])
 ```
 
-or:
+Then scatter the full query embedding back to the frontiers that participate in
+that query:
 
 ```text
-proposal_state = ProposalStateMLP([frontier_state, query_summary])
+for f in F_q:
+    source_message(f, q) = SourceSideMLP([
+        query_embedding_q,
+        distance(r -> f),
+    ])
+
+for g in G_q:
+    target_message(g, q) = TargetSideMLP([
+        query_embedding_q,
+        distance(g -> s),
+    ])
 ```
 
-with the new path initialized so the initial proposal behavior is unchanged.
+Aggregate these messages per packed frontier row:
 
-Why late first:
+```text
+source_summary_f = mean source_message(f, q) over source-side query edges
+target_summary_f = mean target_message(f, q) over target-side query edges
 
-- it isolates proposal-ranking effects from shared output heads;
-- it avoids perturbing frontier message passing;
-- it is easier to ablate and less likely to recreate the room-part-node
-  regression.
+query_summary_f = [
+    source_summary_f,
+    target_summary_f,
+    log_source_participation_count,
+    log_target_participation_count,
+    source_any,
+    target_any,
+]
+```
 
-Later, if the late summary helps but is too weak, try early query conditioning:
+Finally inject the summary into the initial frontier state:
 
-- add query summary features to the initial frontier state;
-- allow normal frontier-frontier message passing to propagate and enrich them;
-- keep this behind a separate toggle because it changes the shared frontier
-  representation.
+```text
+initial_frontier_state =
+    initial_frontier_state + zero_init_projection(query_summary_f)
+```
+
+This is different from marginal participation statistics. A source frontier in
+`F_q` receives a message derived from both `F_q` and `G_q`, so the summary
+preserves the structure of the full query instead of only saying that the
+frontier participated on one side of some query.
+
+Implementation notes:
+
+- reuse the existing bounded sparse query tensors:
+  - `source_frontier`: `[query_count, k]`;
+  - `target_frontier`: `[query_count, k]`;
+  - `source_distance`: `[query_count, k]`;
+  - `target_distance`: `[query_count, k]`;
+- flatten valid source and target entries into query/frontier edges;
+- convert local frontier indices to packed frontier rows using
+  `row_start_by_snapshot + local_frontier`;
+- use `index_add_`/`scatter_add_` plus counts to compute per-frontier means;
+- keep source-side and target-side transforms separate at first;
+- do not feed query logits back into the summary, to avoid a circular dependency
+  between query-conditioned frontier states and query predictions;
+- do not introduce pairwise `F x G` computation initially.
+
+Expected benefit:
+
+- proposal scoring sees query structure through the final frontier state;
+- door validity and other heads can respond to query pressure through the shared
+  frontier representation and global frontier pooling;
+- the final missing-connect query head can use frontier states that have already
+  propagated query context through normal message passing.
+
+Optional secondary path:
+
+- add a zero-initialized per-snapshot global query summary built from
+  `query_embedding_q` into `global_state`;
+- this may help global-only heads, but it should not replace the frontier-local
+  scatter-back path because global aggregation loses which frontiers participate
+  in each query.
+
+Possible ablations:
+
+- no missing-connect identity embedding vs a small learned connection-output
+  embedding in `query_embedding_q`;
+- mean-only scatter aggregation vs mean plus max;
+- separate source/target side MLPs vs shared MLP with side embedding;
+- early query summary enabled without the direct output query head, to test
+  whether shared conditioning alone carries useful signal.
 
 ## Step 3: Missing-Connect Distance Query
 
@@ -238,39 +306,31 @@ known shortest path. If no existing `r -> s` path exists, treat `d_a` as
 infinite and keep the reachable frontier sets before normal CSR ranking and
 truncation.
 
-## Step 4: Early Query Conditioning Experiment
+## Step 4: Save/Refill Query Extensions
 
-Only try this after the late proposal-query summary is understood.
+After the missing-connect query summary is understood, apply the same pattern to
+save/refill outcomes.
 
-Instead of adding query information only to the final proposal state, inject
-query summaries into the frontier state before frontier message passing:
+For a room part `p` with already-known shortest path length `d_a` to an
+already-placed save/refill, a frontier at distance `d_f` from `p` is relevant
+only if:
 
 ```text
-initial_frontier_state = initial_frontier_state + zero_init_projection(query_summary)
+d_f <= d_a - 1
 ```
 
-This lets the network propagate query pressure through frontier-frontier message
-passing before both proposal scoring and output prediction.
+Otherwise, a save/refill placed beyond that frontier cannot improve the known
+outcome. If the relevant frontier set is empty, the outcome is already
+determined and no query should be generated.
 
-Potential upside:
+Use sparse bounded frontier sets and the same two-stage pattern:
 
-- proposal state and output heads share a query-aware representation;
-- nearby frontiers can exchange information about which missing-connect
-  constraints they may satisfy;
-- the model may learn richer interactions than late local summaries allow.
-
-Risks:
-
-- changes all downstream frontier representations;
-- may perturb door, balance, and other output heads;
-- can create broad "constraint pressure" signals that hurt calibration.
-
-Use a separate toggle and compare against late-only integration.
-
-## Step 5: Save/Refill Frontier Query Heads
-
-Apply the same idea to save/refill utilities, but do not assume the current
-feature set is sufficient.
+1. build per-outcome query embeddings from the relevant frontier set and scalar
+   distance/count features;
+2. scatter those whole-query embeddings back to the participating frontiers for
+   early conditioning;
+3. add direct output heads for the corresponding save/refill utility or
+   distance predictions once the conditioning path is stable.
 
 For an active room part `p` and save/refill objective set `D`, the directional
 targets are:
@@ -278,33 +338,7 @@ targets are:
 - `from_room`: path from `p` to some objective part in `D`;
 - `to_room`: path from some objective part in `D` to `p`.
 
-When the path is not already determined through placed rooms, the useful
-frontier sets can be limited by the current best placed-objective distance.
-
-For `from_room`, suppose the shortest already-known path from `p` to an
-already-placed save/refill is `d_a`. For a frontier `f`, let `d_f` be the
-shortest path length from `p` to `f`. A newly placed objective beyond `f` cannot
-improve the target unless:
-
-```text
-d_f <= d_a - 1
-```
-
-The `-1` accounts for the fact that anything beyond the frontier must be at
-least one step past the frontier. If `d_f > d_a - 1`, then even the best
-possible future objective beyond `f` cannot beat the already-placed objective.
-
-The reverse-direction outcome uses the analogous condition:
-
-```text
-distance(f -> p) <= d_a_reverse - 1
-```
-
-where `d_a_reverse` is the shortest already-known path from an already-placed
-objective to `p`.
-
-So the relevant sets are not simply all reachable frontiers. They are bounded
-frontier sets:
+The relevant sets are:
 
 - `from_room`: frontiers reachable from `p` with `distance(p -> frontier) <= d_a - 1`;
 - `to_room`: frontiers that can reach `p` with `distance(frontier -> p) <= d_a_reverse - 1`.
@@ -325,7 +359,7 @@ The current dense room-part distance features provide nearest-distance
 summaries, and the room-part frontier distance cache already tracks directed
 distances to frontier parts. The query feature should expose only the thresholded
 frontier sets needed for pooling. Add this feature only if the missing-connect
-query experiment is promising.
+query summary experiment is promising.
 
 Preferred feature design:
 
@@ -349,19 +383,31 @@ predictable.
 Output integration:
 
 - Keep the existing global save/refill utility heads.
-- Add zero-initialized residual deltas for queried active/unresolved rows only.
-- Scatter the residuals into the dense `[snapshot, room_part]` utility outputs.
-- Add matching proposal-query summaries for frontiers that participate in
+- For direct output heads, start with zero-initialized residual deltas for
+  queried active/unresolved rows only, unless experiments suggest replacement is
+  theoretically cleaner for a specific output.
+- Scatter the direct-query outputs into the dense `[snapshot, room_part]`
+  utility outputs.
+- Add matching whole-query early summaries for frontiers that participate in
   save/refill query sets.
 
-## Step 6: Diagnostics And Ablations
+Risks:
+
+- early conditioning changes all downstream frontier representations;
+- broad "constraint pressure" signals may perturb door, balance, and other
+  output heads;
+- save/refill queries may be weaker than missing-connect queries if relevant
+  frontier sets are large or noisy.
+
+## Step 5: Diagnostics And Ablations
 
 Add toggles before enabling multiple heads at once:
 
 - `missing_connect_frontier_query_outputs`;
-- `missing_connect_proposal_query_summary`;
-- `early_frontier_query_conditioning`;
+- `missing_connect_frontier_query_summary`;
+- `missing_connect_query_summary_global_state`;
 - `missing_connect_distance_frontier_query_outputs`;
+- `save_refill_frontier_query_summary`;
 - `save_refill_frontier_query_outputs`.
 
 Useful metrics:
@@ -371,18 +417,21 @@ Useful metrics:
 - fraction of empty `F` or empty `G`;
 - source/target frontier cap-hit rates;
 - per-frontier source/target query participation counts;
-- query residual magnitude by output type;
-- proposal query residual magnitude;
+- query-summary update norm before and after the zero-initialized projection;
+- direct-query output magnitude by output type;
 - loss split for queried vs non-queried outputs;
 - proposal loss and candidate diagnostics when query heads are enabled.
 
 Important ablations:
 
 - global heads only;
-- missing-connect validity query only, without proposal query summary;
-- missing-connect validity query plus late proposal query summary;
-- missing-connect validity query plus early frontier query conditioning;
+- missing-connect validity query only, without early query summary;
+- missing-connect validity query plus early whole-query frontier summary;
+- early whole-query frontier summary without direct missing-connect output
+  replacement;
+- early whole-query frontier summary with and without global query summary;
 - missing-connect validity plus distance query;
+- missing-connect summary with and without connection-output identity embedding;
 - save/refill query only;
 - all query heads.
 
@@ -390,11 +439,12 @@ Important ablations:
 
 - Keep output tensor shapes unchanged.
 - Keep config/checkpoint changes explicit and required.
-- Prefer zero-initialized residuals over hard replacement.
+- Use replacement for queried missing-connect validity outputs; keep residuals
+  available for outputs where the global head remains theoretically useful.
+- Zero-initialize new conditioning projections so initial behavior is unchanged.
 - Keep the first implementation focused on missing-connect validity because the
   feature masks already exist.
 - Avoid dense pairwise frontier computations unless the cheap pooled query is
   shown to be insufficient.
 - Avoid reintroducing room-part graph nodes or room-part message passing.
-- Keep late proposal summaries and early frontier conditioning as separate
-  toggles.
+- Prefer shared early query conditioning over proposal-only special cases.

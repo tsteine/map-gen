@@ -649,6 +649,7 @@ def train_feature_batch_backward(
 
     for feature_batch in prepared_batch.feature_batches:
         features = feature_batch.features.to(context.device)
+        features.mark_dynamic()
         return_proposal_state = (
             prepared_batch.kind == "fresh"
             and feature_batch.proposal_frontier_idx is not None

@@ -547,7 +547,7 @@ def initialize_generation_process(
     model.requires_grad_(False)
     model.eval()
     if config.model.compile:
-        model = torch.compile(model, dynamic=True)
+        model = torch.compile(model)
     map_gen.set_profile_enabled(profile)
     GENERATION_PROCESS_STATE = GenerationProcessState(
         config=config,
