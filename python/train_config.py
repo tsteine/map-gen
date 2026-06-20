@@ -28,6 +28,7 @@ class ModelConfig(StrictBaseModel):
     global_room_position_embedding_width: int
     hidden_width: int
     proposal_hidden_width: int
+    missing_connect_hidden_width: int
     door_match_embedding_width: int
     toilet_crossed_room_embedding_width: int
     num_layers: int
@@ -90,6 +91,7 @@ class GenerationConfig(StrictBaseModel):
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
     frontier_neighbor_count: int
     frontier_window_size: int
+    missing_connect_query_frontier_count: int
     candidate_spatial_cell_size: int
     num_threads: int | None
 
@@ -115,6 +117,7 @@ class FeatureConfig(StrictBaseModel):
     frontier_neighbor_flags: bool
     connection_reachability: bool
     frontier_connection_reachability: bool
+    missing_connect_query: bool
     toilet_crossed_room: bool
 
 
@@ -221,6 +224,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("model.global_room_position_embedding_width must be greater than zero")
     if config.model.proposal_hidden_width <= 0:
         raise ValueError("model.proposal_hidden_width must be greater than zero")
+    if config.model.missing_connect_hidden_width <= 0:
+        raise ValueError("model.missing_connect_hidden_width must be greater than zero")
     if (
         config.features.toilet_crossed_room
         and config.model.toilet_crossed_room_embedding_width <= 0
@@ -263,6 +268,10 @@ def validate_config(config: Config) -> None:
         )
     if config.generation.frontier_window_size < 0:
         raise ValueError("generation.frontier_window_size must be greater than or equal to zero")
+    if config.generation.missing_connect_query_frontier_count <= 0:
+        raise ValueError(
+            "generation.missing_connect_query_frontier_count must be greater than zero"
+        )
     if config.generation.candidate_spatial_cell_size <= 0:
         raise ValueError("generation.candidate_spatial_cell_size must be greater than zero")
     validate_nonnegative_scheduleable_float(
@@ -331,8 +340,9 @@ def validate_config(config: Config) -> None:
         or config.features.frontier_occupancy
         or config.features.frontier_neighbor
         or config.features.frontier_connection_reachability
+        or config.features.missing_connect_query
     ) and not config.features.frontier_mask:
-        raise ValueError("frontier features require features.frontier_mask")
+        raise ValueError("frontier query and frontier features require features.frontier_mask")
     if (
         config.features.inventory or config.features.connection_reachability
     ) and not config.features.frontier_mask:

@@ -232,6 +232,8 @@ class EpisodeOutcomes:
 class FeatureRequirements:
     frontier_row_count: int
     worker_frontier_row_counts: list[int]
+    missing_connect_query_row_count: int
+    worker_missing_connect_query_row_counts: list[int]
 
 
 @dataclass
@@ -569,20 +571,58 @@ class FrontierFeatures:
 
 
 @dataclass
+class MissingConnectQueryFeatures:
+    query_snapshot_idx: torch.Tensor
+    query_connection_idx: torch.Tensor
+    source_frontier: torch.Tensor
+    target_frontier: torch.Tensor
+    source_distance: torch.Tensor
+    target_distance: torch.Tensor
+    source_count: torch.Tensor
+    target_count: torch.Tensor
+    source_cap_hit: torch.Tensor
+    target_cap_hit: torch.Tensor
+
+    def to(
+        self,
+        device: torch.device,
+        non_blocking: bool = False,
+    ) -> "MissingConnectQueryFeatures":
+        return MissingConnectQueryFeatures(
+            query_snapshot_idx=self.query_snapshot_idx.to(device, non_blocking=non_blocking),
+            query_connection_idx=self.query_connection_idx.to(device, non_blocking=non_blocking),
+            source_frontier=self.source_frontier.to(device, non_blocking=non_blocking),
+            target_frontier=self.target_frontier.to(device, non_blocking=non_blocking),
+            source_distance=self.source_distance.to(device, non_blocking=non_blocking),
+            target_distance=self.target_distance.to(device, non_blocking=non_blocking),
+            source_count=self.source_count.to(device, non_blocking=non_blocking),
+            target_count=self.target_count.to(device, non_blocking=non_blocking),
+            source_cap_hit=self.source_cap_hit.to(device, non_blocking=non_blocking),
+            target_cap_hit=self.target_cap_hit.to(device, non_blocking=non_blocking),
+        )
+
+
+@dataclass
 class Features:
     global_features: GlobalFeatures
     frontier_features: FrontierFeatures
+    missing_connect_query_features: MissingConnectQueryFeatures
 
     def to(self, device: torch.device, non_blocking: bool = False) -> "Features":
         return Features(
             global_features=self.global_features.to(device, non_blocking=non_blocking),
             frontier_features=self.frontier_features.to(device, non_blocking=non_blocking),
+            missing_connect_query_features=self.missing_connect_query_features.to(
+                device,
+                non_blocking=non_blocking,
+            ),
         )
 
     def flatten_candidates(self) -> "Features":
         return Features(
             global_features=self.global_features.flatten_candidates(),
             frontier_features=self.frontier_features,
+            missing_connect_query_features=self.missing_connect_query_features,
         )
 
 
@@ -614,6 +654,7 @@ class Engine:
         map_size: tuple[int, int],
         num_envs: int,
         candidate_spatial_cell_size: int,
+        missing_connect_query_frontier_count: int,
         seed: Optional[int] = None,
         frontier_neighbor_count: int = 4,
         frontier_window_size: int = 16,
@@ -630,12 +671,19 @@ class Engine:
             seed,
             frontier_neighbor_count,
             frontier_window_size,
+            missing_connect_query_frontier_count,
             candidate_spatial_cell_size,
             num_threads,
             frontier_neighbor_algorithm,
         )
         return EnvironmentGroup(
-            self, env, map_size, num_envs, frontier_neighbor_count, frontier_window_size
+            self,
+            env,
+            map_size,
+            num_envs,
+            frontier_neighbor_count,
+            frontier_window_size,
+            missing_connect_query_frontier_count,
         )
 
     def get_output_sizes(self) -> tuple[int, int]:
@@ -679,6 +727,7 @@ class EnvironmentGroup:
         num_envs: int,
         frontier_neighbor_count: int,
         frontier_window_size: int,
+        missing_connect_query_frontier_count: int,
     ):
         self.engine = engine
         self.env = env
@@ -686,6 +735,7 @@ class EnvironmentGroup:
         self.num_envs = num_envs
         self.frontier_neighbor_count = frontier_neighbor_count
         self.frontier_window_size = frontier_window_size
+        self.missing_connect_query_frontier_count = missing_connect_query_frontier_count
 
     def clear(self):
         self.env.clear()
@@ -811,6 +861,12 @@ class EnvironmentGroup:
             FeatureRequirements(
                 frontier_row_count=feature_requirements.frontier_row_count,
                 worker_frontier_row_counts=feature_requirements.worker_frontier_row_counts,
+                missing_connect_query_row_count=(
+                    feature_requirements.missing_connect_query_row_count
+                ),
+                worker_missing_connect_query_row_counts=(
+                    feature_requirements.worker_missing_connect_query_row_counts
+                ),
             ),
             candidate_slot.stats(self.num_envs),
         )
@@ -930,6 +986,10 @@ class EnvironmentGroup:
         return FeatureRequirements(
             frontier_row_count=result.frontier_row_count,
             worker_frontier_row_counts=result.worker_frontier_row_counts,
+            missing_connect_query_row_count=result.missing_connect_query_row_count,
+            worker_missing_connect_query_row_counts=(
+                result.worker_missing_connect_query_row_counts
+            ),
         )
 
     def extract_features(
@@ -950,7 +1010,11 @@ class EnvironmentGroup:
             environment_start,
             environment_count,
         )
-        feature_slot.ensure(environment_count, feature_requirements.frontier_row_count)
+        feature_slot.ensure(
+            environment_count,
+            feature_requirements.frontier_row_count,
+            feature_requirements.missing_connect_query_row_count,
+        )
         self.env.pack_features_into(
             map_gen.FeatureBuffers(
                 {
@@ -959,6 +1023,12 @@ class EnvironmentGroup:
                     "environment_start": environment_start,
                     "frontier_row_count": feature_requirements.frontier_row_count,
                     "worker_frontier_row_counts": feature_requirements.worker_frontier_row_counts,
+                    "missing_connect_query_row_count": (
+                        feature_requirements.missing_connect_query_row_count
+                    ),
+                    "worker_missing_connect_query_row_counts": (
+                        feature_requirements.worker_missing_connect_query_row_counts
+                    ),
                     "inventory": feature_slot.inventory.numpy(),
                     "room_x": feature_slot.room_x.numpy(),
                     "room_y": feature_slot.room_y.numpy(),
@@ -1001,6 +1071,36 @@ class EnvironmentGroup:
                     "frontier_neighbor_pair": feature_slot.frontier_neighbor_pair.numpy(),
                     "connection_reachability": feature_slot.connection_reachability.numpy(),
                     "frontier_connection_reachability": feature_slot.frontier_connection_reachability.numpy(),
+                    "missing_connect_query_snapshot_idx": (
+                        feature_slot.missing_connect_query_snapshot_idx.numpy()
+                    ),
+                    "missing_connect_query_connection_idx": (
+                        feature_slot.missing_connect_query_connection_idx.numpy()
+                    ),
+                    "missing_connect_query_source_frontier": (
+                        feature_slot.missing_connect_query_source_frontier.numpy()
+                    ),
+                    "missing_connect_query_target_frontier": (
+                        feature_slot.missing_connect_query_target_frontier.numpy()
+                    ),
+                    "missing_connect_query_source_distance": (
+                        feature_slot.missing_connect_query_source_distance.numpy()
+                    ),
+                    "missing_connect_query_target_distance": (
+                        feature_slot.missing_connect_query_target_distance.numpy()
+                    ),
+                    "missing_connect_query_source_count": (
+                        feature_slot.missing_connect_query_source_count.numpy()
+                    ),
+                    "missing_connect_query_target_count": (
+                        feature_slot.missing_connect_query_target_count.numpy()
+                    ),
+                    "missing_connect_query_source_cap_hit": (
+                        feature_slot.missing_connect_query_source_cap_hit.numpy()
+                    ),
+                    "missing_connect_query_target_cap_hit": (
+                        feature_slot.missing_connect_query_target_cap_hit.numpy()
+                    ),
                     "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
                     "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),
                     "row_frontier_idx": feature_slot.row_frontier_idx.numpy(),
@@ -1017,6 +1117,7 @@ class EnvironmentGroup:
             lookahead_outcomes,
             include_lookahead_outcomes,
             feature_requirements.frontier_row_count,
+            feature_requirements.missing_connect_query_row_count,
         )
 
     def finish(self):
@@ -1059,10 +1160,14 @@ class FeatureSlot:
         self.frontier_connection_reachability_width = connection_count * int(
             features.frontier_connection_reachability
         )
+        self.missing_connect_query_frontier_width = (
+            env.missing_connect_query_frontier_count * int(features.missing_connect_query)
+        )
         self.toilet_crossed_room_width = int(features.toilet_crossed_room)
         self.pin_memory = pin_memory
         self.snapshot_capacity = 0
         self.frontier_row_capacity = 0
+        self.missing_connect_query_row_capacity = 0
         self.inventory = None
         self.room_x = None
         self.room_y = None
@@ -1085,6 +1190,16 @@ class FeatureSlot:
         self.frontier_neighbor_pair = None
         self.connection_reachability = None
         self.frontier_connection_reachability = None
+        self.missing_connect_query_snapshot_idx = None
+        self.missing_connect_query_connection_idx = None
+        self.missing_connect_query_source_frontier = None
+        self.missing_connect_query_target_frontier = None
+        self.missing_connect_query_source_distance = None
+        self.missing_connect_query_target_distance = None
+        self.missing_connect_query_source_count = None
+        self.missing_connect_query_target_count = None
+        self.missing_connect_query_source_cap_hit = None
+        self.missing_connect_query_target_cap_hit = None
         self.toilet_crossed_room_idx = None
         self.row_snapshot_idx = None
         self.row_frontier_idx = None
@@ -1093,15 +1208,25 @@ class FeatureSlot:
     def _empty(self, shape, dtype):
         return torch.empty(shape, dtype=dtype, pin_memory=self.pin_memory)
 
-    def ensure(self, snapshot_count: int, frontier_row_count: int):
+    def ensure(
+        self,
+        snapshot_count: int,
+        frontier_row_count: int,
+        missing_connect_query_row_count: int,
+    ):
         if (
             self.inventory is not None
             and self.snapshot_capacity >= snapshot_count
             and self.frontier_row_capacity >= frontier_row_count
+            and self.missing_connect_query_row_capacity >= missing_connect_query_row_count
         ):
             return
         self.snapshot_capacity = max(self.snapshot_capacity, snapshot_count)
         self.frontier_row_capacity = max(self.frontier_row_capacity, frontier_row_count)
+        self.missing_connect_query_row_capacity = max(
+            self.missing_connect_query_row_capacity,
+            missing_connect_query_row_count,
+        )
         self.inventory = self._empty((self.snapshot_capacity, self.inventory_width), torch.uint8)
         self.room_x = self._empty((self.snapshot_capacity, self.room_width), torch.int8)
         self.room_y = self._empty((self.snapshot_capacity, self.room_width), torch.int8)
@@ -1159,6 +1284,58 @@ class FeatureSlot:
             (self.frontier_row_capacity, self.frontier_connection_reachability_width),
             torch.uint8,
         )
+        self.missing_connect_query_snapshot_idx = self._empty(
+            (self.missing_connect_query_row_capacity,),
+            torch.int64,
+        )
+        self.missing_connect_query_connection_idx = self._empty(
+            (self.missing_connect_query_row_capacity,),
+            torch.int64,
+        )
+        self.missing_connect_query_source_frontier = self._empty(
+            (
+                self.missing_connect_query_row_capacity,
+                self.missing_connect_query_frontier_width,
+            ),
+            torch.int16,
+        )
+        self.missing_connect_query_target_frontier = self._empty(
+            (
+                self.missing_connect_query_row_capacity,
+                self.missing_connect_query_frontier_width,
+            ),
+            torch.int16,
+        )
+        self.missing_connect_query_source_distance = self._empty(
+            (
+                self.missing_connect_query_row_capacity,
+                self.missing_connect_query_frontier_width,
+            ),
+            torch.uint8,
+        )
+        self.missing_connect_query_target_distance = self._empty(
+            (
+                self.missing_connect_query_row_capacity,
+                self.missing_connect_query_frontier_width,
+            ),
+            torch.uint8,
+        )
+        self.missing_connect_query_source_count = self._empty(
+            (self.missing_connect_query_row_capacity,),
+            torch.uint16,
+        )
+        self.missing_connect_query_target_count = self._empty(
+            (self.missing_connect_query_row_capacity,),
+            torch.uint16,
+        )
+        self.missing_connect_query_source_cap_hit = self._empty(
+            (self.missing_connect_query_row_capacity,),
+            torch.uint8,
+        )
+        self.missing_connect_query_target_cap_hit = self._empty(
+            (self.missing_connect_query_row_capacity,),
+            torch.uint8,
+        )
         self.toilet_crossed_room_idx = self._empty(
             (self.snapshot_capacity, self.toilet_crossed_room_width),
             torch.int16,
@@ -1177,6 +1354,7 @@ class FeatureSlot:
         lookahead_outcomes: StepOutcomes,
         include_lookahead_outcomes: bool,
         frontier_row_count: int,
+        missing_connect_query_row_count: int,
     ) -> Features:
         if not include_temperature:
             log_temperature = log_temperature.new_empty([*log_temperature.shape, 0])
@@ -1275,6 +1453,38 @@ class FeatureSlot:
                 row_frontier_idx=self.row_frontier_idx[:frontier_row_count],
                 row_door_output_idx=self.row_door_output_idx[:frontier_row_count],
             ),
+            missing_connect_query_features=MissingConnectQueryFeatures(
+                query_snapshot_idx=self.missing_connect_query_snapshot_idx[
+                    :missing_connect_query_row_count
+                ],
+                query_connection_idx=self.missing_connect_query_connection_idx[
+                    :missing_connect_query_row_count
+                ],
+                source_frontier=self.missing_connect_query_source_frontier[
+                    :missing_connect_query_row_count
+                ],
+                target_frontier=self.missing_connect_query_target_frontier[
+                    :missing_connect_query_row_count
+                ],
+                source_distance=self.missing_connect_query_source_distance[
+                    :missing_connect_query_row_count
+                ],
+                target_distance=self.missing_connect_query_target_distance[
+                    :missing_connect_query_row_count
+                ],
+                source_count=self.missing_connect_query_source_count[
+                    :missing_connect_query_row_count
+                ],
+                target_count=self.missing_connect_query_target_count[
+                    :missing_connect_query_row_count
+                ],
+                source_cap_hit=self.missing_connect_query_source_cap_hit[
+                    :missing_connect_query_row_count
+                ],
+                target_cap_hit=self.missing_connect_query_target_cap_hit[
+                    :missing_connect_query_row_count
+                ],
+            ),
         )
 
     def features(
@@ -1288,6 +1498,7 @@ class FeatureSlot:
         lookahead_outcomes: StepOutcomes,
         include_lookahead_outcomes: bool,
         frontier_row_count: int,
+        missing_connect_query_row_count: int,
     ) -> Features:
         snapshot_count = environment_count * candidate_count
         if not include_temperature:
@@ -1398,6 +1609,38 @@ class FeatureSlot:
                 row_frontier_idx=self.row_frontier_idx[:frontier_row_count],
                 row_door_output_idx=self.row_door_output_idx[:frontier_row_count],
             ),
+            missing_connect_query_features=MissingConnectQueryFeatures(
+                query_snapshot_idx=self.missing_connect_query_snapshot_idx[
+                    :missing_connect_query_row_count
+                ],
+                query_connection_idx=self.missing_connect_query_connection_idx[
+                    :missing_connect_query_row_count
+                ],
+                source_frontier=self.missing_connect_query_source_frontier[
+                    :missing_connect_query_row_count
+                ],
+                target_frontier=self.missing_connect_query_target_frontier[
+                    :missing_connect_query_row_count
+                ],
+                source_distance=self.missing_connect_query_source_distance[
+                    :missing_connect_query_row_count
+                ],
+                target_distance=self.missing_connect_query_target_distance[
+                    :missing_connect_query_row_count
+                ],
+                source_count=self.missing_connect_query_source_count[
+                    :missing_connect_query_row_count
+                ],
+                target_count=self.missing_connect_query_target_count[
+                    :missing_connect_query_row_count
+                ],
+                source_cap_hit=self.missing_connect_query_source_cap_hit[
+                    :missing_connect_query_row_count
+                ],
+                target_cap_hit=self.missing_connect_query_target_cap_hit[
+                    :missing_connect_query_row_count
+                ],
+            ),
         )
 
 
@@ -1415,7 +1658,15 @@ def extract_candidate_features(
 ) -> Features:
     frontier_row_count = feature_requirements.frontier_row_count
     worker_frontier_row_counts = feature_requirements.worker_frontier_row_counts
-    feature_slot.ensure(candidates.room_idx.numel(), frontier_row_count)
+    missing_connect_query_row_count = feature_requirements.missing_connect_query_row_count
+    worker_missing_connect_query_row_counts = (
+        feature_requirements.worker_missing_connect_query_row_counts
+    )
+    feature_slot.ensure(
+        candidates.room_idx.numel(),
+        frontier_row_count,
+        missing_connect_query_row_count,
+    )
     env.env.pack_features_into(
         map_gen.FeatureBuffers(
             {
@@ -1424,6 +1675,10 @@ def extract_candidate_features(
                 "environment_start": 0,
                 "frontier_row_count": frontier_row_count,
                 "worker_frontier_row_counts": worker_frontier_row_counts,
+                "missing_connect_query_row_count": missing_connect_query_row_count,
+                "worker_missing_connect_query_row_counts": (
+                    worker_missing_connect_query_row_counts
+                ),
                 "inventory": feature_slot.inventory.numpy(),
                 "room_x": feature_slot.room_x.numpy(),
                 "room_y": feature_slot.room_y.numpy(),
@@ -1466,6 +1721,36 @@ def extract_candidate_features(
                 "frontier_neighbor_pair": feature_slot.frontier_neighbor_pair.numpy(),
                 "connection_reachability": feature_slot.connection_reachability.numpy(),
                 "frontier_connection_reachability": feature_slot.frontier_connection_reachability.numpy(),
+                "missing_connect_query_snapshot_idx": (
+                    feature_slot.missing_connect_query_snapshot_idx.numpy()
+                ),
+                "missing_connect_query_connection_idx": (
+                    feature_slot.missing_connect_query_connection_idx.numpy()
+                ),
+                "missing_connect_query_source_frontier": (
+                    feature_slot.missing_connect_query_source_frontier.numpy()
+                ),
+                "missing_connect_query_target_frontier": (
+                    feature_slot.missing_connect_query_target_frontier.numpy()
+                ),
+                "missing_connect_query_source_distance": (
+                    feature_slot.missing_connect_query_source_distance.numpy()
+                ),
+                "missing_connect_query_target_distance": (
+                    feature_slot.missing_connect_query_target_distance.numpy()
+                ),
+                "missing_connect_query_source_count": (
+                    feature_slot.missing_connect_query_source_count.numpy()
+                ),
+                "missing_connect_query_target_count": (
+                    feature_slot.missing_connect_query_target_count.numpy()
+                ),
+                "missing_connect_query_source_cap_hit": (
+                    feature_slot.missing_connect_query_source_cap_hit.numpy()
+                ),
+                "missing_connect_query_target_cap_hit": (
+                    feature_slot.missing_connect_query_target_cap_hit.numpy()
+                ),
                 "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
                 "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),
                 "row_frontier_idx": feature_slot.row_frontier_idx.numpy(),
@@ -1483,4 +1768,5 @@ def extract_candidate_features(
         lookahead_outcomes,
         include_lookahead_outcomes,
         frontier_row_count,
+        missing_connect_query_row_count,
     ).flatten_candidates()

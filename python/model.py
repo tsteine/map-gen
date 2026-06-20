@@ -223,6 +223,124 @@ class ProposalOutput(torch.nn.Module):
         return self.layers(x)
 
 
+class MissingConnectFrontierQueryHead(torch.nn.Module):
+    scalar_width = 10
+
+    def __init__(
+        self,
+        embedding_width: int,
+        global_embedding_width: int,
+        hidden_width: int,
+    ):
+        super().__init__()
+        if hidden_width <= 0:
+            raise ValueError("missing_connect_hidden_width must be greater than zero")
+        self.layers = torch.nn.Sequential(
+            torch.nn.Linear(embedding_width * 4 + global_embedding_width + self.scalar_width, hidden_width, bias=False),
+            torch.nn.GELU(),
+            torch.nn.Linear(hidden_width, 1, bias=False),
+        )
+        self.layers[-1].weight.data.zero_()
+
+    def _pool(
+        self,
+        frontier_state: torch.Tensor,
+        frontier: torch.Tensor,
+        distance: torch.Tensor,
+        query_snapshot_idx: torch.Tensor,
+        row_count_by_snapshot: torch.Tensor,
+        row_start_by_snapshot: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        local_frontier = frontier.to(torch.int64)
+        safe_local_frontier = local_frontier.clamp_min(0)
+        row_count = row_count_by_snapshot[query_snapshot_idx].unsqueeze(1)
+        valid = (local_frontier >= 0) & (safe_local_frontier < row_count)
+        packed_frontier = row_start_by_snapshot[query_snapshot_idx].unsqueeze(1) + safe_local_frontier
+        packed_frontier = packed_frontier.clamp_max(max(frontier_state.shape[0] - 1, 0))
+        gathered = frontier_state[packed_frontier]
+        mask = valid.unsqueeze(-1)
+        masked = gathered * mask
+        count = mask.sum(dim=1).clamp_min(1)
+        mean = masked.sum(dim=1) / count
+        max_values = gathered.masked_fill(~mask, -torch.inf).amax(dim=1)
+        max_values = torch.where(torch.isfinite(max_values), max_values, 0)
+        distance_value = torch.log1p(distance.to(frontier_state.dtype)) / math.log(256.0)
+        distance_value = distance_value * valid.to(frontier_state.dtype)
+        scalar_count = valid.sum(dim=1).clamp_min(1).to(frontier_state.dtype)
+        mean_distance = distance_value.sum(dim=1, keepdim=True) / scalar_count.unsqueeze(1)
+        min_distance = distance_value.masked_fill(~valid, float("inf")).amin(dim=1, keepdim=True)
+        min_distance = torch.where(torch.isfinite(min_distance), min_distance, 0)
+        return mean, max_values, mean_distance, min_distance
+
+    def forward(
+        self,
+        frontier_state: torch.Tensor,
+        global_state: torch.Tensor,
+        row_count_by_snapshot: torch.Tensor,
+        row_start_by_snapshot: torch.Tensor,
+        features: Features,
+        connection_output_count: int,
+    ) -> torch.Tensor:
+        query = features.missing_connect_query_features
+        query_count = query.query_connection_idx.shape[0]
+        snapshot_count = global_state.shape[0]
+        if query_count == 0 or frontier_state.shape[0] == 0:
+            return frontier_state.new_zeros([snapshot_count, 1, connection_output_count])
+        query_snapshot_idx = query.query_snapshot_idx.to(torch.int64)
+        source_mean, source_max, source_mean_distance, source_min_distance = self._pool(
+            frontier_state,
+            query.source_frontier,
+            query.source_distance,
+            query_snapshot_idx,
+            row_count_by_snapshot,
+            row_start_by_snapshot,
+        )
+        target_mean, target_max, target_mean_distance, target_min_distance = self._pool(
+            frontier_state,
+            query.target_frontier,
+            query.target_distance,
+            query_snapshot_idx,
+            row_count_by_snapshot,
+            row_start_by_snapshot,
+        )
+        source_count = query.source_count.to(frontier_state.dtype)
+        target_count = query.target_count.to(frontier_state.dtype)
+        scalar = torch.cat(
+            [
+                torch.log1p(source_count).unsqueeze(1) / math.log(65536.0),
+                torch.log1p(target_count).unsqueeze(1) / math.log(65536.0),
+                query.source_cap_hit.to(frontier_state.dtype).unsqueeze(1),
+                query.target_cap_hit.to(frontier_state.dtype).unsqueeze(1),
+                source_mean_distance,
+                target_mean_distance,
+                source_min_distance,
+                target_min_distance,
+                (source_count > 0).to(frontier_state.dtype).unsqueeze(1),
+                (target_count > 0).to(frontier_state.dtype).unsqueeze(1),
+            ],
+            dim=1,
+        )
+        residual = self.layers(
+            torch.cat(
+                [
+                    source_mean,
+                    source_max,
+                    target_mean,
+                    target_max,
+                    global_state[query_snapshot_idx],
+                    scalar,
+                ],
+                dim=1,
+            )
+        ).squeeze(1)
+        flat_idx = query_snapshot_idx * connection_output_count + query.query_connection_idx.to(
+            torch.int64
+        )
+        output = frontier_state.new_zeros([snapshot_count * connection_output_count])
+        output.index_add_(0, flat_idx, residual)
+        return output.view(snapshot_count, 1, connection_output_count)
+
+
 class FrontierModel(torch.nn.Module):
     def __init__(
         self,
@@ -235,6 +353,7 @@ class FrontierModel(torch.nn.Module):
         global_room_position_embedding_width,
         hidden_width,
         proposal_hidden_width,
+        missing_connect_hidden_width,
         door_match_embedding_width,
         toilet_crossed_room_embedding_width,
         num_layers,
@@ -260,6 +379,8 @@ class FrontierModel(torch.nn.Module):
             raise ValueError("door_match_embedding_width must be greater than zero")
         if self.features.toilet_crossed_room and toilet_crossed_room_embedding_width <= 0:
             raise ValueError("toilet_crossed_room_embedding_width must be greater than zero")
+        if self.features.missing_connect_query and missing_connect_hidden_width <= 0:
+            raise ValueError("missing_connect_hidden_width must be greater than zero")
         door_output_size, connection_output_size = output_metadata.get_output_sizes()
         self.output_sizes = (
             door_output_size,
@@ -503,6 +624,15 @@ class FrontierModel(torch.nn.Module):
         self.frontier_door_invalid_output = torch.nn.Linear(embedding_width, 1)
         self.connection_output = FactorizedOutcomeHead(
             output_metadata.connection, output_metadata.num_connection_variants, embedding_width
+        )
+        self.missing_connect_query_output = (
+            MissingConnectFrontierQueryHead(
+                embedding_width,
+                global_embedding_width,
+                missing_connect_hidden_width,
+            )
+            if self.features.missing_connect_query
+            else None
         )
         self.toilet_output = torch.nn.Linear(embedding_width, 1)
         self.balance_score_output = FactorizedOutcomeHead(
@@ -794,6 +924,18 @@ class FrontierModel(torch.nn.Module):
             X = X + self.orientation_embedding(node[:, 3].to(torch.int64)).to(dtype)
         if self.kind_embedding is not None:
             X = X + self.kind_embedding(node[:, 4].to(torch.int64)).to(dtype)
+        if row_count == 0:
+            row_count_by_snapshot = torch.zeros(
+                [snapshot_count],
+                dtype=torch.int64,
+                device=row_snapshot_idx.device,
+            )
+        else:
+            row_count_by_snapshot = torch.bincount(
+                row_snapshot_idx,
+                minlength=snapshot_count,
+            )
+        row_start_by_snapshot = row_count_by_snapshot.cumsum(0) - row_count_by_snapshot
         # if self.inventory_embedding is not None:
         #     X = X + torch.matmul(
         #         features.global_features.inventory.to(torch.float32), self.inventory_embedding
@@ -874,11 +1016,6 @@ class FrontierModel(torch.nn.Module):
         if row_count == 0:
             mean_pool = max_pool = X.new_zeros([snapshot_count, self.embedding_width])
         else:
-            row_count_by_snapshot = torch.bincount(
-                row_snapshot_idx,
-                minlength=snapshot_count,
-            )
-            row_start_by_snapshot = row_count_by_snapshot.cumsum(0) - row_count_by_snapshot
             # pair: [r, k, pair_width], neighbor: [r, k], pair_mask: [r, k, 1]
             pair = self._pair_features(features, dtype)
             frontier_neighbor = features.frontier_features.frontier_neighbor
@@ -951,6 +1088,7 @@ class FrontierModel(torch.nn.Module):
             max_pool = torch.where(torch.isfinite(max_pool), max_pool, 0)
         frontier_door_invalid = self.frontier_door_invalid_output(X)
         proposal_state = X if return_proposal_state else X.new_empty([row_count, 0])
+        frontier_state = X
         # mean_pool, max_pool, pooled_state: [s, e]
         pooled_inputs = []
         if inventory_features is not None:
@@ -1038,8 +1176,18 @@ class FrontierModel(torch.nn.Module):
             features.global_features.lookahead_door_invalid,
             "door",
         )
+        connection_invalid = preds.connection_invalid
+        if self.missing_connect_query_output is not None:
+            connection_invalid = connection_invalid + self.missing_connect_query_output(
+                frontier_state,
+                global_state,
+                row_count_by_snapshot,
+                row_start_by_snapshot,
+                features,
+                self.num_connection_outputs,
+            )
         connection_invalid = apply_known_invalid_logits(
-            preds.connection_invalid,
+            connection_invalid,
             features.global_features.lookahead_connection_invalid,
             "connection",
         )
