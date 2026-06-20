@@ -228,28 +228,68 @@ targets are:
 - `to_room`: path from some objective part in `D` to `p`.
 
 When the path is not already determined through placed rooms, the useful
-frontier sets are conceptually:
+frontier sets can be limited by the current best placed-objective distance.
 
-- `p -> frontier`;
-- `frontier -> p`;
-- objective `D -> frontier`;
-- `frontier -> objective D`.
+For `from_room`, suppose the shortest already-known path from `p` to an
+already-placed save/refill is `d_a`. For a frontier `f`, let `d_f` be the
+shortest path length from `p` to `f`. A newly placed objective beyond `f` cannot
+improve the target unless:
+
+```text
+d_f <= d_a - 1
+```
+
+The `-1` accounts for the fact that anything beyond the frontier must be at
+least one step past the frontier. If `d_f > d_a - 1`, then even the best
+possible future objective beyond `f` cannot beat the already-placed objective.
+
+The reverse-direction outcome uses the analogous condition:
+
+```text
+distance(f -> p) <= d_a_reverse - 1
+```
+
+where `d_a_reverse` is the shortest already-known path from an already-placed
+objective to `p`.
+
+So the relevant sets are not simply all reachable frontiers. They are bounded
+frontier sets:
+
+- `from_room`: frontiers reachable from `p` with `distance(p -> frontier) <= d_a - 1`;
+- `to_room`: frontiers that can reach `p` with `distance(frontier -> p) <= d_a_reverse - 1`.
+
+If no already-placed objective is reachable in that direction, treat `d_a` as
+infinite and allow all reachable frontiers in that direction.
+
+If the relevant frontier set is empty, the outcome is already determined by the
+currently placed graph and no query row is needed. In that case the model should
+leave the existing global/determined prediction path alone rather than emitting
+a local query residual.
+
+This makes save/refill queries more local and cheaper than a naive room-part to
+all-frontiers query, while still focusing exactly on frontiers that could change
+the output target.
 
 The current dense room-part distance features provide nearest-distance
-summaries, but not the full per-frontier sets needed for query pooling. Add a
-feature only if the missing-connect query experiment is promising.
+summaries, and the room-part frontier distance cache already tracks directed
+distances to frontier parts. The query feature should expose only the thresholded
+frontier sets needed for pooling. Add this feature only if the missing-connect
+query experiment is promising.
 
 Preferred feature design:
 
 - Avoid persistent room-part nodes.
 - Add sparse query metadata for unresolved save/refill outputs rather than dense
   `frontier x room_part` tensors if possible.
+- Emit query rows only for save/refill outcomes with a non-empty relevant
+  frontier set.
 - For each query row, store:
   - snapshot index;
   - room-part index;
   - output kind: save/refill and from/to;
-  - bounded frontier source indices for the room-part side;
-  - bounded frontier source indices for the objective side;
+  - current best placed-objective distance `d_a` for the relevant direction;
+  - bounded frontier indices satisfying the relevance threshold;
+  - distances or distance buckets for those frontier indices;
   - count/empty indicators for the full unbounded sets.
 
 Start with bounded CSR-style query-frontier edges so memory is controlled and
