@@ -99,6 +99,8 @@ Implementation shape:
 - For each missing-connect query row:
   - `F = {frontier | r can currently reach frontier}`;
   - `G = {frontier | frontier can currently reach s}`;
+  - if an `r -> s` path already exists through placed rooms, the validity
+    outcome is already determined and no validity query row should be emitted;
   - rank `F` by shortest graph distance `r -> frontier`;
   - rank `G` by shortest graph distance `frontier -> s`;
   - keep bounded nearest frontiers on each side;
@@ -205,6 +207,36 @@ Use the existing distance loss mask. Keep this separate from Step 1 because some
 configs set `missing_connect_distance_weight` and
 `reward_missing_connect_distance` to zero, so validity is the more important
 first target.
+
+When an `r -> s` path already exists, the distance target is determined by the
+shortest existing path length `d_a`. A query is only needed if a future path
+through frontiers could be shorter.
+
+For the missing-connect sets:
+
+- `F = {frontier | r can currently reach frontier}`;
+- `G = {frontier | frontier can currently reach s}`;
+- `d_F = min distance(r -> frontier)` over `F`;
+- `d_G = min distance(frontier -> s)` over `G`.
+
+If:
+
+```text
+d_F + d_G >= d_a
+```
+
+then no frontier-mediated path can improve the already-existing path, so the
+distance outcome is determined and no distance query row should be emitted.
+
+The same bound can prune individual frontier entries before CSR truncation:
+
+- prune `f` from `F` when `distance(r -> f) + d_G >= d_a`;
+- prune `g` from `G` when `d_F + distance(g -> s) >= d_a`.
+
+This keeps distance queries focused on frontiers that can actually improve the
+known shortest path. If no existing `r -> s` path exists, treat `d_a` as
+infinite and keep the reachable frontier sets before normal CSR ranking and
+truncation.
 
 ## Step 4: Early Query Conditioning Experiment
 
