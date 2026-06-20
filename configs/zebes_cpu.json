@@ -16,6 +16,7 @@
     "hidden_width": 512,
     "proposal_hidden_width": 64,
     "missing_connect_hidden_width": 512,
+    "missing_connect_query_summary_hidden_width": 512,
     "door_match_embedding_width": 128,
     "toilet_crossed_room_embedding_width": 32,
     "num_layers": 4
@@ -93,6 +94,7 @@
     "connection_reachability": true,
     "frontier_connection_reachability": true,
     "missing_connect_query": true,
+    "missing_connect_query_summary": true,
     "toilet_crossed_room": true
   },
   "train": {

@@ -306,6 +306,26 @@ def direction_balance_score_target_logits(
     return target_logits.detach(), mask
 
 
+def direction_valid_match_balance_score_target_logits(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    mask = (targets >= 0) & (targets < logits.shape[-1])
+    if logits.shape[-1] == 0:
+        return logits.new_empty(targets.shape, dtype=torch.float32), mask
+    safe_targets = torch.clamp(targets, min=0, max=logits.shape[-1] - 1).to(torch.int64)
+    logit_table = direction_balance_score_logit_table(logits)
+    while logit_table.ndim < safe_targets.ndim + 1:
+        logit_table = logit_table.unsqueeze(1)
+    logit_table = logit_table.expand(*safe_targets.shape, logit_table.shape[-1])
+    target_logits = torch.gather(
+        logit_table,
+        -1,
+        safe_targets.unsqueeze(-1),
+    ).squeeze(-1)
+    return target_logits.detach(), mask
+
+
 def direction_balance_score_logit_table(logits: torch.Tensor) -> torch.Tensor:
     logits = logits.to(torch.float32)
     log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
@@ -327,6 +347,33 @@ def compute_balance_score_target_logits(
     )
     up_values, up_mask = direction_balance_score_target_logits(preds.up, door_matches.up)
     down_values, down_mask = direction_balance_score_target_logits(preds.down, door_matches.down)
+    return (
+        torch.cat([left_values, right_values, up_values, down_values], dim=-1),
+        torch.cat([left_mask, right_mask, up_mask, down_mask], dim=-1),
+    )
+
+
+def compute_step_balance_score_target_logits(
+    preds: BalancePredictions,
+    door_match: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    left, right, up, down = torch.split(
+        door_match,
+        [
+            preds.left.shape[-2],
+            preds.right.shape[-2],
+            preds.up.shape[-2],
+            preds.down.shape[-2],
+        ],
+        dim=-1,
+    )
+    left_values, left_mask = direction_valid_match_balance_score_target_logits(preds.left, left)
+    right_values, right_mask = direction_valid_match_balance_score_target_logits(
+        preds.right,
+        right,
+    )
+    up_values, up_mask = direction_valid_match_balance_score_target_logits(preds.up, up)
+    down_values, down_mask = direction_valid_match_balance_score_target_logits(preds.down, down)
     return (
         torch.cat([left_values, right_values, up_values, down_values], dim=-1),
         torch.cat([left_mask, right_mask, up_mask, down_mask], dim=-1),

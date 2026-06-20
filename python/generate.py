@@ -19,7 +19,8 @@ from env import (
     Features,
     extract_candidate_features,
 )
-from model import Predictions
+from loss import compute_step_balance_score_target_logits
+from model import BalancePredictions, Predictions
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -236,6 +237,7 @@ class GenerationGroup:
     step: int
     feature_slot: FeatureSlot
     candidate_slot: CandidateSlot
+    balance_preds: BalancePredictions
     previous_lookahead_outcomes: StepOutcomes | None
     previous_proposal_scores: ProposalCache | None
 
@@ -595,6 +597,7 @@ def select_candidate_actions(
     model,
     candidates: Actions,
     outcomes: StepOutcomes,
+    post_candidate_door_match: torch.Tensor,
     features: Features,
     device: torch.device,
     gpu_lock: threading.Lock,
@@ -626,6 +629,18 @@ def select_candidate_actions(
         profiler.add("python.score.model_forward", profile_time)
 
         profile_time = profile_start(profile)
+        balance_score = preds.balance_score.view(environment_count, candidate_count, -1)
+        actual_balance_score, actual_balance_score_mask = (
+            compute_step_balance_score_target_logits(
+                group.balance_preds,
+                post_candidate_door_match,
+            )
+        )
+        balance_score = torch.where(
+            actual_balance_score_mask,
+            actual_balance_score,
+            balance_score,
+        )
         expected_reward = compute_expected_reward(
             Predictions(
                 door_invalid=preds.door_invalid.view(environment_count, candidate_count, -1),
@@ -635,7 +650,7 @@ def select_candidate_actions(
                     -1,
                 ),
                 toilet_invalid=preds.toilet_invalid.view(environment_count, candidate_count),
-                balance_score=preds.balance_score.view(environment_count, candidate_count, -1),
+                balance_score=balance_score,
                 toilet_balance_score=preds.toilet_balance_score.view(
                     environment_count,
                     candidate_count,
@@ -1134,6 +1149,7 @@ def bootstrap_lookahead_outcomes(outcomes: StepOutcomes) -> StepOutcomes:
 def run_generation_groups(
     envs: list[EnvironmentGroup],
     model,
+    balance_model,
     configs: list[GenerateConfig],
     device: torch.device,
     verify_outcome_consistency: bool = False,
@@ -1154,6 +1170,7 @@ def run_generation_groups(
             step=0,
             feature_slot=FeatureSlot(env, pin_memory=device.type == "cuda"),
             candidate_slot=CandidateSlot(env, pin_memory=device.type == "cuda"),
+            balance_preds=balance_model(torch.log(config.temperature)),
             previous_lookahead_outcomes=None,
             previous_proposal_scores=None,
         )
@@ -1268,6 +1285,7 @@ def run_generation_groups(
                         model,
                         candidates,
                         candidate_batch.reward_outcomes,
+                        candidate_batch.post_candidate_outcomes.door_match,
                         prepared_step.features,
                         device,
                         gpu_lock,

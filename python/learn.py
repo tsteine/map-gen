@@ -592,7 +592,6 @@ def train_feature_batch_backward(
             )
         )
     repeated_balance_score_target_logits = balance_score_target_logits.unsqueeze(1)
-    repeated_balance_score_mask = balance_score_mask.unsqueeze(1)
     repeated_toilet_balance_score_target_logits = toilet_balance_score_target_logits.unsqueeze(1)
     repeated_toilet_balance_score_mask = toilet_balance_score_mask.unsqueeze(1)
     batch_size = prepared_batch.episode_data.actions.room_idx.shape[0]
@@ -665,12 +664,17 @@ def train_feature_batch_backward(
                 features,
                 return_proposal_state=return_proposal_state,
             )
+        prefix_balance_score_mask = balance_score_mask
+        if features.global_features.lookahead_door_match.shape[-1] > 0:
+            prefix_balance_score_mask = (
+                balance_score_mask & (features.global_features.lookahead_door_match < 0)
+            )
         prefix_loss = compute_loss_breakdown(
             preds,
             repeated_outcomes,
             mask,
             repeated_balance_score_target_logits,
-            repeated_balance_score_mask,
+            prefix_balance_score_mask.unsqueeze(1),
             repeated_toilet_balance_score_target_logits,
             repeated_toilet_balance_score_mask,
             avg_frontiers_target,

@@ -285,6 +285,9 @@ def frontier_model_kwargs(
         "hidden_width": config.model.hidden_width,
         "proposal_hidden_width": config.model.proposal_hidden_width,
         "missing_connect_hidden_width": config.model.missing_connect_hidden_width,
+        "missing_connect_query_summary_hidden_width": (
+            config.model.missing_connect_query_summary_hidden_width
+        ),
         "door_match_embedding_width": config.model.door_match_embedding_width,
         "toilet_crossed_room_embedding_width": (config.model.toilet_crossed_room_embedding_width),
         "num_layers": config.model.num_layers,
@@ -515,6 +518,7 @@ class GenerationProcessState:
     device: torch.device
     envs: list
     model: torch.nn.Module
+    balance_model: torch.nn.Module
     profile: bool
     ignore_scores: bool
 
@@ -548,6 +552,9 @@ def initialize_generation_process(
     model.eval()
     if config.model.compile:
         model = torch.compile(model)
+    balance_model = create_balance_model(config, rooms, device)
+    balance_model.requires_grad_(False)
+    balance_model.eval()
     map_gen.set_profile_enabled(profile)
     GENERATION_PROCESS_STATE = GenerationProcessState(
         config=config,
@@ -555,6 +562,7 @@ def initialize_generation_process(
         device=device,
         envs=envs,
         model=model,
+        balance_model=balance_model,
         profile=profile,
         ignore_scores=ignore_scores,
     )
@@ -562,6 +570,7 @@ def initialize_generation_process(
 
 def run_generation_process_task(
     model_state: dict[str, torch.Tensor],
+    balance_model_state: dict[str, torch.Tensor],
     generation_config_json: str,
     verify_outcome_consistency: bool,
 ) -> tuple[
@@ -573,6 +582,7 @@ def run_generation_process_task(
     if state.profile:
         map_gen.reset_profile()
     unwrap_compiled_module(state.model).load_state_dict(model_state)
+    unwrap_compiled_module(state.balance_model).load_state_dict(balance_model_state)
     generation_config = Config.model_validate_json(generation_config_json)
     gen_configs = [
         create_generate_config(
@@ -594,6 +604,7 @@ def run_generation_process_task(
     ) = run_generation_groups(
         state.envs,
         state.model,
+        state.balance_model,
         gen_configs,
         state.device,
         verify_outcome_consistency=verify_outcome_consistency,
@@ -799,6 +810,10 @@ class TrainingSession:
             name: as_checkpoint_tensor(value)
             for name, value in unwrap_compiled_module(self.ema_model).state_dict().items()
         }
+        balance_model_state = {
+            name: as_checkpoint_tensor(value)
+            for name, value in unwrap_compiled_module(self.balance_model).state_dict().items()
+        }
         generation_config = instantiate_scheduleable_config(
             self.config,
             self.num_episodes,
@@ -808,6 +823,7 @@ class TrainingSession:
                 executor.submit(
                     run_generation_process_task,
                     model_state,
+                    balance_model_state,
                     generation_config.model_dump_json(),
                     self.args.verify_outcome_consistency,
                 )

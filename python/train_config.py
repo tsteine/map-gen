@@ -29,6 +29,7 @@ class ModelConfig(StrictBaseModel):
     hidden_width: int
     proposal_hidden_width: int
     missing_connect_hidden_width: int
+    missing_connect_query_summary_hidden_width: int
     door_match_embedding_width: int
     toilet_crossed_room_embedding_width: int
     num_layers: int
@@ -118,6 +119,7 @@ class FeatureConfig(StrictBaseModel):
     connection_reachability: bool
     frontier_connection_reachability: bool
     missing_connect_query: bool
+    missing_connect_query_summary: bool
     toilet_crossed_room: bool
 
 
@@ -226,6 +228,15 @@ def validate_config(config: Config) -> None:
         raise ValueError("model.proposal_hidden_width must be greater than zero")
     if config.model.missing_connect_hidden_width <= 0:
         raise ValueError("model.missing_connect_hidden_width must be greater than zero")
+    if (
+        config.features.missing_connect_query_summary
+        and config.model.missing_connect_query_summary_hidden_width <= 0
+    ):
+        raise ValueError(
+            "model.missing_connect_query_summary_hidden_width must be greater than zero"
+        )
+    if config.features.missing_connect_query_summary and not config.features.missing_connect_query:
+        raise ValueError("features.missing_connect_query_summary requires missing_connect_query")
     if (
         config.features.toilet_crossed_room
         and config.model.toilet_crossed_room_embedding_width <= 0
