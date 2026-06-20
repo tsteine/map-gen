@@ -78,8 +78,10 @@ its own step after the first output-query experiment is working.
 
 ## Step 1: Missing-Connect Frontier Query Head
 
-Start with missing-connect validity because the required per-frontier masks
-already exist.
+Start with missing-connect validity. The existing dense
+`frontier_connection_reachability` feature proves the needed reachability sets
+are already available, but the implementation should use sparse CSR-style query
+rows so memory and fan-in are controlled.
 
 Implementation shape:
 
@@ -88,15 +90,29 @@ Implementation shape:
 - Input:
   - final frontier states `X`: `[frontier_row, embedding_width]`;
   - `row_snapshot_idx`: `[frontier_row]`;
-  - `frontier_connection_reachability`: `[frontier_row, connection_output]`;
+  - missing-connect query rows, one row per unresolved connection output;
+  - bounded source frontier indices for each query row;
+  - bounded target frontier indices for each query row;
+  - source/target distance buckets or scalar distance features;
+  - full source/target counts and cap-hit indicators;
   - global pooled state, if useful.
-- For each snapshot and connection output:
-  - aggregate `X` over rows where bit 1 is set into `source_pool`;
-  - aggregate `X` over rows where bit 2 is set into `target_pool`;
+- For each missing-connect query row:
+  - `F = {frontier | r can currently reach frontier}`;
+  - `G = {frontier | frontier can currently reach s}`;
+  - rank `F` by shortest graph distance `r -> frontier`;
+  - rank `G` by shortest graph distance `frontier -> s`;
+  - keep bounded nearest frontiers on each side;
+  - aggregate `X` over bounded `F` into `source_pool`;
+  - aggregate `X` over bounded `G` into `target_pool`;
   - include count/empty features for both sets;
   - feed `[source_pool, target_pool, count_features, optional_global_state]`
     into a small MLP;
-  - add the zero-initialized output as a delta to `connection_invalid`.
+  - scatter-add the zero-initialized output as a delta to the corresponding
+    `connection_invalid` logit.
+
+The existing dense `frontier_connection_reachability` feature can remain as a
+baseline or temporary implementation aid, but the planned query representation
+should be CSR-style rather than dense `[frontier, connection]`.
 
 Initial aggregation should be cheap:
 
@@ -115,6 +131,8 @@ Risks:
 
 - Independent pooling of `F` and `G` may be too weak for the true existential
   pair condition.
+- Nearest-distance ranking may miss a farther frontier that is topologically
+  more useful.
 - Counts and empty-set indicators are important; otherwise the MLP may confuse
   "no relevant frontier" with a zero-looking aggregate.
 
@@ -124,6 +142,7 @@ Fallback/upgrade:
   Possible forms:
   - top-k frontiers from each set by learned relevance, then evaluate `k x k`
     pairs;
+  - mixed nearest/diverse frontier selection;
   - low-rank/bilinear compatibility summaries;
   - attention from one set into the other with bounded k.
 
@@ -318,6 +337,7 @@ Useful metrics:
 - number of missing-connect query rows;
 - average `F` count and `G` count;
 - fraction of empty `F` or empty `G`;
+- source/target frontier cap-hit rates;
 - per-frontier source/target query participation counts;
 - query residual magnitude by output type;
 - proposal query residual magnitude;
