@@ -1457,6 +1457,7 @@ pub struct FeatureBuffers {
     known_refill_from_room_distance: Py<PyArray2<u8>>,
     known_refill_to_room_distance: Py<PyArray2<u8>>,
     frontier: Py<PyArray2<i8>>,
+    frontier_door_variant: Py<PyArray1<DoorVariantIdx>>,
     frontier_occupancy: Py<PyArray2<u8>>,
     frontier_neighbor: Py<PyArray2<i16>>,
     frontier_neighbor_pair: Py<PyArray2<u8>>,
@@ -1570,6 +1571,7 @@ impl FeatureBuffers {
                 "known_refill_to_room_distance"
             ),
             frontier: required_py_field!(fields, "frontier"),
+            frontier_door_variant: required_py_field!(fields, "frontier_door_variant"),
             frontier_occupancy: required_py_field!(fields, "frontier_occupancy"),
             frontier_neighbor: required_py_field!(fields, "frontier_neighbor"),
             frontier_neighbor_pair: required_py_field!(fields, "frontier_neighbor_pair"),
@@ -1866,6 +1868,7 @@ struct GlobalFeatureOutputShards {
 
 struct FrontierFeatureOutputShards {
     frontier: OutputShard<i8>,
+    frontier_door_variant: OutputShard<DoorVariantIdx>,
     frontier_occupancy: OutputShard<u8>,
     frontier_neighbor: OutputShard<i16>,
     frontier_neighbor_pair: OutputShard<u8>,
@@ -1907,6 +1910,7 @@ struct GlobalFeatureOutputSlices<'a> {
 
 struct FrontierFeatureOutputSlices<'a> {
     frontier: &'a mut [i8],
+    frontier_door_variant: &'a mut [DoorVariantIdx],
     frontier_occupancy: &'a mut [u8],
     frontier_neighbor: &'a mut [i16],
     frontier_neighbor_pair: &'a mut [u8],
@@ -1976,6 +1980,7 @@ impl FrontierFeatureOutputShards {
     unsafe fn into_slices<'a>(self) -> FrontierFeatureOutputSlices<'a> {
         FrontierFeatureOutputSlices {
             frontier: unsafe { self.frontier.into_mut_slice() },
+            frontier_door_variant: unsafe { self.frontier_door_variant.into_mut_slice() },
             frontier_occupancy: unsafe { self.frontier_occupancy.into_mut_slice() },
             frontier_neighbor: unsafe { self.frontier_neighbor.into_mut_slice() },
             frontier_neighbor_pair: unsafe { self.frontier_neighbor_pair.into_mut_slice() },
@@ -2122,6 +2127,9 @@ impl FrontierFeatureOutputSlices<'_> {
             src_idx,
             FEATURE_FRONTIER_WIDTH,
         );
+        if !features.frontier_door_variant.is_empty() {
+            self.frontier_door_variant[dst_idx] = features.frontier_door_variant[src_idx];
+        }
         copy_row(
             &mut self.frontier_occupancy,
             &features.frontier_occupancy,
@@ -2579,6 +2587,7 @@ mod tests {
     fn empty_frontier_feature_output_shards() -> FrontierFeatureOutputShards {
         FrontierFeatureOutputShards {
             frontier: OutputShard::empty(),
+            frontier_door_variant: OutputShard::empty(),
             frontier_occupancy: OutputShard::empty(),
             frontier_neighbor: OutputShard::empty(),
             frontier_neighbor_pair: OutputShard::empty(),
@@ -3747,6 +3756,7 @@ impl EnvironmentGroup {
         let mut known_refill_to_room_distance =
             buffers.known_refill_to_room_distance.bind(py).readwrite();
         let mut frontier = buffers.frontier.bind(py).readwrite();
+        let mut frontier_door_variant = buffers.frontier_door_variant.bind(py).readwrite();
         let mut frontier_occupancy = buffers.frontier_occupancy.bind(py).readwrite();
         let mut frontier_neighbor = buffers.frontier_neighbor.bind(py).readwrite();
         let mut frontier_neighbor_pair = buffers.frontier_neighbor_pair.bind(py).readwrite();
@@ -3874,6 +3884,7 @@ impl EnvironmentGroup {
         let known_refill_to_room_distance_shape =
             known_refill_to_room_distance.as_array().shape().to_vec();
         let frontier_shape = frontier.as_array().shape().to_vec();
+        let frontier_door_variant_shape = frontier_door_variant.as_array().shape().to_vec();
         let frontier_occupancy_shape = frontier_occupancy.as_array().shape().to_vec();
         let frontier_neighbor_shape = frontier_neighbor.as_array().shape().to_vec();
         let frontier_neighbor_pair_shape = frontier_neighbor_pair.as_array().shape().to_vec();
@@ -3943,6 +3954,7 @@ impl EnvironmentGroup {
             || connection_reachability_shape[0] < snapshot_count
             || toilet_crossed_room_shape[0] < snapshot_count
             || frontier_shape[0] < frontier_row_count
+            || frontier_door_variant_shape[0] < frontier_row_count
             || frontier_occupancy_shape[0] < frontier_row_count
             || frontier_neighbor_shape[0] < frontier_row_count
             || frontier_neighbor_pair_shape[0] < frontier_row_count
@@ -4149,6 +4161,9 @@ impl EnvironmentGroup {
         let frontier = frontier
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("frontier must be contiguous"))?;
+        let frontier_door_variant = frontier_door_variant
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("frontier_door_variant must be contiguous"))?;
         let frontier_occupancy = frontier_occupancy
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("frontier_occupancy must be contiguous"))?;
@@ -4361,6 +4376,10 @@ impl EnvironmentGroup {
                             &mut frontier[frontier_row_start * FEATURE_FRONTIER_WIDTH
                                 ..(frontier_row_start + worker_frontier_row_count)
                                     * FEATURE_FRONTIER_WIDTH],
+                        ),
+                        frontier_door_variant: OutputShard::from_slice(
+                            &mut frontier_door_variant[frontier_row_start
+                                ..frontier_row_start + worker_frontier_row_count],
                         ),
                         frontier_occupancy: OutputShard::from_slice(
                             &mut frontier_occupancy[frontier_row_start * frontier_occupancy_width

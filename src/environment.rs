@@ -205,6 +205,7 @@ pub enum FrontierNeighborAlgorithm {
 pub struct Frontier {
     dir_door_idx: DirDoorIdx,
     door_output_idx: i16,
+    door_variant_idx: DoorVariantIdx,
     room_part_idx: RoomPartIdx,
     component: usize,
     kind: DoorKind,
@@ -267,6 +268,7 @@ pub struct FeatureConfig {
     pub frontier_position: bool,
     pub frontier_orientation: bool,
     pub frontier_kind: bool,
+    pub frontier_door_variant: bool,
     pub frontier_occupancy: bool,
     pub frontier_neighbor: bool,
     pub frontier_neighbor_position_embedding: bool,
@@ -304,6 +306,7 @@ impl FeatureConfig {
         if (self.frontier_position
             || self.frontier_orientation
             || self.frontier_kind
+            || self.frontier_door_variant
             || self.frontier_occupancy
             || self.frontier_neighbor
             || self.frontier_connection_reachability
@@ -343,6 +346,7 @@ impl FeatureConfig {
             frontier_position: true,
             frontier_orientation: true,
             frontier_kind: true,
+            frontier_door_variant: true,
             frontier_occupancy: true,
             frontier_neighbor: true,
             frontier_neighbor_position_embedding: true,
@@ -372,6 +376,7 @@ impl FeatureConfig {
             frontier_position: false,
             frontier_orientation: false,
             frontier_kind: false,
+            frontier_door_variant: false,
             frontier_occupancy: false,
             frontier_neighbor: false,
             frontier_neighbor_position_embedding: false,
@@ -405,6 +410,8 @@ pub struct Features {
     pub known_refill_to_room_distance: Vec<u8>,
     // mask, x, y, vertical, kind
     pub frontier: Vec<i8>,
+    // Door variant index for each frontier row, keyed by the unmatched door variant.
+    pub frontier_door_variant: Vec<DoorVariantIdx>,
     // Global door output index for each frontier row, or -1 when unavailable.
     pub row_door_output_idx: Vec<i16>,
     // Occupied tiles in a square window centered on each frontier, packed row-major.
@@ -2033,13 +2040,22 @@ impl Environment {
                     .map(Vec::len)
                     .sum::<usize>()
                     + door.dir_door_idx as usize;
+                let door_kind =
+                    common.room_dir_door[door.direction as usize][door.dir_door_idx as usize].kind;
+                let door_variant_idx = common.door_variant_idx(
+                    common.room[action.room_idx as usize].connection_variant_idx,
+                    door.direction,
+                    door.x,
+                    door.y,
+                    door_kind,
+                );
                 let frontier = Frontier {
                     dir_door_idx: door.dir_door_idx,
                     door_output_idx: door_output_idx as i16,
+                    door_variant_idx,
                     room_part_idx: frontier_part,
                     component: self.room_part_component(common, action.room_idx, door.part_idx),
-                    kind: common.room_dir_door[door.direction as usize][door.dir_door_idx as usize]
-                        .kind,
+                    kind: door_kind,
                     candidates,
                 };
                 self.room_part_frontier_distance_cache.add_frontier_part(
@@ -3107,6 +3123,7 @@ impl Environment {
                     Frontier {
                         dir_door_idx: frontier.dir_door_idx,
                         door_output_idx: frontier.door_output_idx,
+                        door_variant_idx: frontier.door_variant_idx,
                         room_part_idx: frontier.room_part_idx,
                         component: frontier.component,
                         kind: frontier.kind,
@@ -3285,6 +3302,11 @@ impl Environment {
         let (known_refill_from_room_distance, known_refill_to_room_distance) =
             self.known_save_refill_distance_features(common, &self.room_part_refill_distance_cache);
         let mut frontier = vec![0; frontier_count * FEATURE_FRONTIER_WIDTH];
+        let mut frontier_door_variant = if config.frontier_door_variant {
+            vec![0; frontier_count]
+        } else {
+            vec![]
+        };
         let frontier_window_area = frontier_window_size * frontier_window_size;
         let packed_frontier_window_size = frontier_window_area.div_ceil(8);
         let mut frontier_occupancy = if config.frontier_occupancy {
@@ -3354,6 +3376,9 @@ impl Environment {
             }
             if config.frontier_kind {
                 frontier[row + 4] = data.kind;
+            }
+            if config.frontier_door_variant {
+                frontier_door_variant[idx] = data.door_variant_idx;
             }
             if !config.frontier_occupancy {
                 continue;
@@ -3618,6 +3643,7 @@ impl Environment {
             known_refill_from_room_distance,
             known_refill_to_room_distance,
             frontier,
+            frontier_door_variant,
             row_door_output_idx,
             frontier_occupancy,
             frontier_neighbor,
@@ -4273,6 +4299,7 @@ mod tests {
             Frontier {
                 dir_door_idx: 0,
                 door_output_idx: -1,
+                door_variant_idx: 0,
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
@@ -4284,6 +4311,7 @@ mod tests {
             Frontier {
                 dir_door_idx: 0,
                 door_output_idx: -1,
+                door_variant_idx: 0,
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
@@ -5615,6 +5643,7 @@ mod tests {
             Frontier {
                 dir_door_idx: 0,
                 door_output_idx: -1,
+                door_variant_idx: 0,
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
@@ -5685,6 +5714,7 @@ mod tests {
                 Frontier {
                     dir_door_idx: 0,
                     door_output_idx: -1,
+                    door_variant_idx: 0,
                     room_part_idx: frontier_part,
                     component: 0,
                     kind: 0,
@@ -6421,7 +6451,18 @@ mod tests {
             .iter()
             .position(|output| output.room_idx == 0)
             .unwrap() as i16;
+        let placed_door_variant_idx = common.door_variant_idx(
+            common.room[0].connection_variant_idx,
+            Direction::Right,
+            0,
+            0,
+            0,
+        );
         assert_eq!(features.row_door_output_idx, vec![placed_door_output_idx]);
+        assert_eq!(
+            features.frontier_door_variant,
+            vec![placed_door_variant_idx]
+        );
 
         env.step(
             Action {

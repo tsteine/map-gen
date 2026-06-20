@@ -75,7 +75,7 @@
   "features": {
     "inventory": true,
     "temperature": true,
-    "recommended_candidates": true,
+    "recommended_candidates": false,
     "lookahead_outcomes": true,
     "room_position": true,
     "global_room_position": true,
@@ -87,6 +87,7 @@
     "frontier_position": true,
     "frontier_orientation": true,
     "frontier_kind": true,
+    "frontier_door_variant": true,
     "frontier_occupancy": true,
     "frontier_neighbor": true,
     "frontier_neighbor_position_embedding": true,

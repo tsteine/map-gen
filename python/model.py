@@ -631,6 +631,11 @@ class FrontierModel(torch.nn.Module):
         self.kind_embedding = (
             torch.nn.Embedding(256, embedding_width) if self.features.frontier_kind else None
         )
+        self.frontier_door_variant_embedding = (
+            torch.nn.Embedding(output_metadata.num_door_variants, embedding_width)
+            if self.features.frontier_door_variant
+            else None
+        )
         node_numeric_width = (
             frontier_window_size**2 * self.features.frontier_occupancy
             + 2 * self.num_connection_outputs * self.features.frontier_connection_reachability
@@ -1155,6 +1160,10 @@ class FrontierModel(torch.nn.Module):
             X = X + self.orientation_embedding(node[:, 3].to(torch.int64)).to(dtype)
         if self.kind_embedding is not None:
             X = X + self.kind_embedding(node[:, 4].to(torch.int64)).to(dtype)
+        if self.frontier_door_variant_embedding is not None:
+            X = X + self.frontier_door_variant_embedding(
+                features.frontier_features.frontier_door_variant.to(torch.int64)
+            ).to(dtype)
         if row_count == 0:
             row_count_by_snapshot = torch.zeros(
                 [snapshot_count],

@@ -112,6 +112,7 @@ class FeatureConfig(StrictBaseModel):
     frontier_position: bool
     frontier_orientation: bool
     frontier_kind: bool
+    frontier_door_variant: bool
     frontier_occupancy: bool
     frontier_neighbor: bool
     frontier_neighbor_position_embedding: bool
@@ -348,6 +349,7 @@ def validate_config(config: Config) -> None:
         config.features.frontier_position
         or config.features.frontier_orientation
         or config.features.frontier_kind
+        or config.features.frontier_door_variant
         or config.features.frontier_occupancy
         or config.features.frontier_neighbor
         or config.features.frontier_connection_reachability

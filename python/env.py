@@ -545,6 +545,7 @@ class GlobalFeatures:
 @dataclass
 class FrontierFeatures:
     frontier: torch.Tensor
+    frontier_door_variant: torch.Tensor
     frontier_occupancy: torch.Tensor
     frontier_neighbor: torch.Tensor
     frontier_neighbor_pair: torch.Tensor
@@ -556,6 +557,9 @@ class FrontierFeatures:
     def to(self, device: torch.device, non_blocking: bool = False) -> "FrontierFeatures":
         return FrontierFeatures(
             frontier=self.frontier.to(device, non_blocking=non_blocking),
+            frontier_door_variant=self.frontier_door_variant.to(
+                device, non_blocking=non_blocking
+            ),
             frontier_occupancy=self.frontier_occupancy.to(device, non_blocking=non_blocking),
             frontier_neighbor=self.frontier_neighbor.to(device, non_blocking=non_blocking),
             frontier_neighbor_pair=self.frontier_neighbor_pair.to(
@@ -571,6 +575,7 @@ class FrontierFeatures:
 
     def mark_dynamic(self) -> None:
         torch._dynamo.maybe_mark_dynamic(self.frontier, 0)
+        torch._dynamo.maybe_mark_dynamic(self.frontier_door_variant, 0)
         torch._dynamo.maybe_mark_dynamic(self.frontier_occupancy, 0)
         torch._dynamo.maybe_mark_dynamic(self.frontier_neighbor, 0)
         torch._dynamo.maybe_mark_dynamic(self.frontier_neighbor_pair, 0)
@@ -1092,6 +1097,7 @@ class EnvironmentGroup:
                         feature_slot.known_refill_to_room_distance.numpy()
                     ),
                     "frontier": feature_slot.frontier.numpy(),
+                    "frontier_door_variant": feature_slot.frontier_door_variant.numpy(),
                     "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
                     "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),
                     "frontier_neighbor_pair": feature_slot.frontier_neighbor_pair.numpy(),
@@ -1211,6 +1217,7 @@ class FeatureSlot:
         self.known_refill_from_room_distance = None
         self.known_refill_to_room_distance = None
         self.frontier = None
+        self.frontier_door_variant = None
         self.frontier_occupancy = None
         self.frontier_neighbor = None
         self.frontier_neighbor_pair = None
@@ -1294,6 +1301,7 @@ class FeatureSlot:
             (self.snapshot_capacity, self.known_distance_width), torch.uint8
         )
         self.frontier = self._empty((self.frontier_row_capacity, 5), torch.int8)
+        self.frontier_door_variant = self._empty((self.frontier_row_capacity,), torch.int16)
         self.frontier_occupancy = self._empty(
             (self.frontier_row_capacity, self.frontier_occupancy_width), torch.uint8
         )
@@ -1469,6 +1477,7 @@ class FeatureSlot:
             ),
             frontier_features=FrontierFeatures(
                 frontier=self.frontier[:frontier_row_count],
+                frontier_door_variant=self.frontier_door_variant[:frontier_row_count],
                 frontier_occupancy=self.frontier_occupancy[:frontier_row_count],
                 frontier_neighbor=self.frontier_neighbor[:frontier_row_count],
                 frontier_neighbor_pair=self.frontier_neighbor_pair[:frontier_row_count],
@@ -1625,6 +1634,7 @@ class FeatureSlot:
             ),
             frontier_features=FrontierFeatures(
                 frontier=self.frontier[:frontier_row_count],
+                frontier_door_variant=self.frontier_door_variant[:frontier_row_count],
                 frontier_occupancy=self.frontier_occupancy[:frontier_row_count],
                 frontier_neighbor=self.frontier_neighbor[:frontier_row_count],
                 frontier_neighbor_pair=self.frontier_neighbor_pair[:frontier_row_count],
@@ -1742,6 +1752,7 @@ def extract_candidate_features(
                     feature_slot.known_refill_to_room_distance.numpy()
                 ),
                 "frontier": feature_slot.frontier.numpy(),
+                "frontier_door_variant": feature_slot.frontier_door_variant.numpy(),
                 "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
                 "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),
                 "frontier_neighbor_pair": feature_slot.frontier_neighbor_pair.numpy(),
