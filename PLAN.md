@@ -73,13 +73,13 @@ under-calibrated.
 Also expose query information to the proposal state. Query heads can improve
 full-scored logits, but proposal scoring only sees the frontier proposal state.
 If query information is absent from that state, proposal distillation can only
-learn an incomplete approximation. The first implementation should therefore
-include a conservative proposal-query summary path.
+learn an incomplete approximation. The proposal-query summary should be added as
+its own step after the first output-query experiment is working.
 
 ## Step 1: Missing-Connect Frontier Query Head
 
-Start with missing-connect validity and a matching proposal-query summary
-because the required per-frontier masks already exist.
+Start with missing-connect validity because the required per-frontier masks
+already exist.
 
 Implementation shape:
 
@@ -110,8 +110,6 @@ Expected benefit:
 
 - Missing-connect validity gets direct access to the frontier states that can
   satisfy the connection.
-- Proposal learning gets a direct signal for which frontiers participate in
-  currently important missing-connect queries.
 
 Risks:
 
@@ -129,10 +127,12 @@ Fallback/upgrade:
   - low-rank/bilinear compatibility summaries;
   - attention from one set into the other with bounded k.
 
-### Proposal Query Summary
+## Step 2: Proposal Query Summary
 
-In parallel with the output query, construct per-frontier summaries of query
-participation:
+After the missing-connect output query head is working, expose the same query
+information to proposal scoring.
+
+Construct per-frontier summaries of query participation:
 
 - source-side participation: missing-connect queries where the frontier is in
   `F`;
@@ -171,7 +171,7 @@ Later, if the late summary helps but is too weak, try early query conditioning:
 - keep this behind a separate toggle because it changes the shared frontier
   representation.
 
-## Step 2: Missing-Connect Distance Query
+## Step 3: Missing-Connect Distance Query
 
 After validity is stable, use the same query inputs for
 `missing_connect_distance`.
@@ -187,7 +187,7 @@ configs set `missing_connect_distance_weight` and
 `reward_missing_connect_distance` to zero, so validity is the more important
 first target.
 
-## Step 3: Early Query Conditioning Experiment
+## Step 4: Early Query Conditioning Experiment
 
 Only try this after the late proposal-query summary is understood.
 
@@ -216,7 +216,7 @@ Risks:
 
 Use a separate toggle and compare against late-only integration.
 
-## Step 4: Save/Refill Frontier Query Heads
+## Step 5: Save/Refill Frontier Query Heads
 
 Apply the same idea to save/refill utilities, but do not assume the current
 feature set is sufficient.
@@ -263,7 +263,7 @@ Output integration:
 - Add matching proposal-query summaries for frontiers that participate in
   save/refill query sets.
 
-## Step 5: Diagnostics And Ablations
+## Step 6: Diagnostics And Ablations
 
 Add toggles before enabling multiple heads at once:
 
@@ -299,8 +299,8 @@ Important ablations:
 - Keep output tensor shapes unchanged.
 - Keep config/checkpoint changes explicit and required.
 - Prefer zero-initialized residuals over hard replacement.
-- Keep the first implementation focused on missing-connect validity plus late
-  proposal-query summaries because the feature masks already exist.
+- Keep the first implementation focused on missing-connect validity because the
+  feature masks already exist.
 - Avoid dense pairwise frontier computations unless the cheap pooled query is
   shown to be insufficient.
 - Avoid reintroducing room-part graph nodes or room-part message passing.
