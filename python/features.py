@@ -25,6 +25,7 @@ class FeatureContext:
     num_connection_outputs: int
     door_counts: tuple[int, int, int, int]
     frontier_window_area: int
+    hidden_width: int
 
 
 class GlobalFeature(torch.nn.Module, ABC):
@@ -66,6 +67,48 @@ class FrontierNodeFeature(torch.nn.Module, ABC):
 
     @abstractmethod
     def forward(self, features: Features, dtype: torch.dtype) -> torch.Tensor:
+        raise NotImplementedError
+
+
+class FrontierPairInputFeature(torch.nn.Module, ABC):
+    @classmethod
+    @abstractmethod
+    def is_enabled(cls, config: FeatureConfig) -> bool:
+        raise NotImplementedError
+
+    @classmethod
+    @abstractmethod
+    def tensor_width(cls, context: FeatureContext) -> int:
+        raise NotImplementedError
+
+    @classmethod
+    @abstractmethod
+    def build(cls, context: FeatureContext) -> FrontierPairInputFeature:
+        raise NotImplementedError
+
+    @abstractmethod
+    def forward(self, features: Features, dtype: torch.dtype) -> torch.Tensor:
+        raise NotImplementedError
+
+
+class FrontierPairMessageFeature(torch.nn.Module, ABC):
+    @classmethod
+    @abstractmethod
+    def is_enabled(cls, config: FeatureConfig) -> bool:
+        raise NotImplementedError
+
+    @classmethod
+    @abstractmethod
+    def build(cls, context: FeatureContext) -> FrontierPairMessageFeature:
+        raise NotImplementedError
+
+    @abstractmethod
+    def forward(
+        self,
+        features: Features,
+        neighbor: torch.Tensor,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
         raise NotImplementedError
 
 
@@ -683,10 +726,77 @@ class FrontierDoorVariantFeature(FrontierNodeFeature):
         ).to(dtype)
 
 
+class FrontierNeighborFlagsFeature(FrontierPairInputFeature):
+    @classmethod
+    def is_enabled(cls, config: FeatureConfig) -> bool:
+        return config.frontier_neighbor_flags
+
+    @classmethod
+    def tensor_width(cls, context: FeatureContext) -> int:
+        return 3
+
+    @classmethod
+    def build(cls, context: FeatureContext) -> FrontierNeighborFlagsFeature:
+        return cls()
+
+    def forward(self, features: Features, dtype: torch.dtype) -> torch.Tensor:
+        flags = features.frontier_features.frontier_neighbor_pair
+        return torch.stack(
+            [
+                (flags & 1 != 0).to(dtype),
+                (flags & 2 != 0).to(dtype),
+                (flags & 4 != 0).to(dtype),
+            ],
+            dim=-1,
+        )
+
+
+class FrontierRelativePositionFeature(FrontierPairMessageFeature):
+    def __init__(self, hidden_width: int):
+        super().__init__()
+        self.embedding_x = torch.nn.Parameter(
+            torch.randn([NUM_COORD_VALUES, hidden_width]) / math.sqrt(hidden_width)
+        )
+        self.embedding_y = torch.nn.Parameter(
+            torch.randn([NUM_COORD_VALUES, hidden_width]) / math.sqrt(hidden_width)
+        )
+
+    @classmethod
+    def is_enabled(cls, config: FeatureConfig) -> bool:
+        return config.frontier_neighbor_position_embedding
+
+    @classmethod
+    def build(cls, context: FeatureContext) -> FrontierRelativePositionFeature:
+        return cls(context.hidden_width)
+
+    def forward(
+        self,
+        features: Features,
+        neighbor: torch.Tensor,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        node = features.frontier_features.frontier
+        raw_x = node[:, 1].to(torch.int64)
+        raw_y = node[:, 2].to(torch.int64)
+        raw_x0, raw_x1 = raw_x.unsqueeze(1), raw_x[neighbor]
+        raw_y0, raw_y1 = raw_y.unsqueeze(1), raw_y[neighbor]
+        x = raw_x1 - raw_x0 + COORD_OFFSET
+        y = raw_y1 - raw_y0 + COORD_OFFSET
+        return self.embedding_x[x].to(dtype) + self.embedding_y[y].to(dtype)
+
+
 FRONTIER_NODE_FEATURES: list[type[FrontierNodeFeature]] = [
     FrontierNodeNumericFeature,
     FrontierPositionFeature,
     FrontierOrientationFeature,
     FrontierKindFeature,
     FrontierDoorVariantFeature,
+]
+
+FRONTIER_PAIR_INPUT_FEATURES: list[type[FrontierPairInputFeature]] = [
+    FrontierNeighborFlagsFeature,
+]
+
+FRONTIER_PAIR_MESSAGE_FEATURES: list[type[FrontierPairMessageFeature]] = [
+    FrontierRelativePositionFeature,
 ]

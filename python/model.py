@@ -9,6 +9,8 @@ from env import OutputMetadata, Features
 from features import (
     COORD_OFFSET,
     FRONTIER_NODE_FEATURES,
+    FRONTIER_PAIR_INPUT_FEATURES,
+    FRONTIER_PAIR_MESSAGE_FEATURES,
     GLOBAL_FEATURES,
     NUM_COORD_VALUES,
     FeatureContext,
@@ -620,6 +622,7 @@ class FrontierModel(torch.nn.Module):
             num_connection_outputs=self.num_connection_outputs,
             door_counts=(self.left_count, self.right_count, self.up_count, self.down_count),
             frontier_window_area=frontier_window_size**2,
+            hidden_width=hidden_width,
         )
         frontier_node_feature_classes = [
             feature_class
@@ -641,7 +644,28 @@ class FrontierModel(torch.nn.Module):
             if frontier_node_width > 0
             else None
         )
-        pair_width = 3 * self.features.frontier_neighbor_flags
+        frontier_pair_input_feature_classes = [
+            feature_class
+            for feature_class in FRONTIER_PAIR_INPUT_FEATURES
+            if feature_class.is_enabled(features)
+        ]
+        pair_width = sum(
+            feature_class.tensor_width(feature_context)
+            for feature_class in frontier_pair_input_feature_classes
+        )
+        self.frontier_pair_input_features = torch.nn.ModuleList(
+            [
+                feature_class.build(feature_context)
+                for feature_class in frontier_pair_input_feature_classes
+            ]
+        )
+        self.frontier_pair_message_features = torch.nn.ModuleList(
+            [
+                feature_class.build(feature_context)
+                for feature_class in FRONTIER_PAIR_MESSAGE_FEATURES
+                if feature_class.is_enabled(features)
+            ]
+        )
         use_neighbors = self.features.frontier_neighbor
         self.source_message_layers = torch.nn.ModuleList(
             [
@@ -708,20 +732,6 @@ class FrontierModel(torch.nn.Module):
                 torch.nn.Linear(hidden_width, embedding_width, bias=False),
             )
         )
-        self.frontier_relative_pos_embedding_x = (
-            torch.nn.Parameter(
-                torch.randn([NUM_COORD_VALUES, hidden_width]) / math.sqrt(hidden_width)
-            )
-            if self.features.frontier_neighbor_position_embedding
-            else None
-        )
-        self.frontier_relative_pos_embedding_y = (
-            torch.nn.Parameter(
-                torch.randn([NUM_COORD_VALUES, hidden_width]) / math.sqrt(hidden_width)
-            )
-            if self.features.frontier_neighbor_position_embedding
-            else None
-        )
         self.pos_embedding_x = torch.nn.Parameter(
             torch.randn([NUM_COORD_VALUES, embedding_width]) / math.sqrt(embedding_width)
         )
@@ -786,39 +796,19 @@ class FrontierModel(torch.nn.Module):
 
     def _pair_features(self, features, dtype):
         values = []
-        if self.features.frontier_neighbor_flags:
-            flags = features.frontier_features.frontier_neighbor_pair
-            values.append(
-                torch.stack(
-                    [
-                        (flags & 1 != 0).to(dtype),
-                        (flags & 2 != 0).to(dtype),
-                        (flags & 4 != 0).to(dtype),
-                    ],
-                    dim=-1,
-                )
-            )
+        for pair_input_feature in self.frontier_pair_input_features:
+            values.append(pair_input_feature(features, dtype))
         return torch.cat(values, dim=-1) if values else None
 
     def _activation_dtype(self, device: torch.device) -> torch.dtype:
         return activation_dtype(device, next(self.parameters()).dtype)
 
-    def _relative_position_features(self, features, neighbor):
-        if self.frontier_relative_pos_embedding_x is None:
-            return None
-        node = features.frontier_features.frontier
-        raw_x = node[:, 1].to(torch.int64)
-        raw_y = node[:, 2].to(torch.int64)
-        raw_x0, raw_x1 = raw_x.unsqueeze(1), raw_x[neighbor]
-        raw_y0, raw_y1 = raw_y.unsqueeze(1), raw_y[neighbor]
-        return self._position_embedding(
-            raw_x1 - raw_x0,
-            raw_y1 - raw_y0,
-            self.frontier_relative_pos_embedding_x,
-            self.frontier_relative_pos_embedding_y,
-            self._activation_dtype(features.frontier_features.frontier.device),
-            COORD_OFFSET,
-        )
+    def _pair_message_features(self, features, neighbor, dtype):
+        value = None
+        for pair_message_feature in self.frontier_pair_message_features:
+            feature_value = pair_message_feature(features, neighbor, dtype)
+            value = feature_value if value is None else value + feature_value
+        return value
 
     def forward(
         self,
@@ -877,15 +867,15 @@ class FrontierModel(torch.nn.Module):
             neighbor_valid = (frontier_neighbor >= 0) & (local_neighbor < row_neighbor_count)
             neighbor = row_start_by_snapshot[row_snapshot_idx].unsqueeze(1) + local_neighbor
             pair_mask = neighbor_valid.unsqueeze(-1)
-            relative_position = self._relative_position_features(features, neighbor)
+            pair_message = self._pair_message_features(features, neighbor, dtype)
             single_neighbor = neighbor.shape[1] == 1
             if single_neighbor:
                 neighbor = neighbor[:, 0]
                 pair_mask = pair_mask[:, 0]
                 if pair is not None:
                     pair = pair[:, 0]
-                if relative_position is not None:
-                    relative_position = relative_position[:, 0]
+                if pair_message is not None:
+                    pair_message = pair_message[:, 0]
             else:
                 pair_count = pair_mask.sum(1).clamp_min(1)
             global_rows = global_state[row_snapshot_idx]
@@ -900,8 +890,8 @@ class FrontierModel(torch.nn.Module):
                 # Gather each frontier's neighbors: source: [r, k, h]
                 source = source[neighbor]
                 messages = source if pair_layer is None else source + pair_layer(pair)
-                if relative_position is not None:
-                    messages = messages + relative_position
+                if pair_message is not None:
+                    messages = messages + pair_message
                 messages = output_layer(messages) * pair_mask
                 if not single_neighbor:
                     # messages: [r, k, e]
