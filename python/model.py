@@ -230,20 +230,17 @@ class ProposalOutput(torch.nn.Module):
 
 
 class MissingConnectFrontierQueryHead(torch.nn.Module):
-    base_scalar_width = 10
+    scalar_width = 10
 
     def __init__(
         self,
         embedding_width: int,
         global_embedding_width: int,
         hidden_width: int,
-        include_current_distance: bool,
     ):
         super().__init__()
         if hidden_width <= 0:
             raise ValueError("missing_connect_hidden_width must be greater than zero")
-        self.include_current_distance = include_current_distance
-        self.scalar_width = self.base_scalar_width + int(include_current_distance)
         self.layers = torch.nn.Sequential(
             torch.nn.Linear(embedding_width * 4 + global_embedding_width + self.scalar_width, hidden_width, bias=False),
             torch.nn.GELU(),
@@ -332,15 +329,7 @@ class MissingConnectFrontierQueryHead(torch.nn.Module):
                 target_min_distance,
                 (source_count > 0).to(frontier_state.dtype).unsqueeze(1),
                 (target_count > 0).to(frontier_state.dtype).unsqueeze(1),
-            ]
-            + (
-                [
-                    torch.log1p(query.current_distance.to(frontier_state.dtype)).unsqueeze(1)
-                    / math.log(256.0)
-                ]
-                if self.include_current_distance
-                else []
-            ),
+            ],
             dim=1,
         )
         query_logits = self.layers(
@@ -361,6 +350,163 @@ class MissingConnectFrontierQueryHead(torch.nn.Module):
         )
         output = frontier_state.new_zeros([snapshot_count * connection_output_count])
         output.index_copy_(0, flat_idx, query_logits)
+        mask = torch.zeros_like(output, dtype=torch.bool)
+        mask[flat_idx] = True
+        return output.view(snapshot_count, 1, connection_output_count), mask.view(
+            snapshot_count,
+            1,
+            connection_output_count,
+        )
+
+
+class MissingConnectUtilityPairQueryHead(torch.nn.Module):
+    scalar_width = 4
+    max_distance_index = 510
+    unreachable_distance = 255
+
+    def __init__(
+        self,
+        embedding_width: int,
+        global_embedding_width: int,
+        hidden_width: int,
+    ):
+        super().__init__()
+        if hidden_width <= 0:
+            raise ValueError("missing_connect_hidden_width must be greater than zero")
+        self.total_distance_embedding = torch.nn.Embedding(self.max_distance_index + 1, 1)
+        self.margin_embedding = torch.nn.Embedding(self.max_distance_index + 1, 1)
+        self.pair_layers = torch.nn.Sequential(
+            torch.nn.Linear(embedding_width * 2 + 2, hidden_width, bias=False),
+            torch.nn.GELU(),
+            torch.nn.Linear(hidden_width, hidden_width, bias=False),
+        )
+        self.output_layers = torch.nn.Sequential(
+            torch.nn.Linear(hidden_width * 2 + global_embedding_width + self.scalar_width, hidden_width, bias=False),
+            torch.nn.GELU(),
+            torch.nn.Linear(hidden_width, 1, bias=False),
+        )
+        self.output_layers[-1].weight.data.zero_()
+
+    def _gather(
+        self,
+        frontier_state: torch.Tensor,
+        frontier: torch.Tensor,
+        query_snapshot_idx: torch.Tensor,
+        row_count_by_snapshot: torch.Tensor,
+        row_start_by_snapshot: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        local_frontier = frontier.to(torch.int64)
+        safe_local_frontier = local_frontier.clamp_min(0)
+        row_count = row_count_by_snapshot[query_snapshot_idx].unsqueeze(1)
+        valid = (local_frontier >= 0) & (safe_local_frontier < row_count)
+        packed_frontier = row_start_by_snapshot[query_snapshot_idx].unsqueeze(1) + safe_local_frontier
+        packed_frontier = packed_frontier.clamp_max(max(frontier_state.shape[0] - 1, 0))
+        return frontier_state[packed_frontier], valid
+
+    def forward(
+        self,
+        frontier_state: torch.Tensor,
+        global_state: torch.Tensor,
+        row_count_by_snapshot: torch.Tensor,
+        row_start_by_snapshot: torch.Tensor,
+        query,
+        connection_output_count: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        query_count = query.query_connection_idx.shape[0]
+        snapshot_count = global_state.shape[0]
+        if query_count == 0 or frontier_state.shape[0] == 0:
+            return (
+                frontier_state.new_zeros([snapshot_count, 1, connection_output_count]),
+                torch.zeros(
+                    [snapshot_count, 1, connection_output_count],
+                    dtype=torch.bool,
+                    device=frontier_state.device,
+                ),
+            )
+        query_snapshot_idx = query.query_snapshot_idx.to(torch.int64)
+        source_state, source_valid = self._gather(
+            frontier_state,
+            query.source_frontier,
+            query_snapshot_idx,
+            row_count_by_snapshot,
+            row_start_by_snapshot,
+        )
+        target_state, target_valid = self._gather(
+            frontier_state,
+            query.target_frontier,
+            query_snapshot_idx,
+            row_count_by_snapshot,
+            row_start_by_snapshot,
+        )
+        pair_valid = source_valid.unsqueeze(2) & target_valid.unsqueeze(1)
+        pair_source_state = source_state.unsqueeze(2).expand(
+            -1, -1, target_state.shape[1], -1
+        )
+        pair_target_state = target_state.unsqueeze(1).expand(
+            -1, source_state.shape[1], -1, -1
+        )
+        source_distance = query.source_distance.to(torch.int16)
+        target_distance = query.target_distance.to(torch.int16)
+        total_distance = source_distance.unsqueeze(2) + target_distance.unsqueeze(1)
+        total_distance_idx = total_distance.clamp(0, self.max_distance_index).to(torch.int64)
+        current_distance = query.current_distance.to(torch.int16).view(query_count, 1, 1)
+        finite_current = current_distance != self.unreachable_distance
+        finite_margin_idx = (current_distance - total_distance + 255).clamp(
+            0,
+            self.max_distance_index - 1,
+        )
+        margin_idx = torch.where(
+            finite_current,
+            finite_margin_idx,
+            torch.full_like(finite_margin_idx, self.max_distance_index),
+        ).to(torch.int64)
+        total_distance_embedding = self.total_distance_embedding(total_distance_idx).to(
+            frontier_state.dtype
+        )
+        margin_embedding = self.margin_embedding(margin_idx).to(frontier_state.dtype)
+        pair_embedding = self.pair_layers(
+            torch.cat(
+                [
+                    pair_source_state,
+                    pair_target_state,
+                    total_distance_embedding,
+                    margin_embedding,
+                ],
+                dim=-1,
+            )
+        )
+        pair_mask = pair_valid.unsqueeze(-1)
+        pair_count = pair_mask.sum(dim=(1, 2)).clamp_min(1)
+        pair_mean = (pair_embedding * pair_mask).sum(dim=(1, 2)) / pair_count
+        pair_max = pair_embedding.masked_fill(~pair_mask, -torch.inf).amax(dim=(1, 2))
+        pair_max = torch.where(torch.isfinite(pair_max), pair_max, 0)
+        source_count = query.source_count.to(frontier_state.dtype)
+        target_count = query.target_count.to(frontier_state.dtype)
+        scalar = torch.cat(
+            [
+                torch.log1p(source_count).unsqueeze(1) / math.log(65536.0),
+                torch.log1p(target_count).unsqueeze(1) / math.log(65536.0),
+                query.source_cap_hit.to(frontier_state.dtype).unsqueeze(1),
+                query.target_cap_hit.to(frontier_state.dtype).unsqueeze(1),
+            ],
+            dim=1,
+        )
+        query_utility = self.output_layers(
+            torch.cat(
+                [
+                    pair_mean,
+                    pair_max,
+                    global_state[query_snapshot_idx],
+                    scalar,
+                ],
+                dim=1,
+            )
+        ).squeeze(1)
+        flat_idx = query_snapshot_idx * connection_output_count + query.query_connection_idx.to(
+            torch.int64
+        )
+        output = frontier_state.new_zeros([snapshot_count * connection_output_count])
+        output.index_copy_(0, flat_idx, query_utility)
         mask = torch.zeros_like(output, dtype=torch.bool)
         mask[flat_idx] = True
         return output.view(snapshot_count, 1, connection_output_count), mask.view(
@@ -757,17 +903,15 @@ class FrontierModel(torch.nn.Module):
                 embedding_width,
                 global_embedding_width,
                 missing_connect_hidden_width,
-                include_current_distance=False,
             )
             if self.features.missing_connect_query
             else None
         )
         self.missing_connect_utility_query_output = (
-            MissingConnectFrontierQueryHead(
+            MissingConnectUtilityPairQueryHead(
                 embedding_width,
                 global_embedding_width,
                 missing_connect_hidden_width,
-                include_current_distance=True,
             )
             if self.features.missing_connect_utility_query
             else None

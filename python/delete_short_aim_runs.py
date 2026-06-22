@@ -3,7 +3,7 @@ import argparse
 import sys
 
 
-MAX_DURATION_SECONDS = 30 * 60
+MAX_DURATION_SECONDS = 40 * 60
 
 
 def parse_args() -> argparse.Namespace:
