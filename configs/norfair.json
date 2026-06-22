@@ -16,7 +16,7 @@
     "proposal_hidden_width": 512,
     "missing_connect_hidden_width": 256,
     "missing_connect_query_summary_hidden_width": 256,
-    "num_layers": 4
+    "num_layers": 8
   },
   "optimizer": {
     "type": "muon",
@@ -63,7 +63,7 @@
     "reward_refill_distance": 0.0,
     "reward_missing_connect_distance": 0.0,
     "frontier_neighbor_algorithm": "nearest-exclusive",
-    "frontier_neighbor_count": 1,
+    "frontier_neighbor_count": 4,
     "frontier_window_size": 8,
     "missing_connect_query_frontier_count": 4,
     "candidate_spatial_cell_size": 8,
