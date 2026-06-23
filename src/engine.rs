@@ -1496,14 +1496,13 @@ pub struct FeatureBuffers {
     missing_connect_query_target_cap_hit: Py<PyArray1<u8>>,
     missing_connect_utility_query_snapshot_idx: Py<PyArray1<i64>>,
     missing_connect_utility_query_connection_idx: Py<PyArray1<i64>>,
-    missing_connect_utility_query_source_frontier: Py<PyArray2<i16>>,
-    missing_connect_utility_query_target_frontier: Py<PyArray2<i16>>,
-    missing_connect_utility_query_source_distance: Py<PyArray2<u8>>,
-    missing_connect_utility_query_target_distance: Py<PyArray2<u8>>,
+    missing_connect_utility_query_pair_source_frontier: Py<PyArray2<i16>>,
+    missing_connect_utility_query_pair_target_frontier: Py<PyArray2<i16>>,
+    missing_connect_utility_query_pair_total_distance: Py<PyArray2<u16>>,
     missing_connect_utility_query_source_count: Py<PyArray1<u16>>,
     missing_connect_utility_query_target_count: Py<PyArray1<u16>>,
-    missing_connect_utility_query_source_cap_hit: Py<PyArray1<u8>>,
-    missing_connect_utility_query_target_cap_hit: Py<PyArray1<u8>>,
+    missing_connect_utility_query_pair_count: Py<PyArray1<u16>>,
+    missing_connect_utility_query_pair_cap_hit: Py<PyArray1<u8>>,
     missing_connect_utility_query_current_distance: Py<PyArray1<u8>>,
     toilet_crossed_room_idx: Py<PyArray2<i16>>,
     row_snapshot_idx: Py<PyArray1<i64>>,
@@ -1668,21 +1667,17 @@ impl FeatureBuffers {
                 fields,
                 "missing_connect_utility_query_connection_idx"
             ),
-            missing_connect_utility_query_source_frontier: required_py_field!(
+            missing_connect_utility_query_pair_source_frontier: required_py_field!(
                 fields,
-                "missing_connect_utility_query_source_frontier"
+                "missing_connect_utility_query_pair_source_frontier"
             ),
-            missing_connect_utility_query_target_frontier: required_py_field!(
+            missing_connect_utility_query_pair_target_frontier: required_py_field!(
                 fields,
-                "missing_connect_utility_query_target_frontier"
+                "missing_connect_utility_query_pair_target_frontier"
             ),
-            missing_connect_utility_query_source_distance: required_py_field!(
+            missing_connect_utility_query_pair_total_distance: required_py_field!(
                 fields,
-                "missing_connect_utility_query_source_distance"
-            ),
-            missing_connect_utility_query_target_distance: required_py_field!(
-                fields,
-                "missing_connect_utility_query_target_distance"
+                "missing_connect_utility_query_pair_total_distance"
             ),
             missing_connect_utility_query_source_count: required_py_field!(
                 fields,
@@ -1692,13 +1687,13 @@ impl FeatureBuffers {
                 fields,
                 "missing_connect_utility_query_target_count"
             ),
-            missing_connect_utility_query_source_cap_hit: required_py_field!(
+            missing_connect_utility_query_pair_count: required_py_field!(
                 fields,
-                "missing_connect_utility_query_source_cap_hit"
+                "missing_connect_utility_query_pair_count"
             ),
-            missing_connect_utility_query_target_cap_hit: required_py_field!(
+            missing_connect_utility_query_pair_cap_hit: required_py_field!(
                 fields,
-                "missing_connect_utility_query_target_cap_hit"
+                "missing_connect_utility_query_pair_cap_hit"
             ),
             missing_connect_utility_query_current_distance: required_py_field!(
                 fields,
@@ -2267,14 +2262,13 @@ struct FeatureOutputShards {
     missing_connect_query_target_cap_hit: OutputShard<u8>,
     missing_connect_utility_query_snapshot_idx: OutputShard<i64>,
     missing_connect_utility_query_connection_idx: OutputShard<i64>,
-    missing_connect_utility_query_source_frontier: OutputShard<i16>,
-    missing_connect_utility_query_target_frontier: OutputShard<i16>,
-    missing_connect_utility_query_source_distance: OutputShard<u8>,
-    missing_connect_utility_query_target_distance: OutputShard<u8>,
+    missing_connect_utility_query_pair_source_frontier: OutputShard<i16>,
+    missing_connect_utility_query_pair_target_frontier: OutputShard<i16>,
+    missing_connect_utility_query_pair_total_distance: OutputShard<u16>,
     missing_connect_utility_query_source_count: OutputShard<u16>,
     missing_connect_utility_query_target_count: OutputShard<u16>,
-    missing_connect_utility_query_source_cap_hit: OutputShard<u8>,
-    missing_connect_utility_query_target_cap_hit: OutputShard<u8>,
+    missing_connect_utility_query_pair_count: OutputShard<u16>,
+    missing_connect_utility_query_pair_cap_hit: OutputShard<u8>,
     missing_connect_utility_query_current_distance: OutputShard<u8>,
     missing_connect_query_frontier_count: usize,
     snapshot_start: usize,
@@ -2298,14 +2292,13 @@ struct FeatureOutputSlices<'a> {
     missing_connect_query_target_cap_hit: &'a mut [u8],
     missing_connect_utility_query_snapshot_idx: &'a mut [i64],
     missing_connect_utility_query_connection_idx: &'a mut [i64],
-    missing_connect_utility_query_source_frontier: &'a mut [i16],
-    missing_connect_utility_query_target_frontier: &'a mut [i16],
-    missing_connect_utility_query_source_distance: &'a mut [u8],
-    missing_connect_utility_query_target_distance: &'a mut [u8],
+    missing_connect_utility_query_pair_source_frontier: &'a mut [i16],
+    missing_connect_utility_query_pair_target_frontier: &'a mut [i16],
+    missing_connect_utility_query_pair_total_distance: &'a mut [u16],
     missing_connect_utility_query_source_count: &'a mut [u16],
     missing_connect_utility_query_target_count: &'a mut [u16],
-    missing_connect_utility_query_source_cap_hit: &'a mut [u8],
-    missing_connect_utility_query_target_cap_hit: &'a mut [u8],
+    missing_connect_utility_query_pair_count: &'a mut [u16],
+    missing_connect_utility_query_pair_cap_hit: &'a mut [u8],
     missing_connect_utility_query_current_distance: &'a mut [u8],
     missing_connect_query_frontier_count: usize,
     snapshot_start: usize,
@@ -2360,20 +2353,16 @@ impl FeatureOutputShards {
                 self.missing_connect_utility_query_connection_idx
                     .into_mut_slice()
             },
-            missing_connect_utility_query_source_frontier: unsafe {
-                self.missing_connect_utility_query_source_frontier
+            missing_connect_utility_query_pair_source_frontier: unsafe {
+                self.missing_connect_utility_query_pair_source_frontier
                     .into_mut_slice()
             },
-            missing_connect_utility_query_target_frontier: unsafe {
-                self.missing_connect_utility_query_target_frontier
+            missing_connect_utility_query_pair_target_frontier: unsafe {
+                self.missing_connect_utility_query_pair_target_frontier
                     .into_mut_slice()
             },
-            missing_connect_utility_query_source_distance: unsafe {
-                self.missing_connect_utility_query_source_distance
-                    .into_mut_slice()
-            },
-            missing_connect_utility_query_target_distance: unsafe {
-                self.missing_connect_utility_query_target_distance
+            missing_connect_utility_query_pair_total_distance: unsafe {
+                self.missing_connect_utility_query_pair_total_distance
                     .into_mut_slice()
             },
             missing_connect_utility_query_source_count: unsafe {
@@ -2384,12 +2373,12 @@ impl FeatureOutputShards {
                 self.missing_connect_utility_query_target_count
                     .into_mut_slice()
             },
-            missing_connect_utility_query_source_cap_hit: unsafe {
-                self.missing_connect_utility_query_source_cap_hit
+            missing_connect_utility_query_pair_count: unsafe {
+                self.missing_connect_utility_query_pair_count
                     .into_mut_slice()
             },
-            missing_connect_utility_query_target_cap_hit: unsafe {
-                self.missing_connect_utility_query_target_cap_hit
+            missing_connect_utility_query_pair_cap_hit: unsafe {
+                self.missing_connect_utility_query_pair_cap_hit
                     .into_mut_slice()
             },
             missing_connect_utility_query_current_distance: unsafe {
@@ -2463,6 +2452,54 @@ impl FeatureOutputSlices<'_> {
         }
     }
 
+    fn write_missing_connect_utility_query_rows(
+        query_row_count: &mut usize,
+        snapshot_start: usize,
+        snapshot_idx: usize,
+        pair_count: usize,
+        query_snapshot_idx: &mut [i64],
+        query_connection_idx: &mut [i64],
+        query_pair_source_frontier: &mut [i16],
+        query_pair_target_frontier: &mut [i16],
+        query_pair_total_distance: &mut [u16],
+        query_source_count: &mut [u16],
+        query_target_count: &mut [u16],
+        query_pair_count: &mut [u16],
+        query_pair_cap_hit: &mut [u8],
+        query_current_distance: &mut [u8],
+        feature_connection_idx: &[i64],
+        feature_pair_source_frontier: &[i16],
+        feature_pair_target_frontier: &[i16],
+        feature_pair_total_distance: &[u16],
+        feature_source_count: &[u16],
+        feature_target_count: &[u16],
+        feature_pair_count: &[u16],
+        feature_pair_cap_hit: &[u8],
+        feature_current_distance: &[u8],
+    ) {
+        for query_idx in 0..feature_connection_idx.len() {
+            let dst_idx = *query_row_count;
+            query_snapshot_idx[dst_idx] = (snapshot_start + snapshot_idx) as i64;
+            query_connection_idx[dst_idx] = feature_connection_idx[query_idx];
+            query_source_count[dst_idx] = feature_source_count[query_idx];
+            query_target_count[dst_idx] = feature_target_count[query_idx];
+            query_pair_count[dst_idx] = feature_pair_count[query_idx];
+            query_pair_cap_hit[dst_idx] = feature_pair_cap_hit[query_idx];
+            query_current_distance[dst_idx] = feature_current_distance[query_idx];
+            let query_start = query_idx * pair_count;
+            let query_end = query_start + pair_count;
+            let dst_start = dst_idx * pair_count;
+            let dst_end = dst_start + pair_count;
+            query_pair_source_frontier[dst_start..dst_end]
+                .copy_from_slice(&feature_pair_source_frontier[query_start..query_end]);
+            query_pair_target_frontier[dst_start..dst_end]
+                .copy_from_slice(&feature_pair_target_frontier[query_start..query_end]);
+            query_pair_total_distance[dst_start..dst_end]
+                .copy_from_slice(&feature_pair_total_distance[query_start..query_end]);
+            *query_row_count += 1;
+        }
+    }
+
     fn write_features(&mut self, snapshot_idx: usize, features: &Features) {
         self.global.write_features(snapshot_idx, features);
         let frontier_count = features.frontier.len() / FEATURE_FRONTIER_WIDTH;
@@ -2506,32 +2543,30 @@ impl FeatureOutputSlices<'_> {
             None,
             None,
         );
-        Self::write_missing_connect_query_rows(
+        Self::write_missing_connect_utility_query_rows(
             &mut self.missing_connect_utility_query_row_count,
             self.snapshot_start,
             snapshot_idx,
             self.missing_connect_query_frontier_count,
             self.missing_connect_utility_query_snapshot_idx,
             self.missing_connect_utility_query_connection_idx,
-            self.missing_connect_utility_query_source_frontier,
-            self.missing_connect_utility_query_target_frontier,
-            self.missing_connect_utility_query_source_distance,
-            self.missing_connect_utility_query_target_distance,
+            self.missing_connect_utility_query_pair_source_frontier,
+            self.missing_connect_utility_query_pair_target_frontier,
+            self.missing_connect_utility_query_pair_total_distance,
             self.missing_connect_utility_query_source_count,
             self.missing_connect_utility_query_target_count,
-            self.missing_connect_utility_query_source_cap_hit,
-            self.missing_connect_utility_query_target_cap_hit,
+            self.missing_connect_utility_query_pair_count,
+            self.missing_connect_utility_query_pair_cap_hit,
+            self.missing_connect_utility_query_current_distance,
             &features.missing_connect_utility_query_connection_idx,
-            &features.missing_connect_utility_query_source_frontier,
-            &features.missing_connect_utility_query_target_frontier,
-            &features.missing_connect_utility_query_source_distance,
-            &features.missing_connect_utility_query_target_distance,
+            &features.missing_connect_utility_query_pair_source_frontier,
+            &features.missing_connect_utility_query_pair_target_frontier,
+            &features.missing_connect_utility_query_pair_total_distance,
             &features.missing_connect_utility_query_source_count,
             &features.missing_connect_utility_query_target_count,
-            &features.missing_connect_utility_query_source_cap_hit,
-            &features.missing_connect_utility_query_target_cap_hit,
-            Some(self.missing_connect_utility_query_current_distance),
-            Some(&features.missing_connect_utility_query_current_distance),
+            &features.missing_connect_utility_query_pair_count,
+            &features.missing_connect_utility_query_pair_cap_hit,
+            &features.missing_connect_utility_query_current_distance,
         );
     }
 }
@@ -2856,14 +2891,13 @@ mod tests {
         let mut missing_connect_query_target_cap_hit = Vec::new();
         let mut missing_connect_utility_query_snapshot_idx = Vec::new();
         let mut missing_connect_utility_query_connection_idx = Vec::new();
-        let mut missing_connect_utility_query_source_frontier = Vec::new();
-        let mut missing_connect_utility_query_target_frontier = Vec::new();
-        let mut missing_connect_utility_query_source_distance = Vec::new();
-        let mut missing_connect_utility_query_target_distance = Vec::new();
+        let mut missing_connect_utility_query_pair_source_frontier = Vec::new();
+        let mut missing_connect_utility_query_pair_target_frontier = Vec::new();
+        let mut missing_connect_utility_query_pair_total_distance = Vec::new();
         let mut missing_connect_utility_query_source_count = Vec::new();
         let mut missing_connect_utility_query_target_count = Vec::new();
-        let mut missing_connect_utility_query_source_cap_hit = Vec::new();
-        let mut missing_connect_utility_query_target_cap_hit = Vec::new();
+        let mut missing_connect_utility_query_pair_count = Vec::new();
+        let mut missing_connect_utility_query_pair_cap_hit = Vec::new();
         let mut missing_connect_utility_query_current_distance = Vec::new();
 
         let outputs = FeatureOutputShards {
@@ -2912,17 +2946,14 @@ mod tests {
             missing_connect_utility_query_connection_idx: OutputShard::from_slice(
                 &mut missing_connect_utility_query_connection_idx,
             ),
-            missing_connect_utility_query_source_frontier: OutputShard::from_slice(
-                &mut missing_connect_utility_query_source_frontier,
+            missing_connect_utility_query_pair_source_frontier: OutputShard::from_slice(
+                &mut missing_connect_utility_query_pair_source_frontier,
             ),
-            missing_connect_utility_query_target_frontier: OutputShard::from_slice(
-                &mut missing_connect_utility_query_target_frontier,
+            missing_connect_utility_query_pair_target_frontier: OutputShard::from_slice(
+                &mut missing_connect_utility_query_pair_target_frontier,
             ),
-            missing_connect_utility_query_source_distance: OutputShard::from_slice(
-                &mut missing_connect_utility_query_source_distance,
-            ),
-            missing_connect_utility_query_target_distance: OutputShard::from_slice(
-                &mut missing_connect_utility_query_target_distance,
+            missing_connect_utility_query_pair_total_distance: OutputShard::from_slice(
+                &mut missing_connect_utility_query_pair_total_distance,
             ),
             missing_connect_utility_query_source_count: OutputShard::from_slice(
                 &mut missing_connect_utility_query_source_count,
@@ -2930,11 +2961,11 @@ mod tests {
             missing_connect_utility_query_target_count: OutputShard::from_slice(
                 &mut missing_connect_utility_query_target_count,
             ),
-            missing_connect_utility_query_source_cap_hit: OutputShard::from_slice(
-                &mut missing_connect_utility_query_source_cap_hit,
+            missing_connect_utility_query_pair_count: OutputShard::from_slice(
+                &mut missing_connect_utility_query_pair_count,
             ),
-            missing_connect_utility_query_target_cap_hit: OutputShard::from_slice(
-                &mut missing_connect_utility_query_target_cap_hit,
+            missing_connect_utility_query_pair_cap_hit: OutputShard::from_slice(
+                &mut missing_connect_utility_query_pair_cap_hit,
             ),
             missing_connect_utility_query_current_distance: OutputShard::from_slice(
                 &mut missing_connect_utility_query_current_distance,
@@ -4119,20 +4150,16 @@ impl EnvironmentGroup {
             .missing_connect_utility_query_connection_idx
             .bind(py)
             .readwrite();
-        let mut missing_connect_utility_query_source_frontier = buffers
-            .missing_connect_utility_query_source_frontier
+        let mut missing_connect_utility_query_pair_source_frontier = buffers
+            .missing_connect_utility_query_pair_source_frontier
             .bind(py)
             .readwrite();
-        let mut missing_connect_utility_query_target_frontier = buffers
-            .missing_connect_utility_query_target_frontier
+        let mut missing_connect_utility_query_pair_target_frontier = buffers
+            .missing_connect_utility_query_pair_target_frontier
             .bind(py)
             .readwrite();
-        let mut missing_connect_utility_query_source_distance = buffers
-            .missing_connect_utility_query_source_distance
-            .bind(py)
-            .readwrite();
-        let mut missing_connect_utility_query_target_distance = buffers
-            .missing_connect_utility_query_target_distance
+        let mut missing_connect_utility_query_pair_total_distance = buffers
+            .missing_connect_utility_query_pair_total_distance
             .bind(py)
             .readwrite();
         let mut missing_connect_utility_query_source_count = buffers
@@ -4143,12 +4170,12 @@ impl EnvironmentGroup {
             .missing_connect_utility_query_target_count
             .bind(py)
             .readwrite();
-        let mut missing_connect_utility_query_source_cap_hit = buffers
-            .missing_connect_utility_query_source_cap_hit
+        let mut missing_connect_utility_query_pair_count = buffers
+            .missing_connect_utility_query_pair_count
             .bind(py)
             .readwrite();
-        let mut missing_connect_utility_query_target_cap_hit = buffers
-            .missing_connect_utility_query_target_cap_hit
+        let mut missing_connect_utility_query_pair_cap_hit = buffers
+            .missing_connect_utility_query_pair_cap_hit
             .bind(py)
             .readwrite();
         let mut missing_connect_utility_query_current_distance = buffers
@@ -4194,8 +4221,7 @@ impl EnvironmentGroup {
             connection_count * usize::from(self.features.frontier_connection_reachability);
         let missing_connect_query_frontier_width = self.missing_connect_query_frontier_count
             * usize::from(self.features.missing_connect_query);
-        let missing_connect_utility_query_frontier_width = self
-            .missing_connect_query_frontier_count
+        let missing_connect_utility_query_pair_width = self.missing_connect_query_frontier_count
             * usize::from(self.features.missing_connect_utility_query);
         let toilet_crossed_room_width = usize::from(self.features.toilet_crossed_room);
 
@@ -4294,23 +4320,18 @@ impl EnvironmentGroup {
                 .as_array()
                 .shape()
                 .to_vec();
-        let missing_connect_utility_query_source_frontier_shape =
-            missing_connect_utility_query_source_frontier
+        let missing_connect_utility_query_pair_source_frontier_shape =
+            missing_connect_utility_query_pair_source_frontier
                 .as_array()
                 .shape()
                 .to_vec();
-        let missing_connect_utility_query_target_frontier_shape =
-            missing_connect_utility_query_target_frontier
+        let missing_connect_utility_query_pair_target_frontier_shape =
+            missing_connect_utility_query_pair_target_frontier
                 .as_array()
                 .shape()
                 .to_vec();
-        let missing_connect_utility_query_source_distance_shape =
-            missing_connect_utility_query_source_distance
-                .as_array()
-                .shape()
-                .to_vec();
-        let missing_connect_utility_query_target_distance_shape =
-            missing_connect_utility_query_target_distance
+        let missing_connect_utility_query_pair_total_distance_shape =
+            missing_connect_utility_query_pair_total_distance
                 .as_array()
                 .shape()
                 .to_vec();
@@ -4324,13 +4345,13 @@ impl EnvironmentGroup {
                 .as_array()
                 .shape()
                 .to_vec();
-        let missing_connect_utility_query_source_cap_hit_shape =
-            missing_connect_utility_query_source_cap_hit
+        let missing_connect_utility_query_pair_count_shape =
+            missing_connect_utility_query_pair_count
                 .as_array()
                 .shape()
                 .to_vec();
-        let missing_connect_utility_query_target_cap_hit_shape =
-            missing_connect_utility_query_target_cap_hit
+        let missing_connect_utility_query_pair_cap_hit_shape =
+            missing_connect_utility_query_pair_cap_hit
                 .as_array()
                 .shape()
                 .to_vec();
@@ -4381,21 +4402,19 @@ impl EnvironmentGroup {
                 < missing_connect_utility_query_row_count
             || missing_connect_utility_query_connection_idx_shape[0]
                 < missing_connect_utility_query_row_count
-            || missing_connect_utility_query_source_frontier_shape[0]
+            || missing_connect_utility_query_pair_source_frontier_shape[0]
                 < missing_connect_utility_query_row_count
-            || missing_connect_utility_query_target_frontier_shape[0]
+            || missing_connect_utility_query_pair_target_frontier_shape[0]
                 < missing_connect_utility_query_row_count
-            || missing_connect_utility_query_source_distance_shape[0]
-                < missing_connect_utility_query_row_count
-            || missing_connect_utility_query_target_distance_shape[0]
+            || missing_connect_utility_query_pair_total_distance_shape[0]
                 < missing_connect_utility_query_row_count
             || missing_connect_utility_query_source_count_shape[0]
                 < missing_connect_utility_query_row_count
             || missing_connect_utility_query_target_count_shape[0]
                 < missing_connect_utility_query_row_count
-            || missing_connect_utility_query_source_cap_hit_shape[0]
+            || missing_connect_utility_query_pair_count_shape[0]
                 < missing_connect_utility_query_row_count
-            || missing_connect_utility_query_target_cap_hit_shape[0]
+            || missing_connect_utility_query_pair_cap_hit_shape[0]
                 < missing_connect_utility_query_row_count
             || missing_connect_utility_query_current_distance_shape[0]
                 < missing_connect_utility_query_row_count
@@ -4518,24 +4537,19 @@ impl EnvironmentGroup {
             missing_connect_query_frontier_width,
         )?;
         check_dim(
-            "missing_connect_utility_query_source_frontier",
-            missing_connect_utility_query_source_frontier_shape[1],
-            missing_connect_utility_query_frontier_width,
+            "missing_connect_utility_query_pair_source_frontier",
+            missing_connect_utility_query_pair_source_frontier_shape[1],
+            missing_connect_utility_query_pair_width,
         )?;
         check_dim(
-            "missing_connect_utility_query_target_frontier",
-            missing_connect_utility_query_target_frontier_shape[1],
-            missing_connect_utility_query_frontier_width,
+            "missing_connect_utility_query_pair_target_frontier",
+            missing_connect_utility_query_pair_target_frontier_shape[1],
+            missing_connect_utility_query_pair_width,
         )?;
         check_dim(
-            "missing_connect_utility_query_source_distance",
-            missing_connect_utility_query_source_distance_shape[1],
-            missing_connect_utility_query_frontier_width,
-        )?;
-        check_dim(
-            "missing_connect_utility_query_target_distance",
-            missing_connect_utility_query_target_distance_shape[1],
-            missing_connect_utility_query_frontier_width,
+            "missing_connect_utility_query_pair_total_distance",
+            missing_connect_utility_query_pair_total_distance_shape[1],
+            missing_connect_utility_query_pair_width,
         )?;
         check_dim(
             "toilet_crossed_room_idx",
@@ -4696,36 +4710,28 @@ impl EnvironmentGroup {
                         "missing_connect_utility_query_connection_idx must be contiguous",
                     )
                 })?;
-        let missing_connect_utility_query_source_frontier =
-            missing_connect_utility_query_source_frontier
+        let missing_connect_utility_query_pair_source_frontier =
+            missing_connect_utility_query_pair_source_frontier
                 .as_slice_mut()
                 .map_err(|_| {
                     PyValueError::new_err(
-                        "missing_connect_utility_query_source_frontier must be contiguous",
+                        "missing_connect_utility_query_pair_source_frontier must be contiguous",
                     )
                 })?;
-        let missing_connect_utility_query_target_frontier =
-            missing_connect_utility_query_target_frontier
+        let missing_connect_utility_query_pair_target_frontier =
+            missing_connect_utility_query_pair_target_frontier
                 .as_slice_mut()
                 .map_err(|_| {
                     PyValueError::new_err(
-                        "missing_connect_utility_query_target_frontier must be contiguous",
+                        "missing_connect_utility_query_pair_target_frontier must be contiguous",
                     )
                 })?;
-        let missing_connect_utility_query_source_distance =
-            missing_connect_utility_query_source_distance
+        let missing_connect_utility_query_pair_total_distance =
+            missing_connect_utility_query_pair_total_distance
                 .as_slice_mut()
                 .map_err(|_| {
                     PyValueError::new_err(
-                        "missing_connect_utility_query_source_distance must be contiguous",
-                    )
-                })?;
-        let missing_connect_utility_query_target_distance =
-            missing_connect_utility_query_target_distance
-                .as_slice_mut()
-                .map_err(|_| {
-                    PyValueError::new_err(
-                        "missing_connect_utility_query_target_distance must be contiguous",
+                        "missing_connect_utility_query_pair_total_distance must be contiguous",
                     )
                 })?;
         let missing_connect_utility_query_source_count = missing_connect_utility_query_source_count
@@ -4742,22 +4748,18 @@ impl EnvironmentGroup {
                     "missing_connect_utility_query_target_count must be contiguous",
                 )
             })?;
-        let missing_connect_utility_query_source_cap_hit =
-            missing_connect_utility_query_source_cap_hit
-                .as_slice_mut()
-                .map_err(|_| {
-                    PyValueError::new_err(
-                        "missing_connect_utility_query_source_cap_hit must be contiguous",
-                    )
-                })?;
-        let missing_connect_utility_query_target_cap_hit =
-            missing_connect_utility_query_target_cap_hit
-                .as_slice_mut()
-                .map_err(|_| {
-                    PyValueError::new_err(
-                        "missing_connect_utility_query_target_cap_hit must be contiguous",
-                    )
-                })?;
+        let missing_connect_utility_query_pair_count = missing_connect_utility_query_pair_count
+            .as_slice_mut()
+            .map_err(|_| {
+                PyValueError::new_err("missing_connect_utility_query_pair_count must be contiguous")
+            })?;
+        let missing_connect_utility_query_pair_cap_hit = missing_connect_utility_query_pair_cap_hit
+            .as_slice_mut()
+            .map_err(|_| {
+                PyValueError::new_err(
+                    "missing_connect_utility_query_pair_cap_hit must be contiguous",
+                )
+            })?;
         let missing_connect_utility_query_current_distance =
             missing_connect_utility_query_current_distance
                 .as_slice_mut()
@@ -5032,37 +5034,29 @@ impl EnvironmentGroup {
                                 ..missing_connect_utility_query_row_start
                                     + worker_missing_connect_utility_query_row_count],
                     ),
-                    missing_connect_utility_query_source_frontier: OutputShard::from_slice(
-                        &mut missing_connect_utility_query_source_frontier
+                    missing_connect_utility_query_pair_source_frontier: OutputShard::from_slice(
+                        &mut missing_connect_utility_query_pair_source_frontier
                             [missing_connect_utility_query_row_start
-                                * missing_connect_utility_query_frontier_width
+                                * missing_connect_utility_query_pair_width
                                 ..(missing_connect_utility_query_row_start
                                     + worker_missing_connect_utility_query_row_count)
-                                    * missing_connect_utility_query_frontier_width],
+                                    * missing_connect_utility_query_pair_width],
                     ),
-                    missing_connect_utility_query_target_frontier: OutputShard::from_slice(
-                        &mut missing_connect_utility_query_target_frontier
+                    missing_connect_utility_query_pair_target_frontier: OutputShard::from_slice(
+                        &mut missing_connect_utility_query_pair_target_frontier
                             [missing_connect_utility_query_row_start
-                                * missing_connect_utility_query_frontier_width
+                                * missing_connect_utility_query_pair_width
                                 ..(missing_connect_utility_query_row_start
                                     + worker_missing_connect_utility_query_row_count)
-                                    * missing_connect_utility_query_frontier_width],
+                                    * missing_connect_utility_query_pair_width],
                     ),
-                    missing_connect_utility_query_source_distance: OutputShard::from_slice(
-                        &mut missing_connect_utility_query_source_distance
+                    missing_connect_utility_query_pair_total_distance: OutputShard::from_slice(
+                        &mut missing_connect_utility_query_pair_total_distance
                             [missing_connect_utility_query_row_start
-                                * missing_connect_utility_query_frontier_width
+                                * missing_connect_utility_query_pair_width
                                 ..(missing_connect_utility_query_row_start
                                     + worker_missing_connect_utility_query_row_count)
-                                    * missing_connect_utility_query_frontier_width],
-                    ),
-                    missing_connect_utility_query_target_distance: OutputShard::from_slice(
-                        &mut missing_connect_utility_query_target_distance
-                            [missing_connect_utility_query_row_start
-                                * missing_connect_utility_query_frontier_width
-                                ..(missing_connect_utility_query_row_start
-                                    + worker_missing_connect_utility_query_row_count)
-                                    * missing_connect_utility_query_frontier_width],
+                                    * missing_connect_utility_query_pair_width],
                     ),
                     missing_connect_utility_query_source_count: OutputShard::from_slice(
                         &mut missing_connect_utility_query_source_count
@@ -5076,14 +5070,14 @@ impl EnvironmentGroup {
                                 ..missing_connect_utility_query_row_start
                                     + worker_missing_connect_utility_query_row_count],
                     ),
-                    missing_connect_utility_query_source_cap_hit: OutputShard::from_slice(
-                        &mut missing_connect_utility_query_source_cap_hit
+                    missing_connect_utility_query_pair_count: OutputShard::from_slice(
+                        &mut missing_connect_utility_query_pair_count
                             [missing_connect_utility_query_row_start
                                 ..missing_connect_utility_query_row_start
                                     + worker_missing_connect_utility_query_row_count],
                     ),
-                    missing_connect_utility_query_target_cap_hit: OutputShard::from_slice(
-                        &mut missing_connect_utility_query_target_cap_hit
+                    missing_connect_utility_query_pair_cap_hit: OutputShard::from_slice(
+                        &mut missing_connect_utility_query_pair_cap_hit
                             [missing_connect_utility_query_row_start
                                 ..missing_connect_utility_query_row_start
                                     + worker_missing_connect_utility_query_row_count],

@@ -635,11 +635,55 @@ class MissingConnectQueryFeatures:
 
 
 @dataclass
+class MissingConnectUtilityQueryFeatures:
+    query_snapshot_idx: torch.Tensor
+    query_connection_idx: torch.Tensor
+    pair_source_frontier: torch.Tensor
+    pair_target_frontier: torch.Tensor
+    pair_total_distance: torch.Tensor
+    source_count: torch.Tensor
+    target_count: torch.Tensor
+    pair_count: torch.Tensor
+    pair_cap_hit: torch.Tensor
+    current_distance: torch.Tensor
+
+    def to(
+        self,
+        device: torch.device,
+        non_blocking: bool = False,
+    ) -> "MissingConnectUtilityQueryFeatures":
+        return MissingConnectUtilityQueryFeatures(
+            query_snapshot_idx=self.query_snapshot_idx.to(device, non_blocking=non_blocking),
+            query_connection_idx=self.query_connection_idx.to(device, non_blocking=non_blocking),
+            pair_source_frontier=self.pair_source_frontier.to(device, non_blocking=non_blocking),
+            pair_target_frontier=self.pair_target_frontier.to(device, non_blocking=non_blocking),
+            pair_total_distance=self.pair_total_distance.to(device, non_blocking=non_blocking),
+            source_count=self.source_count.to(device, non_blocking=non_blocking),
+            target_count=self.target_count.to(device, non_blocking=non_blocking),
+            pair_count=self.pair_count.to(device, non_blocking=non_blocking),
+            pair_cap_hit=self.pair_cap_hit.to(device, non_blocking=non_blocking),
+            current_distance=self.current_distance.to(device, non_blocking=non_blocking),
+        )
+
+    def mark_dynamic(self) -> None:
+        torch._dynamo.maybe_mark_dynamic(self.query_snapshot_idx, 0)
+        torch._dynamo.maybe_mark_dynamic(self.query_connection_idx, 0)
+        torch._dynamo.maybe_mark_dynamic(self.pair_source_frontier, 0)
+        torch._dynamo.maybe_mark_dynamic(self.pair_target_frontier, 0)
+        torch._dynamo.maybe_mark_dynamic(self.pair_total_distance, 0)
+        torch._dynamo.maybe_mark_dynamic(self.source_count, 0)
+        torch._dynamo.maybe_mark_dynamic(self.target_count, 0)
+        torch._dynamo.maybe_mark_dynamic(self.pair_count, 0)
+        torch._dynamo.maybe_mark_dynamic(self.pair_cap_hit, 0)
+        torch._dynamo.maybe_mark_dynamic(self.current_distance, 0)
+
+
+@dataclass
 class Features:
     global_features: GlobalFeatures
     frontier_features: FrontierFeatures
     missing_connect_query_features: MissingConnectQueryFeatures
-    missing_connect_utility_query_features: MissingConnectQueryFeatures
+    missing_connect_utility_query_features: MissingConnectUtilityQueryFeatures
 
     def to(self, device: torch.device, non_blocking: bool = False) -> "Features":
         return Features(
@@ -1171,17 +1215,14 @@ class EnvironmentGroup:
                     "missing_connect_utility_query_connection_idx": (
                         feature_slot.missing_connect_utility_query_connection_idx.numpy()
                     ),
-                    "missing_connect_utility_query_source_frontier": (
-                        feature_slot.missing_connect_utility_query_source_frontier.numpy()
+                    "missing_connect_utility_query_pair_source_frontier": (
+                        feature_slot.missing_connect_utility_query_pair_source_frontier.numpy()
                     ),
-                    "missing_connect_utility_query_target_frontier": (
-                        feature_slot.missing_connect_utility_query_target_frontier.numpy()
+                    "missing_connect_utility_query_pair_target_frontier": (
+                        feature_slot.missing_connect_utility_query_pair_target_frontier.numpy()
                     ),
-                    "missing_connect_utility_query_source_distance": (
-                        feature_slot.missing_connect_utility_query_source_distance.numpy()
-                    ),
-                    "missing_connect_utility_query_target_distance": (
-                        feature_slot.missing_connect_utility_query_target_distance.numpy()
+                    "missing_connect_utility_query_pair_total_distance": (
+                        feature_slot.missing_connect_utility_query_pair_total_distance.numpy()
                     ),
                     "missing_connect_utility_query_source_count": (
                         feature_slot.missing_connect_utility_query_source_count.numpy()
@@ -1189,11 +1230,11 @@ class EnvironmentGroup:
                     "missing_connect_utility_query_target_count": (
                         feature_slot.missing_connect_utility_query_target_count.numpy()
                     ),
-                    "missing_connect_utility_query_source_cap_hit": (
-                        feature_slot.missing_connect_utility_query_source_cap_hit.numpy()
+                    "missing_connect_utility_query_pair_count": (
+                        feature_slot.missing_connect_utility_query_pair_count.numpy()
                     ),
-                    "missing_connect_utility_query_target_cap_hit": (
-                        feature_slot.missing_connect_utility_query_target_cap_hit.numpy()
+                    "missing_connect_utility_query_pair_cap_hit": (
+                        feature_slot.missing_connect_utility_query_pair_cap_hit.numpy()
                     ),
                     "missing_connect_utility_query_current_distance": (
                         feature_slot.missing_connect_utility_query_current_distance.numpy()
@@ -1302,14 +1343,13 @@ class FeatureSlot:
         self.missing_connect_query_target_cap_hit = None
         self.missing_connect_utility_query_snapshot_idx = None
         self.missing_connect_utility_query_connection_idx = None
-        self.missing_connect_utility_query_source_frontier = None
-        self.missing_connect_utility_query_target_frontier = None
-        self.missing_connect_utility_query_source_distance = None
-        self.missing_connect_utility_query_target_distance = None
+        self.missing_connect_utility_query_pair_source_frontier = None
+        self.missing_connect_utility_query_pair_target_frontier = None
+        self.missing_connect_utility_query_pair_total_distance = None
         self.missing_connect_utility_query_source_count = None
         self.missing_connect_utility_query_target_count = None
-        self.missing_connect_utility_query_source_cap_hit = None
-        self.missing_connect_utility_query_target_cap_hit = None
+        self.missing_connect_utility_query_pair_count = None
+        self.missing_connect_utility_query_pair_cap_hit = None
         self.missing_connect_utility_query_current_distance = None
         self.toilet_crossed_room_idx = None
         self.row_snapshot_idx = None
@@ -1463,33 +1503,26 @@ class FeatureSlot:
             (self.missing_connect_utility_query_row_capacity,),
             torch.int64,
         )
-        self.missing_connect_utility_query_source_frontier = self._empty(
+        self.missing_connect_utility_query_pair_source_frontier = self._empty(
             (
                 self.missing_connect_utility_query_row_capacity,
                 self.missing_connect_query_frontier_width,
             ),
             torch.int16,
         )
-        self.missing_connect_utility_query_target_frontier = self._empty(
+        self.missing_connect_utility_query_pair_target_frontier = self._empty(
             (
                 self.missing_connect_utility_query_row_capacity,
                 self.missing_connect_query_frontier_width,
             ),
             torch.int16,
         )
-        self.missing_connect_utility_query_source_distance = self._empty(
+        self.missing_connect_utility_query_pair_total_distance = self._empty(
             (
                 self.missing_connect_utility_query_row_capacity,
                 self.missing_connect_query_frontier_width,
             ),
-            torch.uint8,
-        )
-        self.missing_connect_utility_query_target_distance = self._empty(
-            (
-                self.missing_connect_utility_query_row_capacity,
-                self.missing_connect_query_frontier_width,
-            ),
-            torch.uint8,
+            torch.uint16,
         )
         self.missing_connect_utility_query_source_count = self._empty(
             (self.missing_connect_utility_query_row_capacity,),
@@ -1499,11 +1532,11 @@ class FeatureSlot:
             (self.missing_connect_utility_query_row_capacity,),
             torch.uint16,
         )
-        self.missing_connect_utility_query_source_cap_hit = self._empty(
+        self.missing_connect_utility_query_pair_count = self._empty(
             (self.missing_connect_utility_query_row_capacity,),
-            torch.uint8,
+            torch.uint16,
         )
-        self.missing_connect_utility_query_target_cap_hit = self._empty(
+        self.missing_connect_utility_query_pair_cap_hit = self._empty(
             (self.missing_connect_utility_query_row_capacity,),
             torch.uint8,
         )
@@ -1665,23 +1698,20 @@ class FeatureSlot:
                     [missing_connect_query_row_count]
                 ),
             ),
-            missing_connect_utility_query_features=MissingConnectQueryFeatures(
+            missing_connect_utility_query_features=MissingConnectUtilityQueryFeatures(
                 query_snapshot_idx=self.missing_connect_utility_query_snapshot_idx[
                     :missing_connect_utility_query_row_count
                 ],
                 query_connection_idx=self.missing_connect_utility_query_connection_idx[
                     :missing_connect_utility_query_row_count
                 ],
-                source_frontier=self.missing_connect_utility_query_source_frontier[
+                pair_source_frontier=self.missing_connect_utility_query_pair_source_frontier[
                     :missing_connect_utility_query_row_count
                 ],
-                target_frontier=self.missing_connect_utility_query_target_frontier[
+                pair_target_frontier=self.missing_connect_utility_query_pair_target_frontier[
                     :missing_connect_utility_query_row_count
                 ],
-                source_distance=self.missing_connect_utility_query_source_distance[
-                    :missing_connect_utility_query_row_count
-                ],
-                target_distance=self.missing_connect_utility_query_target_distance[
+                pair_total_distance=self.missing_connect_utility_query_pair_total_distance[
                     :missing_connect_utility_query_row_count
                 ],
                 source_count=self.missing_connect_utility_query_source_count[
@@ -1690,10 +1720,10 @@ class FeatureSlot:
                 target_count=self.missing_connect_utility_query_target_count[
                     :missing_connect_utility_query_row_count
                 ],
-                source_cap_hit=self.missing_connect_utility_query_source_cap_hit[
+                pair_count=self.missing_connect_utility_query_pair_count[
                     :missing_connect_utility_query_row_count
                 ],
-                target_cap_hit=self.missing_connect_utility_query_target_cap_hit[
+                pair_cap_hit=self.missing_connect_utility_query_pair_cap_hit[
                     :missing_connect_utility_query_row_count
                 ],
                 current_distance=self.missing_connect_utility_query_current_distance[
@@ -1861,23 +1891,20 @@ class FeatureSlot:
                     [missing_connect_query_row_count]
                 ),
             ),
-            missing_connect_utility_query_features=MissingConnectQueryFeatures(
+            missing_connect_utility_query_features=MissingConnectUtilityQueryFeatures(
                 query_snapshot_idx=self.missing_connect_utility_query_snapshot_idx[
                     :missing_connect_utility_query_row_count
                 ],
                 query_connection_idx=self.missing_connect_utility_query_connection_idx[
                     :missing_connect_utility_query_row_count
                 ],
-                source_frontier=self.missing_connect_utility_query_source_frontier[
+                pair_source_frontier=self.missing_connect_utility_query_pair_source_frontier[
                     :missing_connect_utility_query_row_count
                 ],
-                target_frontier=self.missing_connect_utility_query_target_frontier[
+                pair_target_frontier=self.missing_connect_utility_query_pair_target_frontier[
                     :missing_connect_utility_query_row_count
                 ],
-                source_distance=self.missing_connect_utility_query_source_distance[
-                    :missing_connect_utility_query_row_count
-                ],
-                target_distance=self.missing_connect_utility_query_target_distance[
+                pair_total_distance=self.missing_connect_utility_query_pair_total_distance[
                     :missing_connect_utility_query_row_count
                 ],
                 source_count=self.missing_connect_utility_query_source_count[
@@ -1886,10 +1913,10 @@ class FeatureSlot:
                 target_count=self.missing_connect_utility_query_target_count[
                     :missing_connect_utility_query_row_count
                 ],
-                source_cap_hit=self.missing_connect_utility_query_source_cap_hit[
+                pair_count=self.missing_connect_utility_query_pair_count[
                     :missing_connect_utility_query_row_count
                 ],
-                target_cap_hit=self.missing_connect_utility_query_target_cap_hit[
+                pair_cap_hit=self.missing_connect_utility_query_pair_cap_hit[
                     :missing_connect_utility_query_row_count
                 ],
                 current_distance=self.missing_connect_utility_query_current_distance[
@@ -2026,17 +2053,14 @@ def extract_candidate_features(
                 "missing_connect_utility_query_connection_idx": (
                     feature_slot.missing_connect_utility_query_connection_idx.numpy()
                 ),
-                "missing_connect_utility_query_source_frontier": (
-                    feature_slot.missing_connect_utility_query_source_frontier.numpy()
+                "missing_connect_utility_query_pair_source_frontier": (
+                    feature_slot.missing_connect_utility_query_pair_source_frontier.numpy()
                 ),
-                "missing_connect_utility_query_target_frontier": (
-                    feature_slot.missing_connect_utility_query_target_frontier.numpy()
+                "missing_connect_utility_query_pair_target_frontier": (
+                    feature_slot.missing_connect_utility_query_pair_target_frontier.numpy()
                 ),
-                "missing_connect_utility_query_source_distance": (
-                    feature_slot.missing_connect_utility_query_source_distance.numpy()
-                ),
-                "missing_connect_utility_query_target_distance": (
-                    feature_slot.missing_connect_utility_query_target_distance.numpy()
+                "missing_connect_utility_query_pair_total_distance": (
+                    feature_slot.missing_connect_utility_query_pair_total_distance.numpy()
                 ),
                 "missing_connect_utility_query_source_count": (
                     feature_slot.missing_connect_utility_query_source_count.numpy()
@@ -2044,11 +2068,11 @@ def extract_candidate_features(
                 "missing_connect_utility_query_target_count": (
                     feature_slot.missing_connect_utility_query_target_count.numpy()
                 ),
-                "missing_connect_utility_query_source_cap_hit": (
-                    feature_slot.missing_connect_utility_query_source_cap_hit.numpy()
+                "missing_connect_utility_query_pair_count": (
+                    feature_slot.missing_connect_utility_query_pair_count.numpy()
                 ),
-                "missing_connect_utility_query_target_cap_hit": (
-                    feature_slot.missing_connect_utility_query_target_cap_hit.numpy()
+                "missing_connect_utility_query_pair_cap_hit": (
+                    feature_slot.missing_connect_utility_query_pair_cap_hit.numpy()
                 ),
                 "missing_connect_utility_query_current_distance": (
                     feature_slot.missing_connect_utility_query_current_distance.numpy()

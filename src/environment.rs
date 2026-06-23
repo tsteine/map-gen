@@ -441,17 +441,16 @@ pub struct Features {
     pub missing_connect_query_target_count: Vec<u16>,
     pub missing_connect_query_source_cap_hit: Vec<u8>,
     pub missing_connect_query_target_cap_hit: Vec<u8>,
-    // Sparse utility query rows for required missing connections. Frontier
-    // indices are snapshot-local and use the same layout as validity rows.
+    // Sparse utility query rows for required missing connections. Pair frontier
+    // indices are snapshot-local; -1 marks padding.
     pub missing_connect_utility_query_connection_idx: Vec<i64>,
-    pub missing_connect_utility_query_source_frontier: Vec<i16>,
-    pub missing_connect_utility_query_target_frontier: Vec<i16>,
-    pub missing_connect_utility_query_source_distance: Vec<u8>,
-    pub missing_connect_utility_query_target_distance: Vec<u8>,
+    pub missing_connect_utility_query_pair_source_frontier: Vec<i16>,
+    pub missing_connect_utility_query_pair_target_frontier: Vec<i16>,
+    pub missing_connect_utility_query_pair_total_distance: Vec<u16>,
     pub missing_connect_utility_query_source_count: Vec<u16>,
     pub missing_connect_utility_query_target_count: Vec<u16>,
-    pub missing_connect_utility_query_source_cap_hit: Vec<u8>,
-    pub missing_connect_utility_query_target_cap_hit: Vec<u8>,
+    pub missing_connect_utility_query_pair_count: Vec<u16>,
+    pub missing_connect_utility_query_pair_cap_hit: Vec<u8>,
     pub missing_connect_utility_query_current_distance: Vec<u8>,
     // Concrete room crossed by the Toilet when exactly one non-Toilet room crosses it.
     pub toilet_crossed_room_idx: Vec<i16>,
@@ -505,11 +504,12 @@ impl MissingConnectQueryBuffers<'_> {
     }
 }
 
-fn utility_missing_connect_frontiers(
+fn utility_missing_connect_pairs(
     source_frontiers: &[(GraphDistance, i16)],
     target_frontiers: &[(GraphDistance, i16)],
     current_distance: GraphDistance,
-) -> Option<(Vec<(GraphDistance, i16)>, Vec<(GraphDistance, i16)>)> {
+    pair_count: usize,
+) -> Option<(Vec<(u16, i16, i16)>, bool)> {
     if source_frontiers.is_empty() || target_frontiers.is_empty() {
         return None;
     }
@@ -517,24 +517,46 @@ fn utility_missing_connect_frontiers(
     let min_target_distance = target_frontiers[0].0;
     let best_frontier_bound = u16::from(min_source_distance) + u16::from(min_target_distance);
     if current_distance != UNREACHABLE_DISTANCE
-        && best_frontier_bound >= u16::from(current_distance)
+        && best_frontier_bound + 2 >= u16::from(current_distance)
     {
         return None;
     }
-    let mut utility_source_frontiers = source_frontiers.to_vec();
-    let mut utility_target_frontiers = target_frontiers.to_vec();
-    if current_distance != UNREACHABLE_DISTANCE {
-        utility_source_frontiers.retain(|&(distance, _)| {
-            u16::from(distance) + u16::from(min_target_distance) < u16::from(current_distance)
-        });
-        utility_target_frontiers.retain(|&(distance, _)| {
-            u16::from(min_source_distance) + u16::from(distance) < u16::from(current_distance)
-        });
+    let mut best_pairs = BinaryHeap::new();
+    let mut cap_hit = false;
+    for &(source_distance, source_frontier) in source_frontiers {
+        if current_distance != UNREACHABLE_DISTANCE
+            && u16::from(source_distance) + 2 >= u16::from(current_distance)
+        {
+            break;
+        }
+        for &(target_distance, target_frontier) in target_frontiers {
+            let total_distance = u16::from(source_distance) + u16::from(target_distance);
+            if current_distance != UNREACHABLE_DISTANCE
+                && total_distance + 2 >= u16::from(current_distance)
+            {
+                break;
+            }
+            let pair = (total_distance, source_frontier, target_frontier);
+            if best_pairs.len() < pair_count {
+                best_pairs.push(pair);
+            } else {
+                cap_hit = true;
+                if best_pairs
+                    .peek()
+                    .is_some_and(|&worst_pair| pair < worst_pair)
+                {
+                    best_pairs.pop();
+                    best_pairs.push(pair);
+                }
+            }
+        }
     }
-    if utility_source_frontiers.is_empty() || utility_target_frontiers.is_empty() {
+    if best_pairs.is_empty() {
         None
     } else {
-        Some((utility_source_frontiers, utility_target_frontiers))
+        let mut pairs = best_pairs.into_vec();
+        pairs.sort_unstable();
+        Some((pairs, cap_hit))
     }
 }
 
@@ -3442,14 +3464,13 @@ impl Environment {
         let mut missing_connect_query_source_cap_hit = Vec::new();
         let mut missing_connect_query_target_cap_hit = Vec::new();
         let mut missing_connect_utility_query_connection_idx = Vec::new();
-        let mut missing_connect_utility_query_source_frontier = Vec::new();
-        let mut missing_connect_utility_query_target_frontier = Vec::new();
-        let mut missing_connect_utility_query_source_distance = Vec::new();
-        let mut missing_connect_utility_query_target_distance = Vec::new();
+        let mut missing_connect_utility_query_pair_source_frontier = Vec::new();
+        let mut missing_connect_utility_query_pair_target_frontier = Vec::new();
+        let mut missing_connect_utility_query_pair_total_distance = Vec::new();
         let mut missing_connect_utility_query_source_count = Vec::new();
         let mut missing_connect_utility_query_target_count = Vec::new();
-        let mut missing_connect_utility_query_source_cap_hit = Vec::new();
-        let mut missing_connect_utility_query_target_cap_hit = Vec::new();
+        let mut missing_connect_utility_query_pair_count = Vec::new();
+        let mut missing_connect_utility_query_pair_cap_hit = Vec::new();
         let mut missing_connect_utility_query_current_distance = Vec::new();
         profile_end(ProfileMetric::EnvFeaturesSetup, profile);
 
@@ -3631,33 +3652,39 @@ impl Environment {
                         missing_connect_query_frontier_count,
                     );
                 }
+                let current_distance = self.graph_distance[from_part * graph_size + to_part];
                 if config.missing_connect_utility_query
-                    && let Some((utility_source_frontiers, utility_target_frontiers)) =
-                        utility_missing_connect_frontiers(
-                            &source_frontiers,
-                            &target_frontiers,
-                            self.graph_distance[from_part * graph_size + to_part],
-                        )
-                {
-                    missing_connect_utility_query_current_distance
-                        .push(self.graph_distance[from_part * graph_size + to_part]);
-                    MissingConnectQueryBuffers {
-                        connection_idx: &mut missing_connect_utility_query_connection_idx,
-                        source_frontier: &mut missing_connect_utility_query_source_frontier,
-                        target_frontier: &mut missing_connect_utility_query_target_frontier,
-                        source_distance: &mut missing_connect_utility_query_source_distance,
-                        target_distance: &mut missing_connect_utility_query_target_distance,
-                        source_count: &mut missing_connect_utility_query_source_count,
-                        target_count: &mut missing_connect_utility_query_target_count,
-                        source_cap_hit: &mut missing_connect_utility_query_source_cap_hit,
-                        target_cap_hit: &mut missing_connect_utility_query_target_cap_hit,
-                    }
-                    .push_row(
-                        connection_idx,
-                        &utility_source_frontiers,
-                        &utility_target_frontiers,
+                    && let Some((utility_pairs, pair_cap_hit)) = utility_missing_connect_pairs(
+                        &source_frontiers,
+                        &target_frontiers,
+                        current_distance,
                         missing_connect_query_frontier_count,
-                    );
+                    )
+                {
+                    missing_connect_utility_query_connection_idx.push(connection_idx as i64);
+                    missing_connect_utility_query_source_count
+                        .push(source_frontiers.len().min(u16::MAX as usize) as u16);
+                    missing_connect_utility_query_target_count
+                        .push(target_frontiers.len().min(u16::MAX as usize) as u16);
+                    missing_connect_utility_query_pair_count
+                        .push(utility_pairs.len().min(u16::MAX as usize) as u16);
+                    missing_connect_utility_query_pair_cap_hit.push(u8::from(pair_cap_hit));
+                    missing_connect_utility_query_current_distance.push(current_distance);
+                    for pair_idx in 0..missing_connect_query_frontier_count {
+                        if let Some(&(total_distance, source_frontier, target_frontier)) =
+                            utility_pairs.get(pair_idx)
+                        {
+                            missing_connect_utility_query_pair_source_frontier
+                                .push(source_frontier);
+                            missing_connect_utility_query_pair_target_frontier
+                                .push(target_frontier);
+                            missing_connect_utility_query_pair_total_distance.push(total_distance);
+                        } else {
+                            missing_connect_utility_query_pair_source_frontier.push(-1);
+                            missing_connect_utility_query_pair_target_frontier.push(-1);
+                            missing_connect_utility_query_pair_total_distance.push(0);
+                        }
+                    }
                 }
             }
         }
@@ -3788,14 +3815,13 @@ impl Environment {
             missing_connect_query_source_cap_hit,
             missing_connect_query_target_cap_hit,
             missing_connect_utility_query_connection_idx,
-            missing_connect_utility_query_source_frontier,
-            missing_connect_utility_query_target_frontier,
-            missing_connect_utility_query_source_distance,
-            missing_connect_utility_query_target_distance,
+            missing_connect_utility_query_pair_source_frontier,
+            missing_connect_utility_query_pair_target_frontier,
+            missing_connect_utility_query_pair_total_distance,
             missing_connect_utility_query_source_count,
             missing_connect_utility_query_target_count,
-            missing_connect_utility_query_source_cap_hit,
-            missing_connect_utility_query_target_cap_hit,
+            missing_connect_utility_query_pair_count,
+            missing_connect_utility_query_pair_cap_hit,
             missing_connect_utility_query_current_distance,
             toilet_crossed_room_idx,
         };
@@ -6963,13 +6989,19 @@ mod tests {
         );
         assert_eq!(features.missing_connect_utility_query_source_count, vec![1]);
         assert_eq!(features.missing_connect_utility_query_target_count, vec![1]);
+        assert_eq!(features.missing_connect_utility_query_pair_count, vec![1]);
+        assert_eq!(features.missing_connect_utility_query_pair_cap_hit, vec![0]);
         assert_eq!(
-            features.missing_connect_utility_query_source_frontier,
+            features.missing_connect_utility_query_pair_source_frontier,
             vec![0, -1, -1, -1]
         );
         assert_eq!(
-            features.missing_connect_utility_query_target_frontier,
+            features.missing_connect_utility_query_pair_target_frontier,
             vec![1, -1, -1, -1]
+        );
+        assert_eq!(
+            features.missing_connect_utility_query_pair_total_distance,
+            vec![0, 0, 0, 0]
         );
         assert_eq!(
             features.missing_connect_utility_query_current_distance,
@@ -6978,35 +7010,60 @@ mod tests {
     }
 
     #[test]
-    fn utility_missing_connect_frontiers_keep_unreachable_connection_sets() {
+    fn utility_missing_connect_pairs_keep_unreachable_connection_pairs() {
         let source = vec![(2, 10), (5, 11)];
         let target = vec![(3, 20), (7, 21)];
 
-        let (source_result, target_result) =
-            utility_missing_connect_frontiers(&source, &target, UNREACHABLE_DISTANCE).unwrap();
+        let (pairs, cap_hit) =
+            utility_missing_connect_pairs(&source, &target, UNREACHABLE_DISTANCE, 10).unwrap();
 
-        assert_eq!(source_result, source);
-        assert_eq!(target_result, target);
+        assert!(!cap_hit);
+        assert_eq!(
+            pairs,
+            vec![(5, 10, 20), (8, 11, 20), (9, 10, 21), (12, 11, 21)]
+        );
     }
 
     #[test]
-    fn utility_missing_connect_frontiers_skip_non_improving_existing_path() {
+    fn utility_missing_connect_pairs_skip_non_improving_existing_path() {
         let source = vec![(2, 10), (5, 11)];
         let target = vec![(3, 20), (7, 21)];
 
-        assert!(utility_missing_connect_frontiers(&source, &target, 5).is_none());
+        assert!(utility_missing_connect_pairs(&source, &target, 5, 10).is_none());
     }
 
     #[test]
-    fn utility_missing_connect_frontiers_prune_non_improving_entries() {
+    fn utility_missing_connect_pairs_filter_non_improving_pairs() {
         let source = vec![(1, 10), (3, 11), (5, 12)];
         let target = vec![(2, 20), (4, 21), (7, 22)];
 
-        let (source_result, target_result) =
-            utility_missing_connect_frontiers(&source, &target, 6).unwrap();
+        let (pairs, cap_hit) = utility_missing_connect_pairs(&source, &target, 8, 10).unwrap();
 
-        assert_eq!(source_result, vec![(1, 10), (3, 11)]);
-        assert_eq!(target_result, vec![(2, 20), (4, 21)]);
+        assert!(!cap_hit);
+        assert_eq!(pairs, vec![(3, 10, 20), (5, 10, 21), (5, 11, 20)]);
+    }
+
+    #[test]
+    fn utility_missing_connect_pairs_account_for_two_frontier_crossings() {
+        let source = vec![(1, 10)];
+        let target = vec![(2, 20), (3, 21)];
+
+        let (pairs, cap_hit) = utility_missing_connect_pairs(&source, &target, 6, 10).unwrap();
+
+        assert!(!cap_hit);
+        assert_eq!(pairs, vec![(3, 10, 20)]);
+    }
+
+    #[test]
+    fn utility_missing_connect_pairs_truncate_by_total_distance() {
+        let source = vec![(1, 10), (3, 11), (5, 12)];
+        let target = vec![(2, 20), (4, 21), (7, 22)];
+
+        let (pairs, cap_hit) =
+            utility_missing_connect_pairs(&source, &target, UNREACHABLE_DISTANCE, 2).unwrap();
+
+        assert!(cap_hit);
+        assert_eq!(pairs, vec![(3, 10, 20), (5, 10, 21)]);
     }
 
     #[test]

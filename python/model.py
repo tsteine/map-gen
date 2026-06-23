@@ -426,30 +426,22 @@ class MissingConnectUtilityPairQueryHead(torch.nn.Module):
         query_snapshot_idx = query.query_snapshot_idx.to(torch.int64)
         source_state, source_valid = self._gather(
             frontier_state,
-            query.source_frontier,
+            query.pair_source_frontier,
             query_snapshot_idx,
             row_count_by_snapshot,
             row_start_by_snapshot,
         )
         target_state, target_valid = self._gather(
             frontier_state,
-            query.target_frontier,
+            query.pair_target_frontier,
             query_snapshot_idx,
             row_count_by_snapshot,
             row_start_by_snapshot,
         )
-        pair_valid = source_valid.unsqueeze(2) & target_valid.unsqueeze(1)
-        pair_source_state = source_state.unsqueeze(2).expand(
-            -1, -1, target_state.shape[1], -1
-        )
-        pair_target_state = target_state.unsqueeze(1).expand(
-            -1, source_state.shape[1], -1, -1
-        )
-        source_distance = query.source_distance.to(torch.int16)
-        target_distance = query.target_distance.to(torch.int16)
-        total_distance = source_distance.unsqueeze(2) + target_distance.unsqueeze(1)
+        pair_valid = source_valid & target_valid
+        total_distance = query.pair_total_distance.to(torch.int16)
         total_distance_idx = total_distance.clamp(0, self.max_distance_index).to(torch.int64)
-        current_distance = query.current_distance.to(torch.int16).view(query_count, 1, 1)
+        current_distance = query.current_distance.to(torch.int16).view(query_count, 1)
         finite_current = current_distance != self.unreachable_distance
         finite_margin_idx = (current_distance - total_distance + 255).clamp(
             0,
@@ -467,8 +459,8 @@ class MissingConnectUtilityPairQueryHead(torch.nn.Module):
         pair_embedding = self.pair_layers(
             torch.cat(
                 [
-                    pair_source_state,
-                    pair_target_state,
+                    source_state,
+                    target_state,
                     total_distance_embedding,
                     margin_embedding,
                 ],
@@ -476,18 +468,19 @@ class MissingConnectUtilityPairQueryHead(torch.nn.Module):
             )
         )
         pair_mask = pair_valid.unsqueeze(-1)
-        pair_count = pair_mask.sum(dim=(1, 2)).clamp_min(1)
-        pair_mean = (pair_embedding * pair_mask).sum(dim=(1, 2)) / pair_count
-        pair_max = pair_embedding.masked_fill(~pair_mask, -torch.inf).amax(dim=(1, 2))
+        valid_pair_count = pair_mask.sum(dim=1).clamp_min(1)
+        pair_mean = (pair_embedding * pair_mask).sum(dim=1) / valid_pair_count
+        pair_max = pair_embedding.masked_fill(~pair_mask, -torch.inf).amax(dim=1)
         pair_max = torch.where(torch.isfinite(pair_max), pair_max, 0)
         source_count = query.source_count.to(frontier_state.dtype)
         target_count = query.target_count.to(frontier_state.dtype)
+        pair_count = query.pair_count.to(frontier_state.dtype)
         scalar = torch.cat(
             [
                 torch.log1p(source_count).unsqueeze(1) / math.log(65536.0),
                 torch.log1p(target_count).unsqueeze(1) / math.log(65536.0),
-                query.source_cap_hit.to(frontier_state.dtype).unsqueeze(1),
-                query.target_cap_hit.to(frontier_state.dtype).unsqueeze(1),
+                torch.log1p(pair_count).unsqueeze(1) / math.log(65536.0),
+                query.pair_cap_hit.to(frontier_state.dtype).unsqueeze(1),
             ],
             dim=1,
         )
