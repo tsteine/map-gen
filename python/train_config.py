@@ -28,7 +28,6 @@ class ModelConfig(StrictBaseModel):
     hidden_width: int
     proposal_hidden_width: int
     missing_connect_hidden_width: int
-    missing_connect_query_summary_hidden_width: int
     num_layers: int
 
 
@@ -118,7 +117,6 @@ class FeatureConfig(StrictBaseModel):
     frontier_connection_reachability: bool
     missing_connect_query: bool
     missing_connect_utility_query: bool
-    missing_connect_query_summary: bool
     toilet_crossed_room: int
     known_distance: int
 
@@ -147,7 +145,6 @@ class FeatureConfig(StrictBaseModel):
             frontier_connection_reachability=self.frontier_connection_reachability,
             missing_connect_query=self.missing_connect_query,
             missing_connect_utility_query=self.missing_connect_utility_query,
-            missing_connect_query_summary=self.missing_connect_query_summary,
             toilet_crossed_room=self.toilet_crossed_room > 0,
         )
 
@@ -176,7 +173,6 @@ class EngineFeatureConfig(StrictBaseModel):
     frontier_connection_reachability: bool
     missing_connect_query: bool
     missing_connect_utility_query: bool
-    missing_connect_query_summary: bool
     toilet_crossed_room: bool
 
 
@@ -287,15 +283,6 @@ def validate_config(config: Config) -> None:
         raise ValueError("model.proposal_hidden_width must be greater than zero")
     if config.model.missing_connect_hidden_width <= 0:
         raise ValueError("model.missing_connect_hidden_width must be greater than zero")
-    if (
-        config.features.missing_connect_query_summary
-        and config.model.missing_connect_query_summary_hidden_width <= 0
-    ):
-        raise ValueError(
-            "model.missing_connect_query_summary_hidden_width must be greater than zero"
-        )
-    if config.features.missing_connect_query_summary and not config.features.missing_connect_query:
-        raise ValueError("features.missing_connect_query_summary requires missing_connect_query")
     validate_feature_width("lookahead_outcomes", config.features.lookahead_outcomes)
     validate_feature_width("global_room_position", config.features.global_room_position)
     validate_feature_width(

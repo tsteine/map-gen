@@ -277,7 +277,6 @@ pub struct FeatureConfig {
     pub frontier_connection_reachability: bool,
     pub missing_connect_query: bool,
     pub missing_connect_utility_query: bool,
-    pub missing_connect_query_summary: bool,
     pub toilet_crossed_room: bool,
 }
 
@@ -296,7 +295,6 @@ impl FeatureConfig {
             && !self.toilet_crossed_room
             && !self.missing_connect_query
             && !self.missing_connect_utility_query
-            && !self.missing_connect_query_summary
             && !self.has_frontier_features()
     }
 
@@ -317,9 +315,6 @@ impl FeatureConfig {
             && !self.frontier_mask
         {
             return Err("frontier query and frontier features require frontier_mask");
-        }
-        if self.missing_connect_query_summary && !self.missing_connect_query {
-            return Err("missing_connect_query_summary requires missing_connect_query");
         }
         if (self.frontier_neighbor_position_embedding || self.frontier_neighbor_flags)
             && !self.frontier_neighbor
@@ -358,7 +353,6 @@ impl FeatureConfig {
             frontier_connection_reachability: true,
             missing_connect_query: true,
             missing_connect_utility_query: true,
-            missing_connect_query_summary: true,
             toilet_crossed_room: true,
         }
     }
@@ -389,7 +383,6 @@ impl FeatureConfig {
             frontier_connection_reachability: false,
             missing_connect_query: false,
             missing_connect_utility_query: false,
-            missing_connect_query_summary: false,
             toilet_crossed_room: false,
         }
     }
@@ -6883,14 +6876,6 @@ mod tests {
         assert!(
             FeatureConfig {
                 global_room_position: true,
-                ..FeatureConfig::all_disabled()
-            }
-            .validate()
-            .is_err()
-        );
-        assert!(
-            FeatureConfig {
-                missing_connect_query_summary: true,
                 ..FeatureConfig::all_disabled()
             }
             .validate()

@@ -284,9 +284,6 @@ def frontier_model_kwargs(
         "hidden_width": config.model.hidden_width,
         "proposal_hidden_width": config.model.proposal_hidden_width,
         "missing_connect_hidden_width": config.model.missing_connect_hidden_width,
-        "missing_connect_query_summary_hidden_width": (
-            config.model.missing_connect_query_summary_hidden_width
-        ),
         "num_layers": config.model.num_layers,
         "door_counts": (
             count_room_doors_by_direction(rooms, "left"),

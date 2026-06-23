@@ -63,20 +63,11 @@ This replacement behavior is intentional. Query outputs are not residual terms
 on top of global predictions. For queried rows, the query path owns the local
 prediction; the global head remains responsible for rows without query output.
 
-The early whole-query frontier summary is implemented as
-`MissingConnectFrontierQuerySummary`. It pools initial frontier states over the
-same source and target query sets, builds a whole-query embedding, scatters
-source-side and target-side messages back to participating frontiers, and adds a
-zero-initialized projected summary into the initial frontier state before
-frontier-frontier message passing.
-
 The current configs expose the implemented missing-connect switches as:
 
 - `features.missing_connect_query`;
-- `features.missing_connect_query_summary`;
 - `generation.missing_connect_query_frontier_count`;
-- `model.missing_connect_hidden_width`;
-- `model.missing_connect_query_summary_hidden_width`.
+- `model.missing_connect_hidden_width`.
 
 ## Design Preference
 
