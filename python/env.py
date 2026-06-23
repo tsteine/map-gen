@@ -236,6 +236,8 @@ class FeatureRequirements:
     worker_missing_connect_query_row_counts: list[int]
     missing_connect_utility_query_row_count: int
     worker_missing_connect_utility_query_row_counts: list[int]
+    save_refill_utility_query_row_count: int
+    worker_save_refill_utility_query_row_counts: list[int]
 
 
 @dataclass
@@ -679,11 +681,50 @@ class MissingConnectUtilityQueryFeatures:
 
 
 @dataclass
+class SaveRefillUtilityQueryFeatures:
+    query_snapshot_idx: torch.Tensor
+    query_room_part_idx: torch.Tensor
+    query_kind: torch.Tensor
+    frontier: torch.Tensor
+    frontier_distance: torch.Tensor
+    frontier_count: torch.Tensor
+    frontier_cap_hit: torch.Tensor
+    current_distance: torch.Tensor
+
+    def to(
+        self,
+        device: torch.device,
+        non_blocking: bool = False,
+    ) -> "SaveRefillUtilityQueryFeatures":
+        return SaveRefillUtilityQueryFeatures(
+            query_snapshot_idx=self.query_snapshot_idx.to(device, non_blocking=non_blocking),
+            query_room_part_idx=self.query_room_part_idx.to(device, non_blocking=non_blocking),
+            query_kind=self.query_kind.to(device, non_blocking=non_blocking),
+            frontier=self.frontier.to(device, non_blocking=non_blocking),
+            frontier_distance=self.frontier_distance.to(device, non_blocking=non_blocking),
+            frontier_count=self.frontier_count.to(device, non_blocking=non_blocking),
+            frontier_cap_hit=self.frontier_cap_hit.to(device, non_blocking=non_blocking),
+            current_distance=self.current_distance.to(device, non_blocking=non_blocking),
+        )
+
+    def mark_dynamic(self) -> None:
+        torch._dynamo.maybe_mark_dynamic(self.query_snapshot_idx, 0)
+        torch._dynamo.maybe_mark_dynamic(self.query_room_part_idx, 0)
+        torch._dynamo.maybe_mark_dynamic(self.query_kind, 0)
+        torch._dynamo.maybe_mark_dynamic(self.frontier, 0)
+        torch._dynamo.maybe_mark_dynamic(self.frontier_distance, 0)
+        torch._dynamo.maybe_mark_dynamic(self.frontier_count, 0)
+        torch._dynamo.maybe_mark_dynamic(self.frontier_cap_hit, 0)
+        torch._dynamo.maybe_mark_dynamic(self.current_distance, 0)
+
+
+@dataclass
 class Features:
     global_features: GlobalFeatures
     frontier_features: FrontierFeatures
     missing_connect_query_features: MissingConnectQueryFeatures
     missing_connect_utility_query_features: MissingConnectUtilityQueryFeatures
+    save_refill_utility_query_features: SaveRefillUtilityQueryFeatures
 
     def to(self, device: torch.device, non_blocking: bool = False) -> "Features":
         return Features(
@@ -697,12 +738,17 @@ class Features:
                 device,
                 non_blocking=non_blocking,
             ),
+            save_refill_utility_query_features=self.save_refill_utility_query_features.to(
+                device,
+                non_blocking=non_blocking,
+            ),
         )
 
     def mark_dynamic(self) -> None:
         self.frontier_features.mark_dynamic()
         self.missing_connect_query_features.mark_dynamic()
         self.missing_connect_utility_query_features.mark_dynamic()
+        self.save_refill_utility_query_features.mark_dynamic()
 
     def flatten_candidates(self) -> "Features":
         return Features(
@@ -710,6 +756,7 @@ class Features:
             frontier_features=self.frontier_features,
             missing_connect_query_features=self.missing_connect_query_features,
             missing_connect_utility_query_features=self.missing_connect_utility_query_features,
+            save_refill_utility_query_features=self.save_refill_utility_query_features,
         )
 
 
@@ -743,6 +790,7 @@ class Engine:
         num_envs: int,
         candidate_spatial_cell_size: int,
         missing_connect_query_frontier_count: int,
+        save_refill_query_frontier_count: int,
         seed: Optional[int] = None,
         frontier_neighbor_count: int = 4,
         frontier_window_size: int = 16,
@@ -760,6 +808,7 @@ class Engine:
             frontier_neighbor_count,
             frontier_window_size,
             missing_connect_query_frontier_count,
+            save_refill_query_frontier_count,
             candidate_spatial_cell_size,
             num_threads,
             frontier_neighbor_algorithm,
@@ -772,6 +821,7 @@ class Engine:
             frontier_neighbor_count,
             frontier_window_size,
             missing_connect_query_frontier_count,
+            save_refill_query_frontier_count,
         )
 
     def get_output_sizes(self) -> tuple[int, int]:
@@ -816,6 +866,7 @@ class EnvironmentGroup:
         frontier_neighbor_count: int,
         frontier_window_size: int,
         missing_connect_query_frontier_count: int,
+        save_refill_query_frontier_count: int,
     ):
         self.engine = engine
         self.env = env
@@ -824,6 +875,7 @@ class EnvironmentGroup:
         self.frontier_neighbor_count = frontier_neighbor_count
         self.frontier_window_size = frontier_window_size
         self.missing_connect_query_frontier_count = missing_connect_query_frontier_count
+        self.save_refill_query_frontier_count = save_refill_query_frontier_count
 
     def clear(self):
         self.env.clear()
@@ -961,6 +1013,12 @@ class EnvironmentGroup:
                 worker_missing_connect_utility_query_row_counts=(
                     feature_requirements.worker_missing_connect_utility_query_row_counts
                 ),
+                save_refill_utility_query_row_count=(
+                    feature_requirements.save_refill_utility_query_row_count
+                ),
+                worker_save_refill_utility_query_row_counts=(
+                    feature_requirements.worker_save_refill_utility_query_row_counts
+                ),
             ),
             candidate_slot.stats(self.num_envs),
         )
@@ -1090,6 +1148,12 @@ class EnvironmentGroup:
             worker_missing_connect_utility_query_row_counts=(
                 result.worker_missing_connect_utility_query_row_counts
             ),
+            save_refill_utility_query_row_count=(
+                result.save_refill_utility_query_row_count
+            ),
+            worker_save_refill_utility_query_row_counts=(
+                result.worker_save_refill_utility_query_row_counts
+            ),
         )
 
     def extract_features(
@@ -1115,6 +1179,7 @@ class EnvironmentGroup:
             feature_requirements.frontier_row_count,
             feature_requirements.missing_connect_query_row_count,
             feature_requirements.missing_connect_utility_query_row_count,
+            feature_requirements.save_refill_utility_query_row_count,
         )
         self.env.pack_features_into(
             map_gen.FeatureBuffers(
@@ -1135,6 +1200,12 @@ class EnvironmentGroup:
                     ),
                     "worker_missing_connect_utility_query_row_counts": (
                         feature_requirements.worker_missing_connect_utility_query_row_counts
+                    ),
+                    "save_refill_utility_query_row_count": (
+                        feature_requirements.save_refill_utility_query_row_count
+                    ),
+                    "worker_save_refill_utility_query_row_counts": (
+                        feature_requirements.worker_save_refill_utility_query_row_counts
                     ),
                     "inventory": feature_slot.inventory.numpy(),
                     "room_x": feature_slot.room_x.numpy(),
@@ -1239,6 +1310,30 @@ class EnvironmentGroup:
                     "missing_connect_utility_query_current_distance": (
                         feature_slot.missing_connect_utility_query_current_distance.numpy()
                     ),
+                    "save_refill_utility_query_snapshot_idx": (
+                        feature_slot.save_refill_utility_query_snapshot_idx.numpy()
+                    ),
+                    "save_refill_utility_query_room_part_idx": (
+                        feature_slot.save_refill_utility_query_room_part_idx.numpy()
+                    ),
+                    "save_refill_utility_query_kind": (
+                        feature_slot.save_refill_utility_query_kind.numpy()
+                    ),
+                    "save_refill_utility_query_frontier": (
+                        feature_slot.save_refill_utility_query_frontier.numpy()
+                    ),
+                    "save_refill_utility_query_frontier_distance": (
+                        feature_slot.save_refill_utility_query_frontier_distance.numpy()
+                    ),
+                    "save_refill_utility_query_frontier_count": (
+                        feature_slot.save_refill_utility_query_frontier_count.numpy()
+                    ),
+                    "save_refill_utility_query_frontier_cap_hit": (
+                        feature_slot.save_refill_utility_query_frontier_cap_hit.numpy()
+                    ),
+                    "save_refill_utility_query_current_distance": (
+                        feature_slot.save_refill_utility_query_current_distance.numpy()
+                    ),
                     "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
                     "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),
                     "row_frontier_idx": feature_slot.row_frontier_idx.numpy(),
@@ -1257,6 +1352,7 @@ class EnvironmentGroup:
             feature_requirements.frontier_row_count,
             feature_requirements.missing_connect_query_row_count,
             feature_requirements.missing_connect_utility_query_row_count,
+            feature_requirements.save_refill_utility_query_row_count,
         )
 
     def finish(self):
@@ -1302,12 +1398,16 @@ class FeatureSlot:
         self.missing_connect_query_frontier_width = (
             env.missing_connect_query_frontier_count * int(features.missing_connect_query)
         )
+        self.save_refill_query_frontier_width = env.save_refill_query_frontier_count * int(
+            features.save_utility_query or features.refill_utility_query
+        )
         self.toilet_crossed_room_width = int(features.toilet_crossed_room)
         self.pin_memory = pin_memory
         self.snapshot_capacity = 0
         self.frontier_row_capacity = 0
         self.missing_connect_query_row_capacity = 0
         self.missing_connect_utility_query_row_capacity = 0
+        self.save_refill_utility_query_row_capacity = 0
         self.inventory = None
         self.room_x = None
         self.room_y = None
@@ -1351,6 +1451,14 @@ class FeatureSlot:
         self.missing_connect_utility_query_pair_count = None
         self.missing_connect_utility_query_pair_cap_hit = None
         self.missing_connect_utility_query_current_distance = None
+        self.save_refill_utility_query_snapshot_idx = None
+        self.save_refill_utility_query_room_part_idx = None
+        self.save_refill_utility_query_kind = None
+        self.save_refill_utility_query_frontier = None
+        self.save_refill_utility_query_frontier_distance = None
+        self.save_refill_utility_query_frontier_count = None
+        self.save_refill_utility_query_frontier_cap_hit = None
+        self.save_refill_utility_query_current_distance = None
         self.toilet_crossed_room_idx = None
         self.row_snapshot_idx = None
         self.row_frontier_idx = None
@@ -1365,6 +1473,7 @@ class FeatureSlot:
         frontier_row_count: int,
         missing_connect_query_row_count: int,
         missing_connect_utility_query_row_count: int,
+        save_refill_utility_query_row_count: int,
     ):
         if (
             self.inventory is not None
@@ -1373,6 +1482,8 @@ class FeatureSlot:
             and self.missing_connect_query_row_capacity >= missing_connect_query_row_count
             and self.missing_connect_utility_query_row_capacity
             >= missing_connect_utility_query_row_count
+            and self.save_refill_utility_query_row_capacity
+            >= save_refill_utility_query_row_count
         ):
             return
         self.snapshot_capacity = max(self.snapshot_capacity, snapshot_count)
@@ -1384,6 +1495,10 @@ class FeatureSlot:
         self.missing_connect_utility_query_row_capacity = max(
             self.missing_connect_utility_query_row_capacity,
             missing_connect_utility_query_row_count,
+        )
+        self.save_refill_utility_query_row_capacity = max(
+            self.save_refill_utility_query_row_capacity,
+            save_refill_utility_query_row_count,
         )
         self.inventory = self._empty((self.snapshot_capacity, self.inventory_width), torch.uint8)
         self.room_x = self._empty((self.snapshot_capacity, self.room_width), torch.int8)
@@ -1544,6 +1659,44 @@ class FeatureSlot:
             (self.missing_connect_utility_query_row_capacity,),
             torch.uint8,
         )
+        self.save_refill_utility_query_snapshot_idx = self._empty(
+            (self.save_refill_utility_query_row_capacity,),
+            torch.int64,
+        )
+        self.save_refill_utility_query_room_part_idx = self._empty(
+            (self.save_refill_utility_query_row_capacity,),
+            torch.int64,
+        )
+        self.save_refill_utility_query_kind = self._empty(
+            (self.save_refill_utility_query_row_capacity,),
+            torch.uint8,
+        )
+        self.save_refill_utility_query_frontier = self._empty(
+            (
+                self.save_refill_utility_query_row_capacity,
+                self.save_refill_query_frontier_width,
+            ),
+            torch.int16,
+        )
+        self.save_refill_utility_query_frontier_distance = self._empty(
+            (
+                self.save_refill_utility_query_row_capacity,
+                self.save_refill_query_frontier_width,
+            ),
+            torch.uint8,
+        )
+        self.save_refill_utility_query_frontier_count = self._empty(
+            (self.save_refill_utility_query_row_capacity,),
+            torch.uint16,
+        )
+        self.save_refill_utility_query_frontier_cap_hit = self._empty(
+            (self.save_refill_utility_query_row_capacity,),
+            torch.uint8,
+        )
+        self.save_refill_utility_query_current_distance = self._empty(
+            (self.save_refill_utility_query_row_capacity,),
+            torch.uint8,
+        )
         self.toilet_crossed_room_idx = self._empty(
             (self.snapshot_capacity, self.toilet_crossed_room_width),
             torch.int16,
@@ -1564,6 +1717,7 @@ class FeatureSlot:
         frontier_row_count: int,
         missing_connect_query_row_count: int,
         missing_connect_utility_query_row_count: int,
+        save_refill_utility_query_row_count: int,
     ) -> Features:
         if not include_temperature:
             log_temperature = log_temperature.new_empty([*log_temperature.shape, 0])
@@ -1730,6 +1884,32 @@ class FeatureSlot:
                     :missing_connect_utility_query_row_count
                 ],
             ),
+            save_refill_utility_query_features=SaveRefillUtilityQueryFeatures(
+                query_snapshot_idx=self.save_refill_utility_query_snapshot_idx[
+                    :save_refill_utility_query_row_count
+                ],
+                query_room_part_idx=self.save_refill_utility_query_room_part_idx[
+                    :save_refill_utility_query_row_count
+                ],
+                query_kind=self.save_refill_utility_query_kind[
+                    :save_refill_utility_query_row_count
+                ],
+                frontier=self.save_refill_utility_query_frontier[
+                    :save_refill_utility_query_row_count
+                ],
+                frontier_distance=self.save_refill_utility_query_frontier_distance[
+                    :save_refill_utility_query_row_count
+                ],
+                frontier_count=self.save_refill_utility_query_frontier_count[
+                    :save_refill_utility_query_row_count
+                ],
+                frontier_cap_hit=self.save_refill_utility_query_frontier_cap_hit[
+                    :save_refill_utility_query_row_count
+                ],
+                current_distance=self.save_refill_utility_query_current_distance[
+                    :save_refill_utility_query_row_count
+                ],
+            ),
         )
 
     def features(
@@ -1745,6 +1925,7 @@ class FeatureSlot:
         frontier_row_count: int,
         missing_connect_query_row_count: int,
         missing_connect_utility_query_row_count: int,
+        save_refill_utility_query_row_count: int,
     ) -> Features:
         snapshot_count = environment_count * candidate_count
         if not include_temperature:
@@ -1923,6 +2104,32 @@ class FeatureSlot:
                     :missing_connect_utility_query_row_count
                 ],
             ),
+            save_refill_utility_query_features=SaveRefillUtilityQueryFeatures(
+                query_snapshot_idx=self.save_refill_utility_query_snapshot_idx[
+                    :save_refill_utility_query_row_count
+                ],
+                query_room_part_idx=self.save_refill_utility_query_room_part_idx[
+                    :save_refill_utility_query_row_count
+                ],
+                query_kind=self.save_refill_utility_query_kind[
+                    :save_refill_utility_query_row_count
+                ],
+                frontier=self.save_refill_utility_query_frontier[
+                    :save_refill_utility_query_row_count
+                ],
+                frontier_distance=self.save_refill_utility_query_frontier_distance[
+                    :save_refill_utility_query_row_count
+                ],
+                frontier_count=self.save_refill_utility_query_frontier_count[
+                    :save_refill_utility_query_row_count
+                ],
+                frontier_cap_hit=self.save_refill_utility_query_frontier_cap_hit[
+                    :save_refill_utility_query_row_count
+                ],
+                current_distance=self.save_refill_utility_query_current_distance[
+                    :save_refill_utility_query_row_count
+                ],
+            ),
         )
 
 
@@ -1950,11 +2157,18 @@ def extract_candidate_features(
     worker_missing_connect_utility_query_row_counts = (
         feature_requirements.worker_missing_connect_utility_query_row_counts
     )
+    save_refill_utility_query_row_count = (
+        feature_requirements.save_refill_utility_query_row_count
+    )
+    worker_save_refill_utility_query_row_counts = (
+        feature_requirements.worker_save_refill_utility_query_row_counts
+    )
     feature_slot.ensure(
         candidates.room_idx.numel(),
         frontier_row_count,
         missing_connect_query_row_count,
         missing_connect_utility_query_row_count,
+        save_refill_utility_query_row_count,
     )
     env.env.pack_features_into(
         map_gen.FeatureBuffers(
@@ -1973,6 +2187,10 @@ def extract_candidate_features(
                 ),
                 "worker_missing_connect_utility_query_row_counts": (
                     worker_missing_connect_utility_query_row_counts
+                ),
+                "save_refill_utility_query_row_count": save_refill_utility_query_row_count,
+                "worker_save_refill_utility_query_row_counts": (
+                    worker_save_refill_utility_query_row_counts
                 ),
                 "inventory": feature_slot.inventory.numpy(),
                 "room_x": feature_slot.room_x.numpy(),
@@ -2077,6 +2295,30 @@ def extract_candidate_features(
                 "missing_connect_utility_query_current_distance": (
                     feature_slot.missing_connect_utility_query_current_distance.numpy()
                 ),
+                "save_refill_utility_query_snapshot_idx": (
+                    feature_slot.save_refill_utility_query_snapshot_idx.numpy()
+                ),
+                "save_refill_utility_query_room_part_idx": (
+                    feature_slot.save_refill_utility_query_room_part_idx.numpy()
+                ),
+                "save_refill_utility_query_kind": (
+                    feature_slot.save_refill_utility_query_kind.numpy()
+                ),
+                "save_refill_utility_query_frontier": (
+                    feature_slot.save_refill_utility_query_frontier.numpy()
+                ),
+                "save_refill_utility_query_frontier_distance": (
+                    feature_slot.save_refill_utility_query_frontier_distance.numpy()
+                ),
+                "save_refill_utility_query_frontier_count": (
+                    feature_slot.save_refill_utility_query_frontier_count.numpy()
+                ),
+                "save_refill_utility_query_frontier_cap_hit": (
+                    feature_slot.save_refill_utility_query_frontier_cap_hit.numpy()
+                ),
+                "save_refill_utility_query_current_distance": (
+                    feature_slot.save_refill_utility_query_current_distance.numpy()
+                ),
                 "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
                 "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),
                 "row_frontier_idx": feature_slot.row_frontier_idx.numpy(),
@@ -2096,4 +2338,5 @@ def extract_candidate_features(
         frontier_row_count,
         missing_connect_query_row_count,
         missing_connect_utility_query_row_count,
+        save_refill_utility_query_row_count,
     ).flatten_candidates()

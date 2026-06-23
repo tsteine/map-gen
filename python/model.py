@@ -509,6 +509,163 @@ class MissingConnectUtilityPairQueryHead(torch.nn.Module):
         )
 
 
+class SaveRefillUtilityQueryHead(torch.nn.Module):
+    scalar_width = 4
+    kind_count = 4
+    max_distance_index = 510
+    unreachable_distance = 255
+
+    def __init__(
+        self,
+        embedding_width: int,
+        global_embedding_width: int,
+        hidden_width: int,
+    ):
+        super().__init__()
+        if hidden_width <= 0:
+            raise ValueError("utility_query_hidden_width must be greater than zero")
+        self.distance_embedding = torch.nn.Embedding(self.max_distance_index + 1, 1)
+        self.margin_embedding = torch.nn.Embedding(self.max_distance_index + 1, 1)
+        self.kind_embedding = torch.nn.Embedding(self.kind_count, hidden_width)
+        self.frontier_layers = torch.nn.Sequential(
+            torch.nn.Linear(embedding_width + 2, hidden_width, bias=False),
+            torch.nn.GELU(),
+            torch.nn.Linear(hidden_width, hidden_width, bias=False),
+        )
+        self.output_layers = torch.nn.Sequential(
+            torch.nn.Linear(
+                hidden_width * 3 + global_embedding_width + self.scalar_width,
+                hidden_width,
+                bias=False,
+            ),
+            torch.nn.GELU(),
+            torch.nn.Linear(hidden_width, 1, bias=False),
+        )
+        self.output_layers[-1].weight.data.zero_()
+
+    def _gather(
+        self,
+        frontier_state: torch.Tensor,
+        frontier: torch.Tensor,
+        query_snapshot_idx: torch.Tensor,
+        row_count_by_snapshot: torch.Tensor,
+        row_start_by_snapshot: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        local_frontier = frontier.to(torch.int64)
+        safe_local_frontier = local_frontier.clamp_min(0)
+        row_count = row_count_by_snapshot[query_snapshot_idx].unsqueeze(1)
+        valid = (local_frontier >= 0) & (safe_local_frontier < row_count)
+        packed_frontier = row_start_by_snapshot[query_snapshot_idx].unsqueeze(1) + safe_local_frontier
+        packed_frontier = packed_frontier.clamp_max(max(frontier_state.shape[0] - 1, 0))
+        return frontier_state[packed_frontier], valid
+
+    def forward(
+        self,
+        frontier_state: torch.Tensor,
+        global_state: torch.Tensor,
+        row_count_by_snapshot: torch.Tensor,
+        row_start_by_snapshot: torch.Tensor,
+        query,
+        room_part_count: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        query_count = query.query_room_part_idx.shape[0]
+        snapshot_count = global_state.shape[0]
+        if query_count == 0 or frontier_state.shape[0] == 0:
+            return (
+                frontier_state.new_zeros(
+                    [self.kind_count, snapshot_count, 1, room_part_count]
+                ),
+                torch.zeros(
+                    [self.kind_count, snapshot_count, 1, room_part_count],
+                    dtype=torch.bool,
+                    device=frontier_state.device,
+                ),
+            )
+        query_snapshot_idx = query.query_snapshot_idx.to(torch.int64)
+        frontier, valid = self._gather(
+            frontier_state,
+            query.frontier,
+            query_snapshot_idx,
+            row_count_by_snapshot,
+            row_start_by_snapshot,
+        )
+        distance = query.frontier_distance.to(torch.int16)
+        distance_idx = distance.clamp(0, self.max_distance_index).to(torch.int64)
+        current_distance = query.current_distance.to(torch.int16).view(query_count, 1)
+        finite_current = current_distance != self.unreachable_distance
+        finite_margin_idx = (current_distance - distance + 255).clamp(
+            0,
+            self.max_distance_index - 1,
+        )
+        margin_idx = torch.where(
+            finite_current,
+            finite_margin_idx,
+            torch.full_like(finite_margin_idx, self.max_distance_index),
+        ).to(torch.int64)
+        frontier_embedding = self.frontier_layers(
+            torch.cat(
+                [
+                    frontier,
+                    self.distance_embedding(distance_idx).to(frontier_state.dtype),
+                    self.margin_embedding(margin_idx).to(frontier_state.dtype),
+                ],
+                dim=-1,
+            )
+        )
+        mask = valid.unsqueeze(-1)
+        valid_count = mask.sum(dim=1).clamp_min(1)
+        frontier_mean = (frontier_embedding * mask).sum(dim=1) / valid_count
+        frontier_max = frontier_embedding.masked_fill(~mask, -torch.inf).amax(dim=1)
+        frontier_max = torch.where(torch.isfinite(frontier_max), frontier_max, 0)
+        frontier_count = query.frontier_count.to(frontier_state.dtype)
+        current_distance_value = torch.where(
+            finite_current.squeeze(1),
+            torch.log1p(query.current_distance.to(frontier_state.dtype)) / math.log(256.0),
+            torch.zeros_like(frontier_count, dtype=frontier_state.dtype),
+        )
+        scalar = torch.cat(
+            [
+                torch.log1p(frontier_count).unsqueeze(1) / math.log(65536.0),
+                query.frontier_cap_hit.to(frontier_state.dtype).unsqueeze(1),
+                finite_current.to(frontier_state.dtype),
+                current_distance_value.unsqueeze(1),
+            ],
+            dim=1,
+        )
+        query_kind = query.query_kind.to(torch.int64).clamp(0, self.kind_count - 1)
+        query_utility = self.output_layers(
+            torch.cat(
+                [
+                    frontier_mean,
+                    frontier_max,
+                    self.kind_embedding(query_kind).to(frontier_state.dtype),
+                    global_state[query_snapshot_idx],
+                    scalar,
+                ],
+                dim=1,
+            )
+        ).squeeze(1)
+        safe_room_part_idx = query.query_room_part_idx.to(torch.int64).clamp(
+            0,
+            max(room_part_count - 1, 0),
+        )
+        flat_idx = (
+            query_kind * (snapshot_count * room_part_count)
+            + query_snapshot_idx * room_part_count
+            + safe_room_part_idx
+        )
+        output = frontier_state.new_zeros([self.kind_count * snapshot_count * room_part_count])
+        output.index_copy_(0, flat_idx, query_utility)
+        output_mask = torch.zeros_like(output, dtype=torch.bool)
+        output_mask[flat_idx] = True
+        return output.view(self.kind_count, snapshot_count, 1, room_part_count), output_mask.view(
+            self.kind_count,
+            snapshot_count,
+            1,
+            room_part_count,
+        )
+
+
 class FrontierModel(torch.nn.Module):
     def __init__(
         self,
@@ -521,6 +678,7 @@ class FrontierModel(torch.nn.Module):
         hidden_width,
         proposal_hidden_width,
         missing_connect_hidden_width,
+        utility_query_hidden_width,
         num_layers,
         door_counts,
         frontier_window_size,
@@ -542,6 +700,11 @@ class FrontierModel(torch.nn.Module):
             or self.features.missing_connect_utility_query
         ) and missing_connect_hidden_width <= 0:
             raise ValueError("missing_connect_hidden_width must be greater than zero")
+        if (
+            self.features.save_utility_query
+            or self.features.refill_utility_query
+        ) and utility_query_hidden_width <= 0:
+            raise ValueError("utility_query_hidden_width must be greater than zero")
         door_output_size, connection_output_size = output_metadata.get_output_sizes()
         self.output_sizes = (
             door_output_size,
@@ -712,6 +875,15 @@ class FrontierModel(torch.nn.Module):
         self.refill_from_room_utility_output = torch.nn.Linear(
             embedding_width,
             self.num_room_parts,
+        )
+        self.save_refill_utility_query_output = (
+            SaveRefillUtilityQueryHead(
+                embedding_width,
+                global_embedding_width,
+                utility_query_hidden_width,
+            )
+            if self.features.save_utility_query or self.features.refill_utility_query
+            else None
         )
         self.missing_connect_utility_output = torch.nn.Linear(
             embedding_width,
@@ -941,6 +1113,38 @@ class FrontierModel(torch.nn.Module):
                 query_utility_mask,
                 query_missing_connect_utility,
                 missing_connect_utility,
+            )
+        if self.save_refill_utility_query_output is not None:
+            query_save_refill_utility, query_save_refill_mask = (
+                self.save_refill_utility_query_output(
+                    frontier_state,
+                    global_state,
+                    row_count_by_snapshot,
+                    row_start_by_snapshot,
+                    features.save_refill_utility_query_features,
+                    self.num_room_parts,
+                )
+            )
+            query_save_refill_utility = query_save_refill_utility.to(torch.float32)
+            save_to_room_utility = torch.where(
+                query_save_refill_mask[0],
+                query_save_refill_utility[0],
+                save_to_room_utility,
+            )
+            save_from_room_utility = torch.where(
+                query_save_refill_mask[1],
+                query_save_refill_utility[1],
+                save_from_room_utility,
+            )
+            refill_to_room_utility = torch.where(
+                query_save_refill_mask[2],
+                query_save_refill_utility[2],
+                refill_to_room_utility,
+            )
+            refill_from_room_utility = torch.where(
+                query_save_refill_mask[3],
+                query_save_refill_utility[3],
+                refill_from_room_utility,
             )
         return Predictions(
             door_invalid=door_invalid,

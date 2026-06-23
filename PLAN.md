@@ -219,26 +219,21 @@ Output integration:
 - keep existing global save/refill heads for non-queried rows;
 - for queried rows, use direct query predictions as replacements, not residuals;
 - scatter direct-query outputs into the dense `[snapshot, room_part]` utility or
-  distance outputs;
-- add matching whole-query early summaries for frontiers that participate in
-  save/refill query sets.
+  distance outputs.
 
 Risks:
 
-- early conditioning changes all downstream frontier representations;
-- broad constraint-pressure signals may perturb door, balance, and other output
-  heads;
 - save/refill queries may be weaker than missing-connect queries if relevant
   frontier sets are large or noisy.
 
 ## Step 5: Diagnostics And Ablations
 
-The implemented missing-connect query and query-summary switches already allow
-basic ablations. Add new toggles before enabling additional query heads at once:
+The implemented sparse query switches allow basic ablations. Add or enable new
+toggles before combining additional query heads:
 
 - `missing_connect_utility_query`;
-- `save_refill_query_summary`;
-- `save_refill_query_outputs`;
+- `save_utility_query`;
+- `refill_utility_query`;
 - optional global query-summary injection, if a global-only head needs it.
 
 Useful metrics:

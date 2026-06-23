@@ -15,6 +15,7 @@
     "hidden_width": 256,
     "proposal_hidden_width": 64,
     "missing_connect_hidden_width": 256,
+    "utility_query_hidden_width": 256,
     "num_layers": 2
   },
   "optimizer": {
@@ -56,6 +57,7 @@
     "frontier_neighbor_count": 1,
     "frontier_window_size": 16,
     "missing_connect_query_frontier_count": 4,
+    "save_refill_query_frontier_count": 4,
     "candidate_spatial_cell_size": 8,
     "num_threads": 32
   },
@@ -83,6 +85,8 @@
     "frontier_connection_reachability": true,
     "missing_connect_query": true,
     "missing_connect_utility_query": true,
+    "save_utility_query": false,
+    "refill_utility_query": false,
     "toilet_crossed_room": 32,
     "known_distance": 1
   },

@@ -318,6 +318,7 @@ def create_generation_environment_groups(
                 generation_group_environments,
                 config.generation.candidate_spatial_cell_size,
                 config.generation.missing_connect_query_frontier_count,
+                config.generation.save_refill_query_frontier_count,
                 seed=device_index * config.generation.pipeline_groups + group_index,
                 frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
                 frontier_neighbor_count=config.generation.frontier_neighbor_count,

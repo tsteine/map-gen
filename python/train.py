@@ -284,6 +284,7 @@ def frontier_model_kwargs(
         "hidden_width": config.model.hidden_width,
         "proposal_hidden_width": config.model.proposal_hidden_width,
         "missing_connect_hidden_width": config.model.missing_connect_hidden_width,
+        "utility_query_hidden_width": config.model.utility_query_hidden_width,
         "num_layers": config.model.num_layers,
         "door_counts": (
             count_room_doors_by_direction(rooms, "left"),
@@ -449,6 +450,7 @@ def create_generation_environment_groups_for_device(
             generation_group_environments,
             config.generation.candidate_spatial_cell_size,
             config.generation.missing_connect_query_frontier_count,
+            config.generation.save_refill_query_frontier_count,
             seed=device_index * config.generation.pipeline_groups + group_index,
             frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
             frontier_neighbor_count=config.generation.frontier_neighbor_count,
@@ -1641,6 +1643,7 @@ def create_train_batch_environment_groups(config: Config, engine: Engine):
             config.train.batch_size,
             config.generation.candidate_spatial_cell_size,
             config.generation.missing_connect_query_frontier_count,
+            config.generation.save_refill_query_frontier_count,
             frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
             frontier_neighbor_count=config.generation.frontier_neighbor_count,
             frontier_window_size=config.generation.frontier_window_size,
