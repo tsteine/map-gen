@@ -92,7 +92,6 @@ class GenerationConfig(StrictBaseModel):
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
     frontier_neighbor_count: int
     frontier_window_size: int
-    missing_connect_query_frontier_count: int
     candidate_spatial_cell_size: int
     num_threads: int | None
 
@@ -359,10 +358,6 @@ def validate_config(config: Config) -> None:
         )
     if config.generation.frontier_window_size < 0:
         raise ValueError("generation.frontier_window_size must be greater than or equal to zero")
-    if config.generation.missing_connect_query_frontier_count <= 0:
-        raise ValueError(
-            "generation.missing_connect_query_frontier_count must be greater than zero"
-        )
     if config.generation.candidate_spatial_cell_size <= 0:
         raise ValueError("generation.candidate_spatial_cell_size must be greater than zero")
     validate_nonnegative_scheduleable_float(

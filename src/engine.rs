@@ -23,6 +23,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+const MISSING_CONNECT_QUERY_FRONTIER_COUNT: usize = 1;
+
 macro_rules! required_py_field {
     ($fields:expr, $name:literal) => {
         $fields
@@ -103,6 +105,23 @@ profile_metrics! {
     EnvFeaturesRoomPositionClone => "env.features.room_position_clone",
     EnvFeaturesOutput => "env.features.output",
     EnvFeaturesApplyCandidate => "env.features.apply_candidate",
+    EnvFeaturesConnectionReachabilityBase => "env.features.connection_reachability.base",
+    EnvFeaturesConnectionReachabilityFrontiers => "env.features.connection_reachability.frontiers",
+    EnvFeaturesMissingConnectQueries => "env.features.connection_reachability.missing_connect_queries",
+    EnvCounterProposalCalls => "env.counter.proposal.calls",
+    EnvCounterProposalShortlistCandidates => "env.counter.proposal.shortlist_candidates",
+    EnvCounterProposalEvaluatedCandidates => "env.counter.proposal.evaluated_candidates",
+    EnvCounterProposalCleanCandidates => "env.counter.proposal.clean_candidates",
+    EnvCounterProposalRejectedCandidates => "env.counter.proposal.rejected_candidates",
+    EnvCounterProposalFallbackCandidates => "env.counter.proposal.fallback_candidates",
+    EnvCounterProposalOutputCandidates => "env.counter.proposal.output_candidates",
+    EnvCounterFeatureCalls => "env.counter.features.calls",
+    EnvCounterFeatureFrontiers => "env.counter.features.frontiers",
+    EnvCounterFeatureUsedConnections => "env.counter.features.used_connections",
+    EnvCounterFeatureConnectionFrontierPairs => "env.counter.features.connection_frontier_pairs",
+    EnvCounterFeatureMissingConnectQueryRows => "env.counter.features.missing_connect_query_rows",
+    EnvCounterFeatureMissingConnectUtilityRows => "env.counter.features.missing_connect_utility_rows",
+    EnvCounterFeatureSaveRefillUtilityRows => "env.counter.features.save_refill_utility_rows",
 }
 
 static PROFILE_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -123,6 +142,12 @@ pub(crate) fn record_profile_metric(metric: ProfileMetric, duration: Duration) {
             duration.as_nanos().min(u128::from(u64::MAX)) as u64,
             Ordering::Relaxed,
         );
+    }
+}
+
+pub(crate) fn record_profile_count(metric: ProfileMetric, count: u64) {
+    if PROFILE_ENABLED.load(Ordering::Relaxed) {
+        PROFILE_COUNTS[metric.idx()].fetch_add(count, Ordering::Relaxed);
     }
 }
 
@@ -251,7 +276,6 @@ enum WorkerCommand {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
         recommended_candidates: usize,
         shortlist_candidates: usize,
         sampled_frontier_idx: InputShard<FrontierIdx>,
@@ -334,7 +358,6 @@ enum WorkerCommand {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
         environment_start: usize,
         environment_count: usize,
     },
@@ -564,7 +587,6 @@ fn worker_loop(
                 frontier_neighbor_algorithm,
                 frontier_neighbor_count,
                 frontier_window_size,
-                missing_connect_query_frontier_count,
                 recommended_candidates,
                 shortlist_candidates,
                 sampled_frontier_idx,
@@ -674,7 +696,6 @@ fn worker_loop(
                         frontier_neighbor_algorithm,
                         frontier_neighbor_count,
                         frontier_window_size,
-                        missing_connect_query_frontier_count,
                     ) {
                         Ok(result) => result,
                         Err(err) => {
@@ -754,7 +775,6 @@ fn worker_loop(
                                 frontier_neighbor_algorithm,
                                 frontier_neighbor_count,
                                 frontier_window_size,
-                                missing_connect_query_frontier_count,
                             ));
                         }
                         let door_start = idx * door_outcome_count;
@@ -1151,7 +1171,6 @@ fn worker_loop(
                 frontier_neighbor_algorithm,
                 frontier_neighbor_count,
                 frontier_window_size,
-                missing_connect_query_frontier_count,
                 environment_start,
                 environment_count,
             } => {
@@ -1166,7 +1185,6 @@ fn worker_loop(
                             frontier_neighbor_algorithm,
                             frontier_neighbor_count,
                             frontier_window_size,
-                            missing_connect_query_frontier_count,
                         )
                     })
                     .collect();
@@ -1368,7 +1386,6 @@ pub struct EnvironmentGroup {
     frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
     frontier_neighbor_count: usize,
     frontier_window_size: usize,
-    missing_connect_query_frontier_count: usize,
     action_count: usize,
 }
 
@@ -2340,7 +2357,6 @@ struct FeatureOutputShards {
     save_refill_utility_query_frontier: OutputShard<i16>,
     save_refill_utility_query_frontier_distance: OutputShard<u8>,
     save_refill_utility_query_current_distance: OutputShard<u8>,
-    missing_connect_query_frontier_count: usize,
     snapshot_start: usize,
 }
 
@@ -2376,7 +2392,6 @@ struct FeatureOutputSlices<'a> {
     save_refill_utility_query_frontier: &'a mut [i16],
     save_refill_utility_query_frontier_distance: &'a mut [u8],
     save_refill_utility_query_current_distance: &'a mut [u8],
-    missing_connect_query_frontier_count: usize,
     snapshot_start: usize,
     frontier_row_count: usize,
     missing_connect_query_row_count: usize,
@@ -2483,7 +2498,6 @@ impl FeatureOutputShards {
                 self.save_refill_utility_query_current_distance
                     .into_mut_slice()
             },
-            missing_connect_query_frontier_count: self.missing_connect_query_frontier_count,
             snapshot_start: self.snapshot_start,
             frontier_row_count: 0,
             missing_connect_query_row_count: 0,
@@ -2647,7 +2661,7 @@ impl FeatureOutputSlices<'_> {
             &mut self.missing_connect_query_row_count,
             self.snapshot_start,
             snapshot_idx,
-            self.missing_connect_query_frontier_count,
+            MISSING_CONNECT_QUERY_FRONTIER_COUNT,
             self.missing_connect_query_snapshot_idx,
             self.missing_connect_query_connection_idx,
             self.missing_connect_query_source_frontier,
@@ -2674,7 +2688,7 @@ impl FeatureOutputSlices<'_> {
             &mut self.missing_connect_utility_query_row_count,
             self.snapshot_start,
             snapshot_idx,
-            self.missing_connect_query_frontier_count,
+            MISSING_CONNECT_QUERY_FRONTIER_COUNT,
             self.missing_connect_utility_query_snapshot_idx,
             self.missing_connect_utility_query_connection_idx,
             self.missing_connect_utility_query_pair_source_frontier,
@@ -2742,7 +2756,7 @@ impl Engine {
         })
     }
 
-    #[pyo3(signature = (map_size, num_environments, seed, frontier_neighbor_count, frontier_window_size, missing_connect_query_frontier_count, candidate_spatial_cell_size, num_threads=None, frontier_neighbor_algorithm="delaunay"))]
+    #[pyo3(signature = (map_size, num_environments, seed, frontier_neighbor_count, frontier_window_size, candidate_spatial_cell_size, num_threads=None, frontier_neighbor_algorithm="delaunay"))]
     fn create_environment_group(
         &self,
         map_size: (Coord, Coord),
@@ -2750,7 +2764,6 @@ impl Engine {
         seed: u64,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
         candidate_spatial_cell_size: usize,
         num_threads: Option<usize>,
         frontier_neighbor_algorithm: &str,
@@ -2774,7 +2787,6 @@ impl Engine {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
-            missing_connect_query_frontier_count,
             candidate_spatial_cell_size,
             num_threads,
         )
@@ -2841,7 +2853,6 @@ impl EnvironmentGroup {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
         candidate_spatial_cell_size: usize,
         num_threads: Option<usize>,
     ) -> PyResult<Self> {
@@ -2887,7 +2898,6 @@ impl EnvironmentGroup {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
-            missing_connect_query_frontier_count,
             action_count: 0,
         })
     }
@@ -3137,7 +3147,6 @@ mod tests {
             save_refill_utility_query_current_distance: OutputShard::from_slice(
                 &mut save_refill_utility_query_current_distance,
             ),
-            missing_connect_query_frontier_count: 0,
             snapshot_start: 10,
         };
         let mut outputs = unsafe { outputs.into_slices() };
@@ -3564,7 +3573,6 @@ impl EnvironmentGroup {
                     frontier_neighbor_algorithm: self.frontier_neighbor_algorithm,
                     frontier_neighbor_count: self.frontier_neighbor_count,
                     frontier_window_size: self.frontier_window_size,
-                    missing_connect_query_frontier_count: self.missing_connect_query_frontier_count,
                     door_outcome_count,
                     connection_outcome_count,
                     pre_door_valid: OutputShard::from_slice(
@@ -4170,7 +4178,6 @@ impl EnvironmentGroup {
                     frontier_neighbor_algorithm: self.frontier_neighbor_algorithm,
                     frontier_neighbor_count: self.frontier_neighbor_count,
                     frontier_window_size: self.frontier_window_size,
-                    missing_connect_query_frontier_count: self.missing_connect_query_frontier_count,
                     environment_start: start - worker.start,
                     environment_count: end - start,
                 }) {
@@ -4437,9 +4444,9 @@ impl EnvironmentGroup {
             connection_count * usize::from(self.features.connection_reachability);
         let frontier_connection_width =
             connection_count * usize::from(self.features.frontier_connection_reachability);
-        let missing_connect_query_frontier_width = self.missing_connect_query_frontier_count
-            * usize::from(self.features.missing_connect_query);
-        let missing_connect_utility_query_pair_width = self.missing_connect_query_frontier_count
+        let missing_connect_query_frontier_width =
+            MISSING_CONNECT_QUERY_FRONTIER_COUNT * usize::from(self.features.missing_connect_query);
+        let missing_connect_utility_query_pair_width = MISSING_CONNECT_QUERY_FRONTIER_COUNT
             * usize::from(self.features.missing_connect_utility_query);
         let toilet_crossed_room_width = usize::from(self.features.toilet_crossed_room);
 
@@ -5415,7 +5422,6 @@ impl EnvironmentGroup {
                                 ..save_refill_utility_query_row_start
                                     + worker_save_refill_utility_query_row_count],
                     ),
-                    missing_connect_query_frontier_count: self.missing_connect_query_frontier_count,
                     snapshot_start,
                 };
                 if let Err(err) = worker.send(WorkerCommand::PackFeatures {

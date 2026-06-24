@@ -783,7 +783,6 @@ class Engine:
         map_size: tuple[int, int],
         num_envs: int,
         candidate_spatial_cell_size: int,
-        missing_connect_query_frontier_count: int,
         seed: Optional[int] = None,
         frontier_neighbor_count: int = 4,
         frontier_window_size: int = 16,
@@ -800,7 +799,6 @@ class Engine:
             seed,
             frontier_neighbor_count,
             frontier_window_size,
-            missing_connect_query_frontier_count,
             candidate_spatial_cell_size,
             num_threads,
             frontier_neighbor_algorithm,
@@ -812,7 +810,6 @@ class Engine:
             num_envs,
             frontier_neighbor_count,
             frontier_window_size,
-            missing_connect_query_frontier_count,
         )
 
     def get_output_sizes(self) -> tuple[int, int]:
@@ -856,7 +853,6 @@ class EnvironmentGroup:
         num_envs: int,
         frontier_neighbor_count: int,
         frontier_window_size: int,
-        missing_connect_query_frontier_count: int,
     ):
         self.engine = engine
         self.env = env
@@ -864,7 +860,6 @@ class EnvironmentGroup:
         self.num_envs = num_envs
         self.frontier_neighbor_count = frontier_neighbor_count
         self.frontier_window_size = frontier_window_size
-        self.missing_connect_query_frontier_count = missing_connect_query_frontier_count
 
     def clear(self):
         self.env.clear()
@@ -1378,9 +1373,7 @@ class FeatureSlot:
         self.frontier_connection_reachability_width = connection_count * int(
             features.frontier_connection_reachability
         )
-        self.missing_connect_query_frontier_width = (
-            env.missing_connect_query_frontier_count * int(features.missing_connect_query)
-        )
+        self.missing_connect_query_frontier_width = int(features.missing_connect_query)
         self.toilet_crossed_room_width = int(features.toilet_crossed_room)
         self.pin_memory = pin_memory
         self.snapshot_capacity = 0

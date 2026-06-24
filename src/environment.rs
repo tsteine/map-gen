@@ -6,7 +6,7 @@ use rand::prelude::*;
 use serde::Deserialize;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::common::{
     Action, ActionIdx, CommonData, ConnectionVariantIdx, Coord, DirDoorIdx, Direction, DoorKind,
@@ -14,7 +14,7 @@ use crate::common::{
     GraphDistance, NUM_DIRS, PartIdx, RoomIdx, RoomPartIdx, SpatialCellIdx,
     get_behind_door_position,
 };
-use crate::engine::{ProfileMetric, profile_enabled, record_profile_metric};
+use crate::engine::{ProfileMetric, profile_enabled, record_profile_count, record_profile_metric};
 use crate::scc_dag::SccDag;
 
 const NO_COMPONENT: usize = usize::MAX;
@@ -464,110 +464,6 @@ pub struct Features {
     pub save_refill_utility_query_current_distance: Vec<u8>,
     // Concrete room crossed by the Toilet when exactly one non-Toilet room crosses it.
     pub toilet_crossed_room_idx: Vec<i16>,
-}
-
-struct MissingConnectQueryBuffers<'a> {
-    connection_idx: &'a mut Vec<i64>,
-    source_frontier: &'a mut Vec<i16>,
-    target_frontier: &'a mut Vec<i16>,
-    source_distance: &'a mut Vec<u8>,
-    target_distance: &'a mut Vec<u8>,
-    source_count: &'a mut Vec<u16>,
-    target_count: &'a mut Vec<u16>,
-    source_cap_hit: &'a mut Vec<u8>,
-    target_cap_hit: &'a mut Vec<u8>,
-}
-
-impl MissingConnectQueryBuffers<'_> {
-    fn push_row(
-        &mut self,
-        connection_idx: usize,
-        source_frontiers: &[(GraphDistance, i16)],
-        target_frontiers: &[(GraphDistance, i16)],
-        frontier_count: usize,
-    ) {
-        self.connection_idx.push(connection_idx as i64);
-        self.source_count
-            .push(source_frontiers.len().min(u16::MAX as usize) as u16);
-        self.target_count
-            .push(target_frontiers.len().min(u16::MAX as usize) as u16);
-        self.source_cap_hit
-            .push(u8::from(source_frontiers.len() > frontier_count));
-        self.target_cap_hit
-            .push(u8::from(target_frontiers.len() > frontier_count));
-        for idx in 0..frontier_count {
-            if let Some(&(distance, frontier_idx)) = source_frontiers.get(idx) {
-                self.source_frontier.push(frontier_idx);
-                self.source_distance.push(distance);
-            } else {
-                self.source_frontier.push(-1);
-                self.source_distance.push(0);
-            }
-            if let Some(&(distance, frontier_idx)) = target_frontiers.get(idx) {
-                self.target_frontier.push(frontier_idx);
-                self.target_distance.push(distance);
-            } else {
-                self.target_frontier.push(-1);
-                self.target_distance.push(0);
-            }
-        }
-    }
-}
-
-fn utility_missing_connect_pairs(
-    source_frontiers: &[(GraphDistance, i16)],
-    target_frontiers: &[(GraphDistance, i16)],
-    current_distance: GraphDistance,
-    pair_count: usize,
-) -> Option<(Vec<(u16, i16, i16)>, bool)> {
-    if source_frontiers.is_empty() || target_frontiers.is_empty() {
-        return None;
-    }
-    let min_source_distance = source_frontiers[0].0;
-    let min_target_distance = target_frontiers[0].0;
-    let best_frontier_bound = u16::from(min_source_distance) + u16::from(min_target_distance);
-    if current_distance != UNREACHABLE_DISTANCE
-        && best_frontier_bound + 2 >= u16::from(current_distance)
-    {
-        return None;
-    }
-    let mut best_pairs = BinaryHeap::new();
-    let mut cap_hit = false;
-    for &(source_distance, source_frontier) in source_frontiers {
-        if current_distance != UNREACHABLE_DISTANCE
-            && u16::from(source_distance) + 2 >= u16::from(current_distance)
-        {
-            break;
-        }
-        for &(target_distance, target_frontier) in target_frontiers {
-            let total_distance = u16::from(source_distance) + u16::from(target_distance);
-            if current_distance != UNREACHABLE_DISTANCE
-                && total_distance + 2 >= u16::from(current_distance)
-            {
-                break;
-            }
-            let pair = (total_distance, source_frontier, target_frontier);
-            if best_pairs.len() < pair_count {
-                best_pairs.push(pair);
-            } else {
-                cap_hit = true;
-                if best_pairs
-                    .peek()
-                    .is_some_and(|&worst_pair| pair < worst_pair)
-                {
-                    best_pairs.pop();
-                    best_pairs.push(pair);
-                }
-            }
-        }
-    }
-    if best_pairs.is_empty() {
-        None
-    } else {
-        let mut pairs = best_pairs.into_vec();
-        pairs.sort_unstable();
-        Some((pairs, cap_hit))
-    }
 }
 
 fn save_refill_utility_distance_can_improve(
@@ -2794,7 +2690,6 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
     ) -> Result<
         (
             StepOutcomes,
@@ -2810,6 +2705,11 @@ impl Environment {
         String,
     > {
         debug_assert_eq!(sampled_frontier_idx.len(), sampled_door_variant_idx.len());
+        record_profile_count(ProfileMetric::EnvCounterProposalCalls, 1);
+        record_profile_count(
+            ProfileMetric::EnvCounterProposalShortlistCandidates,
+            sampled_frontier_idx.len() as u64,
+        );
         let profile = profile_start();
         let pre_candidate_outcomes = self.outcomes(common);
         profile_end(ProfileMetric::EnvProposalPreOutcomes, profile);
@@ -2848,7 +2748,6 @@ impl Environment {
                 frontier_neighbor_algorithm,
                 frontier_neighbor_count,
                 frontier_window_size,
-                missing_connect_query_frontier_count,
             )? {
                 CandidateOutcome::Rejected => {
                     rejected_count += 1;
@@ -2873,6 +2772,7 @@ impl Environment {
             }
         }
 
+        let clean_count = clean.len();
         let candidates_with_outcomes = if clean.is_empty() && !rejected.is_empty() {
             let profile = profile_start();
             let fallback = rejected
@@ -2887,16 +2787,36 @@ impl Environment {
                             frontier_neighbor_algorithm,
                             frontier_neighbor_count,
                             frontier_window_size,
-                            missing_connect_query_frontier_count,
                         );
                     (candidate, post_candidate_outcomes, door_match, features)
                 })
                 .collect::<Vec<_>>();
             profile_end(ProfileMetric::EnvProposalFallbackRecompute, profile);
+            record_profile_count(
+                ProfileMetric::EnvCounterProposalFallbackCandidates,
+                fallback.len() as u64,
+            );
             fallback
         } else {
             clean
         };
+        let output_candidate_count = candidates_with_outcomes.len();
+        record_profile_count(
+            ProfileMetric::EnvCounterProposalEvaluatedCandidates,
+            evaluated_count as u64,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterProposalRejectedCandidates,
+            rejected_count as u64,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterProposalCleanCandidates,
+            clean_count as u64,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterProposalOutputCandidates,
+            output_candidate_count as u64,
+        );
 
         let mut candidates = Vec::with_capacity(candidates_with_outcomes.len());
         let mut proposal_frontier_idx = Vec::with_capacity(candidates_with_outcomes.len());
@@ -2934,7 +2854,6 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
     ) -> Result<CandidateOutcome, String> {
         let profile = profile_start();
         let snapshot = self.apply_lookahead_candidate(candidate, common);
@@ -3012,7 +2931,6 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
-            missing_connect_query_frontier_count,
         );
         profile_end(ProfileMetric::EnvProposalFeatures, profile);
         let step_outcomes = StepOutcomes {
@@ -3038,7 +2956,6 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
     ) -> (StepOutcomes, Vec<i16>, Features) {
         let profile = profile_start();
         let snapshot = self.apply_lookahead_candidate(candidate, common);
@@ -3052,7 +2969,6 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
-            missing_connect_query_frontier_count,
         );
         profile_end(ProfileMetric::EnvProposalFeatures, profile);
         let profile = profile_start();
@@ -3120,7 +3036,6 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
     ) -> Features {
         if config.is_empty() {
             return Features::default();
@@ -3144,7 +3059,6 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
-            missing_connect_query_frontier_count,
         )
     }
 
@@ -3363,7 +3277,6 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
     ) -> Features {
         self.features_with_occupancy(
             common,
@@ -3373,7 +3286,6 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
-            missing_connect_query_frontier_count,
         )
     }
 
@@ -3386,7 +3298,6 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
     ) -> Features {
         assert!(self.frontier.len() <= Self::max_frontiers(common));
         let profile = profile_start();
@@ -3395,6 +3306,11 @@ impl Environment {
         } else {
             0
         };
+        record_profile_count(ProfileMetric::EnvCounterFeatureCalls, 1);
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureFrontiers,
+            frontier_count as u64,
+        );
         let inventory = if config.inventory {
             self.connection_variant_unused_count
                 .iter()
@@ -3612,19 +3528,30 @@ impl Environment {
         }
 
         let profile = profile_start();
+        let detailed_connection_profile = profile_enabled();
+        let mut base_profile_duration = Duration::ZERO;
+        let mut frontier_profile_duration = Duration::ZERO;
+        let mut missing_connect_profile_duration = Duration::ZERO;
+        let mut used_connection_count = 0usize;
         for (connection_idx, connection) in common.room_connection.iter().enumerate() {
             if !self.room_used[connection.room_idx as usize] {
                 continue;
             }
+            used_connection_count += 1;
             let from_component =
                 self.room_part_component(common, connection.room_idx, connection.from_part);
             let to_component =
                 self.room_part_component(common, connection.room_idx, connection.to_part);
+            let detail_start = detailed_connection_profile.then(Instant::now);
             let already_reachable = self.scc_dag.can_reach(from_component, to_component);
             if config.connection_reachability && already_reachable {
                 connection_reachability[connection_idx] = 1;
             }
+            if let Some(start) = detail_start {
+                base_profile_duration += start.elapsed();
+            }
             if config.frontier_connection_reachability {
+                let detail_start = detailed_connection_profile.then(Instant::now);
                 for (frontier_idx, (_, frontier)) in sorted_frontiers.iter().enumerate() {
                     let mut flags = 0;
                     if self.scc_dag.can_reach(from_component, frontier.component) {
@@ -3636,87 +3563,112 @@ impl Environment {
                     frontier_connection_reachability
                         [frontier_idx * common.room_connection.len() + connection_idx] = flags;
                 }
+                if let Some(start) = detail_start {
+                    frontier_profile_duration += start.elapsed();
+                }
             }
             if config.missing_connect_query || config.missing_connect_utility_query {
+                let detail_start = detailed_connection_profile.then(Instant::now);
                 let from_part =
                     Self::room_part_idx(common, connection.room_idx, connection.from_part) as usize;
                 let to_part =
                     Self::room_part_idx(common, connection.room_idx, connection.to_part) as usize;
-                let mut source_frontiers = Vec::new();
-                let mut target_frontiers = Vec::new();
-                for (frontier_idx, (_, frontier)) in sorted_frontiers.iter().enumerate() {
-                    let frontier_part = frontier.room_part_idx as usize;
-                    if self.scc_dag.can_reach(from_component, frontier.component) {
-                        let distance = self.graph_distance[from_part * graph_size + frontier_part];
-                        if distance != UNREACHABLE_DISTANCE {
-                            source_frontiers.push((distance, frontier_idx as i16));
-                        }
-                    }
-                    if self.scc_dag.can_reach(frontier.component, to_component) {
-                        let distance = self.graph_distance[frontier_part * graph_size + to_part];
-                        if distance != UNREACHABLE_DISTANCE {
-                            target_frontiers.push((distance, frontier_idx as i16));
-                        }
-                    }
-                }
-                source_frontiers.sort_unstable();
-                target_frontiers.sort_unstable();
+                let source_distance = self
+                    .room_part_frontier_distance_cache
+                    .nearest_frontier_destination[from_part];
+                let source_frontier_part = self
+                    .room_part_frontier_distance_cache
+                    .nearest_frontier_destination_part[from_part];
+                let source_frontier = if source_frontier_part == RoomPartIdx::MAX {
+                    -1
+                } else {
+                    first_frontier_row_by_part[source_frontier_part as usize]
+                };
+                let target_distance = self
+                    .room_part_frontier_distance_cache
+                    .nearest_frontier_source[to_part];
+                let target_frontier_part = self
+                    .room_part_frontier_distance_cache
+                    .nearest_frontier_source_part[to_part];
+                let target_frontier = if target_frontier_part == RoomPartIdx::MAX {
+                    -1
+                } else {
+                    first_frontier_row_by_part[target_frontier_part as usize]
+                };
+                let source_count = u16::from(source_frontier >= 0);
+                let target_count = u16::from(target_frontier >= 0);
                 if config.missing_connect_query && !already_reachable {
-                    MissingConnectQueryBuffers {
-                        connection_idx: &mut missing_connect_query_connection_idx,
-                        source_frontier: &mut missing_connect_query_source_frontier,
-                        target_frontier: &mut missing_connect_query_target_frontier,
-                        source_distance: &mut missing_connect_query_source_distance,
-                        target_distance: &mut missing_connect_query_target_distance,
-                        source_count: &mut missing_connect_query_source_count,
-                        target_count: &mut missing_connect_query_target_count,
-                        source_cap_hit: &mut missing_connect_query_source_cap_hit,
-                        target_cap_hit: &mut missing_connect_query_target_cap_hit,
-                    }
-                    .push_row(
-                        connection_idx,
-                        &source_frontiers,
-                        &target_frontiers,
-                        missing_connect_query_frontier_count,
-                    );
+                    missing_connect_query_connection_idx.push(connection_idx as i64);
+                    missing_connect_query_source_count.push(source_count);
+                    missing_connect_query_target_count.push(target_count);
+                    missing_connect_query_source_cap_hit.push(0);
+                    missing_connect_query_target_cap_hit.push(0);
+                    missing_connect_query_source_frontier.push(source_frontier);
+                    missing_connect_query_target_frontier.push(target_frontier);
+                    missing_connect_query_source_distance.push(if source_frontier >= 0 {
+                        source_distance
+                    } else {
+                        0
+                    });
+                    missing_connect_query_target_distance.push(if target_frontier >= 0 {
+                        target_distance
+                    } else {
+                        0
+                    });
                 }
                 let current_distance = self.graph_distance[from_part * graph_size + to_part];
+                let pair_total_distance = u16::from(source_distance) + u16::from(target_distance);
+                let pair_can_improve = current_distance == UNREACHABLE_DISTANCE
+                    || pair_total_distance + 2 < u16::from(current_distance);
                 if config.missing_connect_utility_query
-                    && let Some((utility_pairs, pair_cap_hit)) = utility_missing_connect_pairs(
-                        &source_frontiers,
-                        &target_frontiers,
-                        current_distance,
-                        missing_connect_query_frontier_count,
-                    )
+                    && source_frontier >= 0
+                    && target_frontier >= 0
+                    && pair_can_improve
                 {
                     missing_connect_utility_query_connection_idx.push(connection_idx as i64);
-                    missing_connect_utility_query_source_count
-                        .push(source_frontiers.len().min(u16::MAX as usize) as u16);
-                    missing_connect_utility_query_target_count
-                        .push(target_frontiers.len().min(u16::MAX as usize) as u16);
-                    missing_connect_utility_query_pair_count
-                        .push(utility_pairs.len().min(u16::MAX as usize) as u16);
-                    missing_connect_utility_query_pair_cap_hit.push(u8::from(pair_cap_hit));
+                    missing_connect_utility_query_source_count.push(source_count);
+                    missing_connect_utility_query_target_count.push(target_count);
+                    missing_connect_utility_query_pair_count.push(1);
+                    missing_connect_utility_query_pair_cap_hit.push(0);
                     missing_connect_utility_query_current_distance.push(current_distance);
-                    for pair_idx in 0..missing_connect_query_frontier_count {
-                        if let Some(&(total_distance, source_frontier, target_frontier)) =
-                            utility_pairs.get(pair_idx)
-                        {
-                            missing_connect_utility_query_pair_source_frontier
-                                .push(source_frontier);
-                            missing_connect_utility_query_pair_target_frontier
-                                .push(target_frontier);
-                            missing_connect_utility_query_pair_total_distance.push(total_distance);
-                        } else {
-                            missing_connect_utility_query_pair_source_frontier.push(-1);
-                            missing_connect_utility_query_pair_target_frontier.push(-1);
-                            missing_connect_utility_query_pair_total_distance.push(0);
-                        }
-                    }
+                    missing_connect_utility_query_pair_source_frontier.push(source_frontier);
+                    missing_connect_utility_query_pair_target_frontier.push(target_frontier);
+                    missing_connect_utility_query_pair_total_distance.push(pair_total_distance);
+                }
+                if let Some(start) = detail_start {
+                    missing_connect_profile_duration += start.elapsed();
                 }
             }
         }
         profile_end(ProfileMetric::EnvFeaturesConnectionReachability, profile);
+        record_profile_metric(
+            ProfileMetric::EnvFeaturesConnectionReachabilityBase,
+            base_profile_duration,
+        );
+        record_profile_metric(
+            ProfileMetric::EnvFeaturesConnectionReachabilityFrontiers,
+            frontier_profile_duration,
+        );
+        record_profile_metric(
+            ProfileMetric::EnvFeaturesMissingConnectQueries,
+            missing_connect_profile_duration,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureUsedConnections,
+            used_connection_count as u64,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureConnectionFrontierPairs,
+            (used_connection_count * frontier_count) as u64,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureMissingConnectQueryRows,
+            missing_connect_query_connection_idx.len() as u64,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureMissingConnectUtilityRows,
+            missing_connect_utility_query_connection_idx.len() as u64,
+        );
 
         let profile = profile_start();
         if config.save_utility_query || config.refill_utility_query {
@@ -3809,6 +3761,10 @@ impl Environment {
             }
         }
         profile_end(ProfileMetric::EnvFeaturesSaveRefillUtilityQuery, profile);
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureSaveRefillUtilityRows,
+            save_refill_utility_query_room_part_idx.len() as u64,
+        );
 
         if config.frontier_neighbor {
             let profile = profile_start();
@@ -3962,7 +3918,6 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
-        missing_connect_query_frontier_count: usize,
     ) -> Features {
         if config.is_empty() {
             return Features::default();
@@ -3989,7 +3944,6 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
-            missing_connect_query_frontier_count,
         );
         let profile = profile_start();
         self.restore_feature_candidate(common, candidate, snapshot);
@@ -4703,7 +4657,6 @@ mod tests {
                 &FeatureConfig::all_disabled(),
                 FrontierNeighborAlgorithm::Nearest,
                 1,
-                1,
                 4,
             )
             .unwrap();
@@ -5036,7 +4989,6 @@ mod tests {
             FrontierNeighborAlgorithm::Delaunay,
             4,
             4,
-            4,
         );
         assert_eq!(env.active_save_room_parts, expected_active_save_room_parts);
         assert_eq!(
@@ -5085,14 +5037,7 @@ mod tests {
             refill_utility_query: true,
             ..FeatureConfig::all_disabled()
         };
-        let features = env.features(
-            &common,
-            &config,
-            FrontierNeighborAlgorithm::Delaunay,
-            4,
-            4,
-            4,
-        );
+        let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4);
 
         assert_eq!(features.save_refill_utility_query_room_part_idx, vec![0; 4]);
         assert_eq!(features.save_refill_utility_query_kind, vec![0, 1, 2, 3]);
@@ -5888,7 +5833,6 @@ mod tests {
             &FeatureConfig::all_disabled(),
             FrontierNeighborAlgorithm::Nearest,
             1,
-            1,
             4,
         );
 
@@ -5929,7 +5873,6 @@ mod tests {
             &common,
             &FeatureConfig::all_disabled(),
             FrontierNeighborAlgorithm::Nearest,
-            1,
             1,
             4,
         );
@@ -6680,7 +6623,6 @@ mod tests {
             FrontierNeighborAlgorithm::Delaunay,
             4,
             4,
-            4,
         );
         assert_eq!(
             simulated.frontier.len() / FEATURE_FRONTIER_WIDTH,
@@ -6703,14 +6645,7 @@ mod tests {
         env.step(candidate, &common);
         assert_eq!(
             simulated,
-            env.features(
-                &common,
-                &config,
-                FrontierNeighborAlgorithm::Delaunay,
-                4,
-                4,
-                4
-            )
+            env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4)
         );
         assert_eq!(env.occupancy[0], 1);
         assert_eq!(env.occupancy[1], 1);
@@ -6728,19 +6663,11 @@ mod tests {
             FrontierNeighborAlgorithm::Delaunay,
             4,
             4,
-            4,
         );
         env.step(dummy_candidate, &common);
         assert_eq!(
             simulated,
-            env.features(
-                &common,
-                &config,
-                FrontierNeighborAlgorithm::Delaunay,
-                4,
-                4,
-                4
-            )
+            env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4)
         );
     }
 
@@ -6779,14 +6706,7 @@ mod tests {
             },
             &common,
         );
-        let features = env.features(
-            &common,
-            &config,
-            FrontierNeighborAlgorithm::Delaunay,
-            4,
-            4,
-            4,
-        );
+        let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4);
         assert_eq!(features.frontier.len() / FEATURE_FRONTIER_WIDTH, 1);
         let placed_door_output_idx = common
             .door_output
@@ -6814,14 +6734,7 @@ mod tests {
             },
             &common,
         );
-        let features = env.features(
-            &common,
-            &config,
-            FrontierNeighborAlgorithm::Delaunay,
-            4,
-            4,
-            4,
-        );
+        let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4);
         assert!(features.row_door_output_idx.is_empty());
     }
 
@@ -6953,22 +6866,8 @@ mod tests {
             full_env.step(action, &common);
             known_env.step_known(action, &common);
             assert_eq!(
-                full_env.features(
-                    &common,
-                    &config,
-                    FrontierNeighborAlgorithm::Delaunay,
-                    4,
-                    4,
-                    4
-                ),
-                known_env.features(
-                    &common,
-                    &config,
-                    FrontierNeighborAlgorithm::Delaunay,
-                    4,
-                    4,
-                    4
-                )
+                full_env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4),
+                known_env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4)
             );
         }
     }
@@ -7122,14 +7021,7 @@ mod tests {
             missing_connect_utility_query: true,
             ..FeatureConfig::all_disabled()
         };
-        let features = env.features(
-            &common,
-            &config,
-            FrontierNeighborAlgorithm::Delaunay,
-            1,
-            1,
-            4,
-        );
+        let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 1, 4);
         assert_eq!(features.connection_reachability, vec![0]);
         assert_eq!(features.frontier_connection_reachability, vec![1, 2]);
         assert_eq!(features.missing_connect_query_connection_idx, vec![0]);
@@ -7137,22 +7029,10 @@ mod tests {
         assert_eq!(features.missing_connect_query_target_count, vec![1]);
         assert_eq!(features.missing_connect_query_source_cap_hit, vec![0]);
         assert_eq!(features.missing_connect_query_target_cap_hit, vec![0]);
-        assert_eq!(
-            features.missing_connect_query_source_frontier,
-            vec![0, -1, -1, -1]
-        );
-        assert_eq!(
-            features.missing_connect_query_target_frontier,
-            vec![1, -1, -1, -1]
-        );
-        assert_eq!(
-            features.missing_connect_query_source_distance,
-            vec![0, 0, 0, 0]
-        );
-        assert_eq!(
-            features.missing_connect_query_target_distance,
-            vec![0, 0, 0, 0]
-        );
+        assert_eq!(features.missing_connect_query_source_frontier, vec![0]);
+        assert_eq!(features.missing_connect_query_target_frontier, vec![1]);
+        assert_eq!(features.missing_connect_query_source_distance, vec![0]);
+        assert_eq!(features.missing_connect_query_target_distance, vec![0]);
         assert_eq!(
             features.missing_connect_utility_query_connection_idx,
             vec![0]
@@ -7163,77 +7043,20 @@ mod tests {
         assert_eq!(features.missing_connect_utility_query_pair_cap_hit, vec![0]);
         assert_eq!(
             features.missing_connect_utility_query_pair_source_frontier,
-            vec![0, -1, -1, -1]
+            vec![0]
         );
         assert_eq!(
             features.missing_connect_utility_query_pair_target_frontier,
-            vec![1, -1, -1, -1]
+            vec![1]
         );
         assert_eq!(
             features.missing_connect_utility_query_pair_total_distance,
-            vec![0, 0, 0, 0]
+            vec![0]
         );
         assert_eq!(
             features.missing_connect_utility_query_current_distance,
             vec![UNREACHABLE_DISTANCE]
         );
-    }
-
-    #[test]
-    fn utility_missing_connect_pairs_keep_unreachable_connection_pairs() {
-        let source = vec![(2, 10), (5, 11)];
-        let target = vec![(3, 20), (7, 21)];
-
-        let (pairs, cap_hit) =
-            utility_missing_connect_pairs(&source, &target, UNREACHABLE_DISTANCE, 10).unwrap();
-
-        assert!(!cap_hit);
-        assert_eq!(
-            pairs,
-            vec![(5, 10, 20), (8, 11, 20), (9, 10, 21), (12, 11, 21)]
-        );
-    }
-
-    #[test]
-    fn utility_missing_connect_pairs_skip_non_improving_existing_path() {
-        let source = vec![(2, 10), (5, 11)];
-        let target = vec![(3, 20), (7, 21)];
-
-        assert!(utility_missing_connect_pairs(&source, &target, 5, 10).is_none());
-    }
-
-    #[test]
-    fn utility_missing_connect_pairs_filter_non_improving_pairs() {
-        let source = vec![(1, 10), (3, 11), (5, 12)];
-        let target = vec![(2, 20), (4, 21), (7, 22)];
-
-        let (pairs, cap_hit) = utility_missing_connect_pairs(&source, &target, 8, 10).unwrap();
-
-        assert!(!cap_hit);
-        assert_eq!(pairs, vec![(3, 10, 20), (5, 10, 21), (5, 11, 20)]);
-    }
-
-    #[test]
-    fn utility_missing_connect_pairs_account_for_two_frontier_crossings() {
-        let source = vec![(1, 10)];
-        let target = vec![(2, 20), (3, 21)];
-
-        let (pairs, cap_hit) = utility_missing_connect_pairs(&source, &target, 6, 10).unwrap();
-
-        assert!(!cap_hit);
-        assert_eq!(pairs, vec![(3, 10, 20)]);
-    }
-
-    #[test]
-    fn utility_missing_connect_pairs_truncate_by_total_distance() {
-        let source = vec![(1, 10), (3, 11), (5, 12)];
-        let target = vec![(2, 20), (4, 21), (7, 22)];
-
-        let (pairs, cap_hit) =
-            utility_missing_connect_pairs(&source, &target, UNREACHABLE_DISTANCE, 2).unwrap();
-
-        assert!(cap_hit);
-        assert_eq!(pairs, vec![(3, 10, 20), (5, 10, 21)]);
     }
 
     #[test]
@@ -7253,7 +7076,6 @@ mod tests {
             },
             &FeatureConfig::all_disabled(),
             FrontierNeighborAlgorithm::Delaunay,
-            4,
             4,
             4,
         );

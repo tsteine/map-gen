@@ -453,7 +453,6 @@ def create_generation_environment_groups_for_device(
             config.map_size,
             generation_group_environments,
             config.generation.candidate_spatial_cell_size,
-            config.generation.missing_connect_query_frontier_count,
             seed=device_index * config.generation.pipeline_groups + group_index,
             frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
             frontier_neighbor_count=config.generation.frontier_neighbor_count,
@@ -1417,9 +1416,16 @@ class TrainingSession:
             ("environment proposal spans", "env.proposal."),
             ("environment lookahead spans", "env.lookahead."),
             ("environment feature spans", "env.features."),
+            ("environment counters", "env.counter."),
         ]:
             section_rows = [row for row in rows if row[0].startswith(prefix)]
             if not section_rows:
+                continue
+
+            if prefix == "env.counter.":
+                logging.info("round %s Rust profile: %s", round_idx, section_name)
+                for name, count, _ in sorted(section_rows, key=lambda row: row[1], reverse=True):
+                    logging.info("  %-55s %10s count", name, count)
                 continue
 
             total_nanos = sum(nanos for _, _, nanos in section_rows)
@@ -1655,7 +1661,6 @@ def create_train_batch_environment_groups(config: Config, engine: Engine):
             config.map_size,
             config.train.batch_size,
             config.generation.candidate_spatial_cell_size,
-            config.generation.missing_connect_query_frontier_count,
             frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
             frontier_neighbor_count=config.generation.frontier_neighbor_count,
             frontier_window_size=config.generation.frontier_window_size,
