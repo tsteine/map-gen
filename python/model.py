@@ -547,18 +547,24 @@ class SaveRefillUtilityQueryHead(torch.nn.Module):
     def __init__(
         self,
         embedding_width: int,
-        global_embedding_width: int,
         hidden_width: int,
+        frontier_width: int,
+        kind_width: int,
     ):
         super().__init__()
         if hidden_width <= 0:
             raise ValueError("utility_query_hidden_width must be greater than zero")
+        if frontier_width <= 0:
+            raise ValueError("utility_query_frontier_width must be greater than zero")
+        if kind_width <= 0:
+            raise ValueError("utility_query_kind_width must be greater than zero")
+        self.frontier_projection = torch.nn.Linear(embedding_width, frontier_width, bias=False)
         self.distance_embedding = torch.nn.Embedding(self.max_distance_index + 1, 1)
         self.margin_embedding = torch.nn.Embedding(self.max_distance_index + 1, 1)
-        self.kind_embedding = torch.nn.Embedding(self.kind_count, hidden_width)
+        self.kind_embedding = torch.nn.Embedding(self.kind_count, kind_width)
         self.output_layers = torch.nn.Sequential(
             torch.nn.Linear(
-                embedding_width + 2 + hidden_width + global_embedding_width + self.scalar_width,
+                frontier_width + 2 + kind_width + self.scalar_width,
                 hidden_width,
                 bias=False,
             ),
@@ -586,14 +592,13 @@ class SaveRefillUtilityQueryHead(torch.nn.Module):
     def forward(
         self,
         frontier_state: torch.Tensor,
-        global_state: torch.Tensor,
         row_count_by_snapshot: torch.Tensor,
         row_start_by_snapshot: torch.Tensor,
         query,
         room_part_count: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         query_count = query.query_room_part_idx.shape[0]
-        snapshot_count = global_state.shape[0]
+        snapshot_count = row_count_by_snapshot.shape[0]
         if query_count == 0 or frontier_state.shape[0] == 0:
             return (
                 frontier_state.new_zeros(
@@ -606,8 +611,9 @@ class SaveRefillUtilityQueryHead(torch.nn.Module):
                 ),
             )
         query_snapshot_idx = query.query_snapshot_idx.to(torch.int64)
+        projected_frontier_state = self.frontier_projection(frontier_state)
         frontier, valid = self._gather(
-            frontier_state,
+            projected_frontier_state,
             query.frontier,
             query_snapshot_idx,
             row_count_by_snapshot,
@@ -647,7 +653,6 @@ class SaveRefillUtilityQueryHead(torch.nn.Module):
                     self.distance_embedding(distance_idx).to(frontier_state.dtype),
                     self.margin_embedding(margin_idx).to(frontier_state.dtype),
                     self.kind_embedding(query_kind).to(frontier_state.dtype),
-                    global_state[query_snapshot_idx],
                     scalar,
                 ],
                 dim=1,
@@ -687,6 +692,8 @@ class FrontierModel(torch.nn.Module):
         proposal_hidden_width,
         missing_connect_hidden_width,
         utility_query_hidden_width,
+        utility_query_frontier_width,
+        utility_query_kind_width,
         known_save_refill_utility_override,
         distance_proximity_scale,
         num_layers,
@@ -893,8 +900,9 @@ class FrontierModel(torch.nn.Module):
         self.save_refill_utility_query_output = (
             SaveRefillUtilityQueryHead(
                 embedding_width,
-                global_embedding_width,
                 utility_query_hidden_width,
+                utility_query_frontier_width,
+                utility_query_kind_width,
             )
             if self.features.save_utility_query or self.features.refill_utility_query
             else None
@@ -1145,7 +1153,6 @@ class FrontierModel(torch.nn.Module):
                     "python.model.save_refill_query_head",
                     lambda: self.save_refill_utility_query_output(
                         frontier_state,
-                        global_state,
                         row_count_by_snapshot,
                         row_start_by_snapshot,
                         features.save_refill_utility_query_features,

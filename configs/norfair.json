@@ -7,7 +7,7 @@
   "visualize": 0,
   "distance_proximity_scale": 5.0,
   "model": {
-    "compile": false,
+    "compile": true,
     "autocast": true,
     "generation_autocast": true,
     "embedding_width": 256,
@@ -15,7 +15,9 @@
     "hidden_width": 256,
     "proposal_hidden_width": 512,
     "missing_connect_hidden_width": 256,
-    "utility_query_hidden_width": 256,
+    "utility_query_hidden_width": 32,
+    "utility_query_frontier_width": 32,
+    "utility_query_kind_width": 4,
     "known_save_refill_utility_override": false,
     "num_layers": 4
   },

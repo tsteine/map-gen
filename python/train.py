@@ -285,6 +285,8 @@ def frontier_model_kwargs(
         "proposal_hidden_width": config.model.proposal_hidden_width,
         "missing_connect_hidden_width": config.model.missing_connect_hidden_width,
         "utility_query_hidden_width": config.model.utility_query_hidden_width,
+        "utility_query_frontier_width": config.model.utility_query_frontier_width,
+        "utility_query_kind_width": config.model.utility_query_kind_width,
         "known_save_refill_utility_override": config.model.known_save_refill_utility_override,
         "distance_proximity_scale": config.distance_proximity_scale,
         "num_layers": config.model.num_layers,
