@@ -234,8 +234,6 @@ class FeatureRequirements:
     worker_frontier_row_counts: list[int]
     missing_connect_query_row_count: int
     worker_missing_connect_query_row_counts: list[int]
-    missing_connect_utility_query_row_count: int
-    worker_missing_connect_utility_query_row_counts: list[int]
     save_refill_utility_query_row_count: int
     worker_save_refill_utility_query_row_counts: list[int]
 
@@ -561,9 +559,7 @@ class FrontierFeatures:
     def to(self, device: torch.device, non_blocking: bool = False) -> "FrontierFeatures":
         return FrontierFeatures(
             frontier=self.frontier.to(device, non_blocking=non_blocking),
-            frontier_door_variant=self.frontier_door_variant.to(
-                device, non_blocking=non_blocking
-            ),
+            frontier_door_variant=self.frontier_door_variant.to(device, non_blocking=non_blocking),
             frontier_occupancy=self.frontier_occupancy.to(device, non_blocking=non_blocking),
             frontier_neighbor=self.frontier_neighbor.to(device, non_blocking=non_blocking),
             frontier_neighbor_pair=self.frontier_neighbor_pair.to(
@@ -637,50 +633,6 @@ class MissingConnectQueryFeatures:
 
 
 @dataclass
-class MissingConnectUtilityQueryFeatures:
-    query_snapshot_idx: torch.Tensor
-    query_connection_idx: torch.Tensor
-    pair_source_frontier: torch.Tensor
-    pair_target_frontier: torch.Tensor
-    pair_total_distance: torch.Tensor
-    source_count: torch.Tensor
-    target_count: torch.Tensor
-    pair_count: torch.Tensor
-    pair_cap_hit: torch.Tensor
-    current_distance: torch.Tensor
-
-    def to(
-        self,
-        device: torch.device,
-        non_blocking: bool = False,
-    ) -> "MissingConnectUtilityQueryFeatures":
-        return MissingConnectUtilityQueryFeatures(
-            query_snapshot_idx=self.query_snapshot_idx.to(device, non_blocking=non_blocking),
-            query_connection_idx=self.query_connection_idx.to(device, non_blocking=non_blocking),
-            pair_source_frontier=self.pair_source_frontier.to(device, non_blocking=non_blocking),
-            pair_target_frontier=self.pair_target_frontier.to(device, non_blocking=non_blocking),
-            pair_total_distance=self.pair_total_distance.to(device, non_blocking=non_blocking),
-            source_count=self.source_count.to(device, non_blocking=non_blocking),
-            target_count=self.target_count.to(device, non_blocking=non_blocking),
-            pair_count=self.pair_count.to(device, non_blocking=non_blocking),
-            pair_cap_hit=self.pair_cap_hit.to(device, non_blocking=non_blocking),
-            current_distance=self.current_distance.to(device, non_blocking=non_blocking),
-        )
-
-    def mark_dynamic(self) -> None:
-        torch._dynamo.maybe_mark_dynamic(self.query_snapshot_idx, 0)
-        torch._dynamo.maybe_mark_dynamic(self.query_connection_idx, 0)
-        torch._dynamo.maybe_mark_dynamic(self.pair_source_frontier, 0)
-        torch._dynamo.maybe_mark_dynamic(self.pair_target_frontier, 0)
-        torch._dynamo.maybe_mark_dynamic(self.pair_total_distance, 0)
-        torch._dynamo.maybe_mark_dynamic(self.source_count, 0)
-        torch._dynamo.maybe_mark_dynamic(self.target_count, 0)
-        torch._dynamo.maybe_mark_dynamic(self.pair_count, 0)
-        torch._dynamo.maybe_mark_dynamic(self.pair_cap_hit, 0)
-        torch._dynamo.maybe_mark_dynamic(self.current_distance, 0)
-
-
-@dataclass
 class SaveRefillUtilityQueryFeatures:
     query_snapshot_idx: torch.Tensor
     query_room_part_idx: torch.Tensor
@@ -717,7 +669,6 @@ class Features:
     global_features: GlobalFeatures
     frontier_features: FrontierFeatures
     missing_connect_query_features: MissingConnectQueryFeatures
-    missing_connect_utility_query_features: MissingConnectUtilityQueryFeatures
     save_refill_utility_query_features: SaveRefillUtilityQueryFeatures
 
     def to(self, device: torch.device, non_blocking: bool = False) -> "Features":
@@ -725,10 +676,6 @@ class Features:
             global_features=self.global_features.to(device, non_blocking=non_blocking),
             frontier_features=self.frontier_features.to(device, non_blocking=non_blocking),
             missing_connect_query_features=self.missing_connect_query_features.to(
-                device,
-                non_blocking=non_blocking,
-            ),
-            missing_connect_utility_query_features=self.missing_connect_utility_query_features.to(
                 device,
                 non_blocking=non_blocking,
             ),
@@ -741,7 +688,6 @@ class Features:
     def mark_dynamic(self) -> None:
         self.frontier_features.mark_dynamic()
         self.missing_connect_query_features.mark_dynamic()
-        self.missing_connect_utility_query_features.mark_dynamic()
         self.save_refill_utility_query_features.mark_dynamic()
 
     def flatten_candidates(self) -> "Features":
@@ -749,7 +695,6 @@ class Features:
             global_features=self.global_features.flatten_candidates(),
             frontier_features=self.frontier_features,
             missing_connect_query_features=self.missing_connect_query_features,
-            missing_connect_utility_query_features=self.missing_connect_utility_query_features,
             save_refill_utility_query_features=self.save_refill_utility_query_features,
         )
 
@@ -991,12 +936,6 @@ class EnvironmentGroup:
                 worker_missing_connect_query_row_counts=(
                     feature_requirements.worker_missing_connect_query_row_counts
                 ),
-                missing_connect_utility_query_row_count=(
-                    feature_requirements.missing_connect_utility_query_row_count
-                ),
-                worker_missing_connect_utility_query_row_counts=(
-                    feature_requirements.worker_missing_connect_utility_query_row_counts
-                ),
                 save_refill_utility_query_row_count=(
                     feature_requirements.save_refill_utility_query_row_count
                 ),
@@ -1126,15 +1065,7 @@ class EnvironmentGroup:
             worker_missing_connect_query_row_counts=(
                 result.worker_missing_connect_query_row_counts
             ),
-            missing_connect_utility_query_row_count=(
-                result.missing_connect_utility_query_row_count
-            ),
-            worker_missing_connect_utility_query_row_counts=(
-                result.worker_missing_connect_utility_query_row_counts
-            ),
-            save_refill_utility_query_row_count=(
-                result.save_refill_utility_query_row_count
-            ),
+            save_refill_utility_query_row_count=(result.save_refill_utility_query_row_count),
             worker_save_refill_utility_query_row_counts=(
                 result.worker_save_refill_utility_query_row_counts
             ),
@@ -1162,7 +1093,6 @@ class EnvironmentGroup:
             environment_count,
             feature_requirements.frontier_row_count,
             feature_requirements.missing_connect_query_row_count,
-            feature_requirements.missing_connect_utility_query_row_count,
             feature_requirements.save_refill_utility_query_row_count,
         )
         self.env.pack_features_into(
@@ -1178,12 +1108,6 @@ class EnvironmentGroup:
                     ),
                     "worker_missing_connect_query_row_counts": (
                         feature_requirements.worker_missing_connect_query_row_counts
-                    ),
-                    "missing_connect_utility_query_row_count": (
-                        feature_requirements.missing_connect_utility_query_row_count
-                    ),
-                    "worker_missing_connect_utility_query_row_counts": (
-                        feature_requirements.worker_missing_connect_utility_query_row_counts
                     ),
                     "save_refill_utility_query_row_count": (
                         feature_requirements.save_refill_utility_query_row_count
@@ -1264,35 +1188,8 @@ class EnvironmentGroup:
                     "missing_connect_query_target_cap_hit": (
                         feature_slot.missing_connect_query_target_cap_hit.numpy()
                     ),
-                    "missing_connect_utility_query_snapshot_idx": (
-                        feature_slot.missing_connect_utility_query_snapshot_idx.numpy()
-                    ),
-                    "missing_connect_utility_query_connection_idx": (
-                        feature_slot.missing_connect_utility_query_connection_idx.numpy()
-                    ),
-                    "missing_connect_utility_query_pair_source_frontier": (
-                        feature_slot.missing_connect_utility_query_pair_source_frontier.numpy()
-                    ),
-                    "missing_connect_utility_query_pair_target_frontier": (
-                        feature_slot.missing_connect_utility_query_pair_target_frontier.numpy()
-                    ),
-                    "missing_connect_utility_query_pair_total_distance": (
-                        feature_slot.missing_connect_utility_query_pair_total_distance.numpy()
-                    ),
-                    "missing_connect_utility_query_source_count": (
-                        feature_slot.missing_connect_utility_query_source_count.numpy()
-                    ),
-                    "missing_connect_utility_query_target_count": (
-                        feature_slot.missing_connect_utility_query_target_count.numpy()
-                    ),
-                    "missing_connect_utility_query_pair_count": (
-                        feature_slot.missing_connect_utility_query_pair_count.numpy()
-                    ),
-                    "missing_connect_utility_query_pair_cap_hit": (
-                        feature_slot.missing_connect_utility_query_pair_cap_hit.numpy()
-                    ),
-                    "missing_connect_utility_query_current_distance": (
-                        feature_slot.missing_connect_utility_query_current_distance.numpy()
+                    "missing_connect_query_current_distance": (
+                        feature_slot.missing_connect_query_current_distance.numpy()
                     ),
                     "save_refill_utility_query_snapshot_idx": (
                         feature_slot.save_refill_utility_query_snapshot_idx.numpy()
@@ -1329,7 +1226,6 @@ class EnvironmentGroup:
             include_lookahead_outcomes,
             feature_requirements.frontier_row_count,
             feature_requirements.missing_connect_query_row_count,
-            feature_requirements.missing_connect_utility_query_row_count,
             feature_requirements.save_refill_utility_query_row_count,
         )
 
@@ -1374,15 +1270,11 @@ class FeatureSlot:
             features.frontier_connection_reachability
         )
         self.missing_connect_query_frontier_width = int(features.missing_connect_query)
-        self.missing_connect_utility_query_pair_width = int(
-            features.missing_connect_utility_query
-        )
         self.toilet_crossed_room_width = int(features.toilet_crossed_room)
         self.pin_memory = pin_memory
         self.snapshot_capacity = 0
         self.frontier_row_capacity = 0
         self.missing_connect_query_row_capacity = 0
-        self.missing_connect_utility_query_row_capacity = 0
         self.save_refill_utility_query_row_capacity = 0
         self.inventory = None
         self.room_x = None
@@ -1417,16 +1309,7 @@ class FeatureSlot:
         self.missing_connect_query_target_count = None
         self.missing_connect_query_source_cap_hit = None
         self.missing_connect_query_target_cap_hit = None
-        self.missing_connect_utility_query_snapshot_idx = None
-        self.missing_connect_utility_query_connection_idx = None
-        self.missing_connect_utility_query_pair_source_frontier = None
-        self.missing_connect_utility_query_pair_target_frontier = None
-        self.missing_connect_utility_query_pair_total_distance = None
-        self.missing_connect_utility_query_source_count = None
-        self.missing_connect_utility_query_target_count = None
-        self.missing_connect_utility_query_pair_count = None
-        self.missing_connect_utility_query_pair_cap_hit = None
-        self.missing_connect_utility_query_current_distance = None
+        self.missing_connect_query_current_distance = None
         self.save_refill_utility_query_snapshot_idx = None
         self.save_refill_utility_query_room_part_idx = None
         self.save_refill_utility_query_kind = None
@@ -1446,7 +1329,6 @@ class FeatureSlot:
         snapshot_count: int,
         frontier_row_count: int,
         missing_connect_query_row_count: int,
-        missing_connect_utility_query_row_count: int,
         save_refill_utility_query_row_count: int,
     ):
         if (
@@ -1454,10 +1336,7 @@ class FeatureSlot:
             and self.snapshot_capacity >= snapshot_count
             and self.frontier_row_capacity >= frontier_row_count
             and self.missing_connect_query_row_capacity >= missing_connect_query_row_count
-            and self.missing_connect_utility_query_row_capacity
-            >= missing_connect_utility_query_row_count
-            and self.save_refill_utility_query_row_capacity
-            >= save_refill_utility_query_row_count
+            and self.save_refill_utility_query_row_capacity >= save_refill_utility_query_row_count
         ):
             return
         self.snapshot_capacity = max(self.snapshot_capacity, snapshot_count)
@@ -1465,10 +1344,6 @@ class FeatureSlot:
         self.missing_connect_query_row_capacity = max(
             self.missing_connect_query_row_capacity,
             missing_connect_query_row_count,
-        )
-        self.missing_connect_utility_query_row_capacity = max(
-            self.missing_connect_utility_query_row_capacity,
-            missing_connect_utility_query_row_count,
         )
         self.save_refill_utility_query_row_capacity = max(
             self.save_refill_utility_query_row_capacity,
@@ -1584,53 +1459,8 @@ class FeatureSlot:
             (self.missing_connect_query_row_capacity,),
             torch.uint8,
         )
-        self.missing_connect_utility_query_snapshot_idx = self._empty(
-            (self.missing_connect_utility_query_row_capacity,),
-            torch.int64,
-        )
-        self.missing_connect_utility_query_connection_idx = self._empty(
-            (self.missing_connect_utility_query_row_capacity,),
-            torch.int64,
-        )
-        self.missing_connect_utility_query_pair_source_frontier = self._empty(
-            (
-                self.missing_connect_utility_query_row_capacity,
-                self.missing_connect_utility_query_pair_width,
-            ),
-            torch.int16,
-        )
-        self.missing_connect_utility_query_pair_target_frontier = self._empty(
-            (
-                self.missing_connect_utility_query_row_capacity,
-                self.missing_connect_utility_query_pair_width,
-            ),
-            torch.int16,
-        )
-        self.missing_connect_utility_query_pair_total_distance = self._empty(
-            (
-                self.missing_connect_utility_query_row_capacity,
-                self.missing_connect_utility_query_pair_width,
-            ),
-            torch.uint16,
-        )
-        self.missing_connect_utility_query_source_count = self._empty(
-            (self.missing_connect_utility_query_row_capacity,),
-            torch.uint16,
-        )
-        self.missing_connect_utility_query_target_count = self._empty(
-            (self.missing_connect_utility_query_row_capacity,),
-            torch.uint16,
-        )
-        self.missing_connect_utility_query_pair_count = self._empty(
-            (self.missing_connect_utility_query_row_capacity,),
-            torch.uint16,
-        )
-        self.missing_connect_utility_query_pair_cap_hit = self._empty(
-            (self.missing_connect_utility_query_row_capacity,),
-            torch.uint8,
-        )
-        self.missing_connect_utility_query_current_distance = self._empty(
-            (self.missing_connect_utility_query_row_capacity,),
+        self.missing_connect_query_current_distance = self._empty(
+            (self.missing_connect_query_row_capacity,),
             torch.uint8,
         )
         self.save_refill_utility_query_snapshot_idx = self._empty(
@@ -1676,7 +1506,6 @@ class FeatureSlot:
         include_lookahead_outcomes: bool,
         frontier_row_count: int,
         missing_connect_query_row_count: int,
-        missing_connect_utility_query_row_count: int,
         save_refill_utility_query_row_count: int,
     ) -> Features:
         if not include_temperature:
@@ -1808,40 +1637,8 @@ class FeatureSlot:
                 target_cap_hit=self.missing_connect_query_target_cap_hit[
                     :missing_connect_query_row_count
                 ],
-                current_distance=self.missing_connect_query_source_distance.new_empty(
-                    [missing_connect_query_row_count]
-                ),
-            ),
-            missing_connect_utility_query_features=MissingConnectUtilityQueryFeatures(
-                query_snapshot_idx=self.missing_connect_utility_query_snapshot_idx[
-                    :missing_connect_utility_query_row_count
-                ],
-                query_connection_idx=self.missing_connect_utility_query_connection_idx[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_source_frontier=self.missing_connect_utility_query_pair_source_frontier[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_target_frontier=self.missing_connect_utility_query_pair_target_frontier[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_total_distance=self.missing_connect_utility_query_pair_total_distance[
-                    :missing_connect_utility_query_row_count
-                ],
-                source_count=self.missing_connect_utility_query_source_count[
-                    :missing_connect_utility_query_row_count
-                ],
-                target_count=self.missing_connect_utility_query_target_count[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_count=self.missing_connect_utility_query_pair_count[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_cap_hit=self.missing_connect_utility_query_pair_cap_hit[
-                    :missing_connect_utility_query_row_count
-                ],
-                current_distance=self.missing_connect_utility_query_current_distance[
-                    :missing_connect_utility_query_row_count
+                current_distance=self.missing_connect_query_current_distance[
+                    :missing_connect_query_row_count
                 ],
             ),
             save_refill_utility_query_features=SaveRefillUtilityQueryFeatures(
@@ -1878,7 +1675,6 @@ class FeatureSlot:
         include_lookahead_outcomes: bool,
         frontier_row_count: int,
         missing_connect_query_row_count: int,
-        missing_connect_utility_query_row_count: int,
         save_refill_utility_query_row_count: int,
     ) -> Features:
         snapshot_count = environment_count * candidate_count
@@ -1927,38 +1723,28 @@ class FeatureSlot:
                 ),
                 room_part_save_from_room_distance=self.room_part_save_from_room_distance[
                     :snapshot_count
-                ].view(
-                    environment_count, candidate_count, self.room_part_save_distance_width
-                ),
+                ].view(environment_count, candidate_count, self.room_part_save_distance_width),
                 room_part_save_to_room_distance=self.room_part_save_to_room_distance[
                     :snapshot_count
-                ].view(
-                    environment_count, candidate_count, self.room_part_save_distance_width
-                ),
+                ].view(environment_count, candidate_count, self.room_part_save_distance_width),
                 room_part_refill_from_room_distance=self.room_part_refill_from_room_distance[
                     :snapshot_count
-                ].view(
-                    environment_count, candidate_count, self.room_part_refill_distance_width
-                ),
+                ].view(environment_count, candidate_count, self.room_part_refill_distance_width),
                 room_part_refill_to_room_distance=self.room_part_refill_to_room_distance[
                     :snapshot_count
-                ].view(
-                    environment_count, candidate_count, self.room_part_refill_distance_width
-                ),
+                ].view(environment_count, candidate_count, self.room_part_refill_distance_width),
                 room_part_frontier_from_room_distance=self.room_part_frontier_from_room_distance[
                     :snapshot_count
-                ].view(
-                    environment_count, candidate_count, self.room_part_frontier_distance_width
-                ),
+                ].view(environment_count, candidate_count, self.room_part_frontier_distance_width),
                 room_part_frontier_to_room_distance=self.room_part_frontier_to_room_distance[
                     :snapshot_count
                 ].view(environment_count, candidate_count, self.room_part_frontier_distance_width),
                 known_save_from_room_distance=self.known_save_from_room_distance[
                     :snapshot_count
                 ].view(environment_count, candidate_count, self.known_distance_width),
-                known_save_to_room_distance=self.known_save_to_room_distance[
-                    :snapshot_count
-                ].view(environment_count, candidate_count, self.known_distance_width),
+                known_save_to_room_distance=self.known_save_to_room_distance[:snapshot_count].view(
+                    environment_count, candidate_count, self.known_distance_width
+                ),
                 known_refill_from_room_distance=self.known_refill_from_room_distance[
                     :snapshot_count
                 ].view(environment_count, candidate_count, self.known_distance_width),
@@ -2022,40 +1808,8 @@ class FeatureSlot:
                 target_cap_hit=self.missing_connect_query_target_cap_hit[
                     :missing_connect_query_row_count
                 ],
-                current_distance=self.missing_connect_query_source_distance.new_empty(
-                    [missing_connect_query_row_count]
-                ),
-            ),
-            missing_connect_utility_query_features=MissingConnectUtilityQueryFeatures(
-                query_snapshot_idx=self.missing_connect_utility_query_snapshot_idx[
-                    :missing_connect_utility_query_row_count
-                ],
-                query_connection_idx=self.missing_connect_utility_query_connection_idx[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_source_frontier=self.missing_connect_utility_query_pair_source_frontier[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_target_frontier=self.missing_connect_utility_query_pair_target_frontier[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_total_distance=self.missing_connect_utility_query_pair_total_distance[
-                    :missing_connect_utility_query_row_count
-                ],
-                source_count=self.missing_connect_utility_query_source_count[
-                    :missing_connect_utility_query_row_count
-                ],
-                target_count=self.missing_connect_utility_query_target_count[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_count=self.missing_connect_utility_query_pair_count[
-                    :missing_connect_utility_query_row_count
-                ],
-                pair_cap_hit=self.missing_connect_utility_query_pair_cap_hit[
-                    :missing_connect_utility_query_row_count
-                ],
-                current_distance=self.missing_connect_utility_query_current_distance[
-                    :missing_connect_utility_query_row_count
+                current_distance=self.missing_connect_query_current_distance[
+                    :missing_connect_query_row_count
                 ],
             ),
             save_refill_utility_query_features=SaveRefillUtilityQueryFeatures(
@@ -2099,15 +1853,7 @@ def extract_candidate_features(
     worker_missing_connect_query_row_counts = (
         feature_requirements.worker_missing_connect_query_row_counts
     )
-    missing_connect_utility_query_row_count = (
-        feature_requirements.missing_connect_utility_query_row_count
-    )
-    worker_missing_connect_utility_query_row_counts = (
-        feature_requirements.worker_missing_connect_utility_query_row_counts
-    )
-    save_refill_utility_query_row_count = (
-        feature_requirements.save_refill_utility_query_row_count
-    )
+    save_refill_utility_query_row_count = feature_requirements.save_refill_utility_query_row_count
     worker_save_refill_utility_query_row_counts = (
         feature_requirements.worker_save_refill_utility_query_row_counts
     )
@@ -2115,7 +1861,6 @@ def extract_candidate_features(
         candidates.room_idx.numel(),
         frontier_row_count,
         missing_connect_query_row_count,
-        missing_connect_utility_query_row_count,
         save_refill_utility_query_row_count,
     )
     env.env.pack_features_into(
@@ -2129,12 +1874,6 @@ def extract_candidate_features(
                 "missing_connect_query_row_count": missing_connect_query_row_count,
                 "worker_missing_connect_query_row_counts": (
                     worker_missing_connect_query_row_counts
-                ),
-                "missing_connect_utility_query_row_count": (
-                    missing_connect_utility_query_row_count
-                ),
-                "worker_missing_connect_utility_query_row_counts": (
-                    worker_missing_connect_utility_query_row_counts
                 ),
                 "save_refill_utility_query_row_count": save_refill_utility_query_row_count,
                 "worker_save_refill_utility_query_row_counts": (
@@ -2167,9 +1906,7 @@ def extract_candidate_features(
                 "known_save_from_room_distance": (
                     feature_slot.known_save_from_room_distance.numpy()
                 ),
-                "known_save_to_room_distance": (
-                    feature_slot.known_save_to_room_distance.numpy()
-                ),
+                "known_save_to_room_distance": (feature_slot.known_save_to_room_distance.numpy()),
                 "known_refill_from_room_distance": (
                     feature_slot.known_refill_from_room_distance.numpy()
                 ),
@@ -2213,35 +1950,8 @@ def extract_candidate_features(
                 "missing_connect_query_target_cap_hit": (
                     feature_slot.missing_connect_query_target_cap_hit.numpy()
                 ),
-                "missing_connect_utility_query_snapshot_idx": (
-                    feature_slot.missing_connect_utility_query_snapshot_idx.numpy()
-                ),
-                "missing_connect_utility_query_connection_idx": (
-                    feature_slot.missing_connect_utility_query_connection_idx.numpy()
-                ),
-                "missing_connect_utility_query_pair_source_frontier": (
-                    feature_slot.missing_connect_utility_query_pair_source_frontier.numpy()
-                ),
-                "missing_connect_utility_query_pair_target_frontier": (
-                    feature_slot.missing_connect_utility_query_pair_target_frontier.numpy()
-                ),
-                "missing_connect_utility_query_pair_total_distance": (
-                    feature_slot.missing_connect_utility_query_pair_total_distance.numpy()
-                ),
-                "missing_connect_utility_query_source_count": (
-                    feature_slot.missing_connect_utility_query_source_count.numpy()
-                ),
-                "missing_connect_utility_query_target_count": (
-                    feature_slot.missing_connect_utility_query_target_count.numpy()
-                ),
-                "missing_connect_utility_query_pair_count": (
-                    feature_slot.missing_connect_utility_query_pair_count.numpy()
-                ),
-                "missing_connect_utility_query_pair_cap_hit": (
-                    feature_slot.missing_connect_utility_query_pair_cap_hit.numpy()
-                ),
-                "missing_connect_utility_query_current_distance": (
-                    feature_slot.missing_connect_utility_query_current_distance.numpy()
+                "missing_connect_query_current_distance": (
+                    feature_slot.missing_connect_query_current_distance.numpy()
                 ),
                 "save_refill_utility_query_snapshot_idx": (
                     feature_slot.save_refill_utility_query_snapshot_idx.numpy()
@@ -2279,6 +1989,5 @@ def extract_candidate_features(
         include_lookahead_outcomes,
         frontier_row_count,
         missing_connect_query_row_count,
-        missing_connect_utility_query_row_count,
         save_refill_utility_query_row_count,
     ).flatten_candidates()

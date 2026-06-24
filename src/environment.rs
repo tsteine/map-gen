@@ -276,7 +276,6 @@ pub struct FeatureConfig {
     pub connection_reachability: bool,
     pub frontier_connection_reachability: bool,
     pub missing_connect_query: bool,
-    pub missing_connect_utility_query: bool,
     pub save_utility_query: bool,
     pub refill_utility_query: bool,
     pub toilet_crossed_room: bool,
@@ -296,7 +295,6 @@ impl FeatureConfig {
             && !self.connection_reachability
             && !self.toilet_crossed_room
             && !self.missing_connect_query
-            && !self.missing_connect_utility_query
             && !self.save_utility_query
             && !self.refill_utility_query
             && !self.has_frontier_features()
@@ -315,7 +313,6 @@ impl FeatureConfig {
             || self.frontier_neighbor
             || self.frontier_connection_reachability
             || self.missing_connect_query
-            || self.missing_connect_utility_query
             || self.save_utility_query
             || self.refill_utility_query)
             && !self.frontier_mask
@@ -358,7 +355,6 @@ impl FeatureConfig {
             connection_reachability: true,
             frontier_connection_reachability: true,
             missing_connect_query: true,
-            missing_connect_utility_query: true,
             save_utility_query: true,
             refill_utility_query: true,
             toilet_crossed_room: true,
@@ -390,7 +386,6 @@ impl FeatureConfig {
             connection_reachability: false,
             frontier_connection_reachability: false,
             missing_connect_query: false,
-            missing_connect_utility_query: false,
             save_utility_query: false,
             refill_utility_query: false,
             toilet_crossed_room: false,
@@ -444,17 +439,7 @@ pub struct Features {
     pub missing_connect_query_target_count: Vec<u16>,
     pub missing_connect_query_source_cap_hit: Vec<u8>,
     pub missing_connect_query_target_cap_hit: Vec<u8>,
-    // Sparse utility query rows for required missing connections. Pair frontier
-    // indices are snapshot-local; -1 marks padding.
-    pub missing_connect_utility_query_connection_idx: Vec<i64>,
-    pub missing_connect_utility_query_pair_source_frontier: Vec<i16>,
-    pub missing_connect_utility_query_pair_target_frontier: Vec<i16>,
-    pub missing_connect_utility_query_pair_total_distance: Vec<u16>,
-    pub missing_connect_utility_query_source_count: Vec<u16>,
-    pub missing_connect_utility_query_target_count: Vec<u16>,
-    pub missing_connect_utility_query_pair_count: Vec<u16>,
-    pub missing_connect_utility_query_pair_cap_hit: Vec<u8>,
-    pub missing_connect_utility_query_current_distance: Vec<u8>,
+    pub missing_connect_query_current_distance: Vec<u8>,
     // Sparse utility query rows for save/refill distances. Frontier indices are
     // snapshot-local; -1 marks padding.
     pub save_refill_utility_query_room_part_idx: Vec<i64>,
@@ -3397,15 +3382,7 @@ impl Environment {
         let mut missing_connect_query_target_count = Vec::new();
         let mut missing_connect_query_source_cap_hit = Vec::new();
         let mut missing_connect_query_target_cap_hit = Vec::new();
-        let mut missing_connect_utility_query_connection_idx = Vec::new();
-        let mut missing_connect_utility_query_pair_source_frontier = Vec::new();
-        let mut missing_connect_utility_query_pair_target_frontier = Vec::new();
-        let mut missing_connect_utility_query_pair_total_distance = Vec::new();
-        let mut missing_connect_utility_query_source_count = Vec::new();
-        let mut missing_connect_utility_query_target_count = Vec::new();
-        let mut missing_connect_utility_query_pair_count = Vec::new();
-        let mut missing_connect_utility_query_pair_cap_hit = Vec::new();
-        let mut missing_connect_utility_query_current_distance = Vec::new();
+        let mut missing_connect_query_current_distance = Vec::new();
         let mut save_refill_utility_query_room_part_idx = Vec::new();
         let mut save_refill_utility_query_kind = Vec::new();
         let mut save_refill_utility_query_frontier = Vec::new();
@@ -3567,7 +3544,7 @@ impl Environment {
                     frontier_profile_duration += start.elapsed();
                 }
             }
-            if config.missing_connect_query || config.missing_connect_utility_query {
+            if config.missing_connect_query {
                 let detail_start = detailed_connection_profile.then(Instant::now);
                 let from_part =
                     Self::room_part_idx(common, connection.room_idx, connection.from_part) as usize;
@@ -3597,12 +3574,24 @@ impl Environment {
                 };
                 let source_count = u16::from(source_frontier >= 0);
                 let target_count = u16::from(target_frontier >= 0);
-                if config.missing_connect_query && !already_reachable {
+                let current_distance = self.graph_distance[from_part * graph_size + to_part];
+                let pair_total_distance = if source_frontier >= 0 && target_frontier >= 0 {
+                    u16::from(source_distance) + u16::from(target_distance)
+                } else {
+                    0
+                };
+                let pair_can_improve = source_frontier >= 0
+                    && target_frontier >= 0
+                    && (current_distance == UNREACHABLE_DISTANCE
+                        || pair_total_distance + 2 < u16::from(current_distance));
+                let emit_missing_connect_query = !already_reachable || pair_can_improve;
+                if emit_missing_connect_query {
                     missing_connect_query_connection_idx.push(connection_idx as i64);
                     missing_connect_query_source_count.push(source_count);
                     missing_connect_query_target_count.push(target_count);
                     missing_connect_query_source_cap_hit.push(0);
                     missing_connect_query_target_cap_hit.push(0);
+                    missing_connect_query_current_distance.push(current_distance);
                     missing_connect_query_source_frontier.push(source_frontier);
                     missing_connect_query_target_frontier.push(target_frontier);
                     missing_connect_query_source_distance.push(if source_frontier >= 0 {
@@ -3615,27 +3604,6 @@ impl Environment {
                     } else {
                         0
                     });
-                }
-                if config.missing_connect_utility_query
-                    && source_frontier >= 0
-                    && target_frontier >= 0
-                {
-                    let current_distance = self.graph_distance[from_part * graph_size + to_part];
-                    let pair_total_distance =
-                        u16::from(source_distance) + u16::from(target_distance);
-                    let pair_can_improve = current_distance == UNREACHABLE_DISTANCE
-                        || pair_total_distance + 2 < u16::from(current_distance);
-                    if pair_can_improve {
-                        missing_connect_utility_query_connection_idx.push(connection_idx as i64);
-                        missing_connect_utility_query_source_count.push(source_count);
-                        missing_connect_utility_query_target_count.push(target_count);
-                        missing_connect_utility_query_pair_count.push(1);
-                        missing_connect_utility_query_pair_cap_hit.push(0);
-                        missing_connect_utility_query_current_distance.push(current_distance);
-                        missing_connect_utility_query_pair_source_frontier.push(source_frontier);
-                        missing_connect_utility_query_pair_target_frontier.push(target_frontier);
-                        missing_connect_utility_query_pair_total_distance.push(pair_total_distance);
-                    }
                 }
                 if let Some(start) = detail_start {
                     missing_connect_profile_duration += start.elapsed();
@@ -3667,11 +3635,6 @@ impl Environment {
             ProfileMetric::EnvCounterFeatureMissingConnectQueryRows,
             missing_connect_query_connection_idx.len() as u64,
         );
-        record_profile_count(
-            ProfileMetric::EnvCounterFeatureMissingConnectUtilityRows,
-            missing_connect_utility_query_connection_idx.len() as u64,
-        );
-
         let profile = profile_start();
         if config.save_utility_query || config.refill_utility_query {
             let mut push_save_refill_query =
@@ -3892,15 +3855,7 @@ impl Environment {
             missing_connect_query_target_count,
             missing_connect_query_source_cap_hit,
             missing_connect_query_target_cap_hit,
-            missing_connect_utility_query_connection_idx,
-            missing_connect_utility_query_pair_source_frontier,
-            missing_connect_utility_query_pair_target_frontier,
-            missing_connect_utility_query_pair_total_distance,
-            missing_connect_utility_query_source_count,
-            missing_connect_utility_query_target_count,
-            missing_connect_utility_query_pair_count,
-            missing_connect_utility_query_pair_cap_hit,
-            missing_connect_utility_query_current_distance,
+            missing_connect_query_current_distance,
             save_refill_utility_query_room_part_idx,
             save_refill_utility_query_kind,
             save_refill_utility_query_frontier,
@@ -7020,7 +6975,6 @@ mod tests {
             connection_reachability: true,
             frontier_connection_reachability: true,
             missing_connect_query: true,
-            missing_connect_utility_query: true,
             ..FeatureConfig::all_disabled()
         };
         let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 1, 4);
@@ -7036,27 +6990,7 @@ mod tests {
         assert_eq!(features.missing_connect_query_source_distance, vec![0]);
         assert_eq!(features.missing_connect_query_target_distance, vec![0]);
         assert_eq!(
-            features.missing_connect_utility_query_connection_idx,
-            vec![0]
-        );
-        assert_eq!(features.missing_connect_utility_query_source_count, vec![1]);
-        assert_eq!(features.missing_connect_utility_query_target_count, vec![1]);
-        assert_eq!(features.missing_connect_utility_query_pair_count, vec![1]);
-        assert_eq!(features.missing_connect_utility_query_pair_cap_hit, vec![0]);
-        assert_eq!(
-            features.missing_connect_utility_query_pair_source_frontier,
-            vec![0]
-        );
-        assert_eq!(
-            features.missing_connect_utility_query_pair_target_frontier,
-            vec![1]
-        );
-        assert_eq!(
-            features.missing_connect_utility_query_pair_total_distance,
-            vec![0]
-        );
-        assert_eq!(
-            features.missing_connect_utility_query_current_distance,
+            features.missing_connect_query_current_distance,
             vec![UNREACHABLE_DISTANCE]
         );
     }

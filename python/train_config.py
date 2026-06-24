@@ -27,7 +27,9 @@ class ModelConfig(StrictBaseModel):
     global_embedding_width: int
     hidden_width: int
     proposal_hidden_width: int
-    missing_connect_hidden_width: int
+    missing_connect_query_hidden_width: int
+    missing_connect_query_frontier_width: int
+    missing_connect_query_distance_width: int
     utility_query_hidden_width: int
     utility_query_frontier_width: int
     utility_query_kind_width: int
@@ -119,7 +121,6 @@ class FeatureConfig(StrictBaseModel):
     connection_reachability: int
     frontier_connection_reachability: bool
     missing_connect_query: bool
-    missing_connect_utility_query: bool
     save_utility_query: bool
     refill_utility_query: bool
     toilet_crossed_room: int
@@ -149,7 +150,6 @@ class FeatureConfig(StrictBaseModel):
             connection_reachability=self.connection_reachability > 0,
             frontier_connection_reachability=self.frontier_connection_reachability,
             missing_connect_query=self.missing_connect_query,
-            missing_connect_utility_query=self.missing_connect_utility_query,
             save_utility_query=self.save_utility_query,
             refill_utility_query=self.refill_utility_query,
             toilet_crossed_room=self.toilet_crossed_room > 0,
@@ -179,7 +179,6 @@ class EngineFeatureConfig(StrictBaseModel):
     connection_reachability: bool
     frontier_connection_reachability: bool
     missing_connect_query: bool
-    missing_connect_utility_query: bool
     save_utility_query: bool
     refill_utility_query: bool
     toilet_crossed_room: bool
@@ -290,8 +289,12 @@ def validate_config(config: Config) -> None:
         raise ValueError("model.global_embedding_width must be greater than zero")
     if config.model.proposal_hidden_width <= 0:
         raise ValueError("model.proposal_hidden_width must be greater than zero")
-    if config.model.missing_connect_hidden_width <= 0:
-        raise ValueError("model.missing_connect_hidden_width must be greater than zero")
+    if config.model.missing_connect_query_hidden_width <= 0:
+        raise ValueError("model.missing_connect_query_hidden_width must be greater than zero")
+    if config.model.missing_connect_query_frontier_width <= 0:
+        raise ValueError("model.missing_connect_query_frontier_width must be greater than zero")
+    if config.model.missing_connect_query_distance_width <= 0:
+        raise ValueError("model.missing_connect_query_distance_width must be greater than zero")
     if config.model.utility_query_hidden_width <= 0:
         raise ValueError("model.utility_query_hidden_width must be greater than zero")
     if config.model.utility_query_frontier_width <= 0:
@@ -428,7 +431,6 @@ def validate_config(config: Config) -> None:
         or config.features.frontier_neighbor
         or config.features.frontier_connection_reachability
         or config.features.missing_connect_query
-        or config.features.missing_connect_utility_query
         or config.features.save_utility_query
         or config.features.refill_utility_query
     ) and not config.features.frontier_mask:

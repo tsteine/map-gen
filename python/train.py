@@ -283,7 +283,9 @@ def frontier_model_kwargs(
         "global_embedding_width": config.model.global_embedding_width,
         "hidden_width": config.model.hidden_width,
         "proposal_hidden_width": config.model.proposal_hidden_width,
-        "missing_connect_hidden_width": config.model.missing_connect_hidden_width,
+        "missing_connect_query_hidden_width": config.model.missing_connect_query_hidden_width,
+        "missing_connect_query_frontier_width": config.model.missing_connect_query_frontier_width,
+        "missing_connect_query_distance_width": config.model.missing_connect_query_distance_width,
         "utility_query_hidden_width": config.model.utility_query_hidden_width,
         "utility_query_frontier_width": config.model.utility_query_frontier_width,
         "utility_query_kind_width": config.model.utility_query_kind_width,
@@ -470,13 +472,9 @@ def create_generate_config(
     device: torch.device,
     ignore_scores: bool,
 ) -> GenerateConfig:
-    temperature = (
-        IGNORE_SCORES_TEMPERATURE if ignore_scores else config.generation.temperature
-    )
+    temperature = IGNORE_SCORES_TEMPERATURE if ignore_scores else config.generation.temperature
     proposal_temperature = (
-        IGNORE_SCORES_TEMPERATURE
-        if ignore_scores
-        else config.generation.proposal_temperature
+        IGNORE_SCORES_TEMPERATURE if ignore_scores else config.generation.proposal_temperature
     )
     return GenerateConfig(
         episode_length=episode_length,
@@ -889,7 +887,10 @@ class TrainingSession:
                         [outcomes.step_outcomes.door_invalid for outcomes in outcome_iterations]
                     ),
                     connection_invalid=torch.cat(
-                        [outcomes.step_outcomes.connection_invalid for outcomes in outcome_iterations]
+                        [
+                            outcomes.step_outcomes.connection_invalid
+                            for outcomes in outcome_iterations
+                        ]
                     ),
                     toilet_invalid=torch.cat(
                         [outcomes.step_outcomes.toilet_invalid for outcomes in outcome_iterations]
