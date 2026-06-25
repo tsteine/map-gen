@@ -211,14 +211,12 @@ class ProposalOutput(torch.nn.Module):
 
 
 class MissingConnectQueryHead(torch.nn.Module):
-    scalar_width = 4
     max_distance_index = 510
     unreachable_distance = 255
 
     def __init__(
         self,
         embedding_width: int,
-        global_embedding_width: int,
         frontier_width: int,
         distance_width: int,
         hidden_width: int,
@@ -236,18 +234,9 @@ class MissingConnectQueryHead(torch.nn.Module):
             distance_width,
         )
         self.margin_embedding = torch.nn.Embedding(self.max_distance_index + 1, distance_width)
-        self.pair_layers = torch.nn.Sequential(
-            torch.nn.Linear(
-                frontier_width * 2 + distance_width * 2,
-                hidden_width,
-                bias=False,
-            ),
-            torch.nn.GELU(),
-            torch.nn.Linear(hidden_width, hidden_width, bias=False),
-        )
         self.output_layers = torch.nn.Sequential(
             torch.nn.Linear(
-                hidden_width * 2 + global_embedding_width + self.scalar_width,
+                frontier_width * 2 + distance_width * 2,
                 hidden_width,
                 bias=False,
             ),
@@ -263,28 +252,27 @@ class MissingConnectQueryHead(torch.nn.Module):
         query_snapshot_idx: torch.Tensor,
         row_count_by_snapshot: torch.Tensor,
         row_start_by_snapshot: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         local_frontier = frontier.to(torch.int64)
         safe_local_frontier = local_frontier.clamp_min(0)
         row_count = row_count_by_snapshot[query_snapshot_idx].unsqueeze(1)
-        valid = (local_frontier >= 0) & (safe_local_frontier < row_count)
+        safe_local_frontier = torch.minimum(safe_local_frontier, row_count - 1)
         packed_frontier = (
             row_start_by_snapshot[query_snapshot_idx].unsqueeze(1) + safe_local_frontier
         )
         packed_frontier = packed_frontier.clamp_max(max(frontier_state.shape[0] - 1, 0))
-        return self.frontier_projection(frontier_state[packed_frontier]), valid
+        return self.frontier_projection(frontier_state[packed_frontier])
 
     def forward(
         self,
         frontier_state: torch.Tensor,
-        global_state: torch.Tensor,
+        snapshot_count: int,
         row_count_by_snapshot: torch.Tensor,
         row_start_by_snapshot: torch.Tensor,
         query,
         connection_output_count: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         query_count = query.query_connection_idx.shape[0]
-        snapshot_count = global_state.shape[0]
         if query_count == 0 or frontier_state.shape[0] == 0:
             return (
                 frontier_state.new_zeros([snapshot_count, 1, connection_output_count]),
@@ -295,21 +283,20 @@ class MissingConnectQueryHead(torch.nn.Module):
                 ),
             )
         query_snapshot_idx = query.query_snapshot_idx.to(torch.int64)
-        source_state, source_valid = self._gather(
+        source_state = self._gather(
             frontier_state,
             query.source_frontier,
             query_snapshot_idx,
             row_count_by_snapshot,
             row_start_by_snapshot,
         )
-        target_state, target_valid = self._gather(
+        target_state = self._gather(
             frontier_state,
             query.target_frontier,
             query_snapshot_idx,
             row_count_by_snapshot,
             row_start_by_snapshot,
         )
-        pair_valid = source_valid & target_valid
         total_distance = query.source_distance.to(torch.int16) + query.target_distance.to(
             torch.int16
         )
@@ -329,40 +316,13 @@ class MissingConnectQueryHead(torch.nn.Module):
             frontier_state.dtype
         )
         margin_embedding = self.margin_embedding(margin_idx).to(frontier_state.dtype)
-        pair_embedding = self.pair_layers(
-            torch.cat(
-                [
-                    source_state,
-                    target_state,
-                    total_distance_embedding,
-                    margin_embedding,
-                ],
-                dim=-1,
-            )
-        )
-        pair_mask = pair_valid.unsqueeze(-1)
-        valid_pair_count = pair_mask.sum(dim=1).clamp_min(1)
-        pair_mean = (pair_embedding * pair_mask).sum(dim=1) / valid_pair_count
-        pair_max = pair_embedding.masked_fill(~pair_mask, -torch.inf).amax(dim=1)
-        pair_max = torch.where(torch.isfinite(pair_max), pair_max, 0)
-        source_count = query.source_count.to(frontier_state.dtype)
-        target_count = query.target_count.to(frontier_state.dtype)
-        scalar = torch.cat(
-            [
-                torch.log1p(source_count).unsqueeze(1) / math.log(65536.0),
-                torch.log1p(target_count).unsqueeze(1) / math.log(65536.0),
-                source_valid.any(dim=1).to(frontier_state.dtype).unsqueeze(1),
-                target_valid.any(dim=1).to(frontier_state.dtype).unsqueeze(1),
-            ],
-            dim=1,
-        )
         query_output = self.output_layers(
             torch.cat(
                 [
-                    pair_mean,
-                    pair_max,
-                    global_state[query_snapshot_idx],
-                    scalar,
+                    source_state.squeeze(1),
+                    target_state.squeeze(1),
+                    total_distance_embedding.squeeze(1),
+                    margin_embedding.squeeze(1),
                 ],
                 dim=1,
             )
@@ -727,7 +687,6 @@ class FrontierModel(torch.nn.Module):
         self.missing_connect_query_output = (
             MissingConnectQueryHead(
                 embedding_width,
-                global_embedding_width,
                 missing_connect_query_frontier_width,
                 missing_connect_query_distance_width,
                 missing_connect_query_hidden_width,
@@ -946,7 +905,7 @@ class FrontierModel(torch.nn.Module):
                 query_utility_mask,
             ) = self.missing_connect_query_output(
                 frontier_state,
-                global_state,
+                global_state.shape[0],
                 row_count_by_snapshot,
                 row_start_by_snapshot,
                 features.missing_connect_query_features,
