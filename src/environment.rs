@@ -450,12 +450,101 @@ pub struct Features {
     pub toilet_crossed_room_idx: Vec<i16>,
 }
 
+impl Features {
+    fn clear_all(&mut self) {
+        self.inventory.clear();
+        self.room_x.clear();
+        self.room_y.clear();
+        self.room_placed.clear();
+        self.room_part_furthest_destination.clear();
+        self.room_part_furthest_source.clear();
+        self.room_part_save_from_room_distance.clear();
+        self.room_part_save_to_room_distance.clear();
+        self.room_part_refill_from_room_distance.clear();
+        self.room_part_refill_to_room_distance.clear();
+        self.room_part_frontier_from_room_distance.clear();
+        self.room_part_frontier_to_room_distance.clear();
+        self.known_save_from_room_distance.clear();
+        self.known_save_to_room_distance.clear();
+        self.known_refill_from_room_distance.clear();
+        self.known_refill_to_room_distance.clear();
+        self.frontier.clear();
+        self.frontier_door_variant.clear();
+        self.row_door_output_idx.clear();
+        self.frontier_occupancy.clear();
+        self.frontier_neighbor.clear();
+        self.frontier_neighbor_pair.clear();
+        self.connection_reachability.clear();
+        self.frontier_connection_reachability.clear();
+        self.missing_connect_query_connection_idx.clear();
+        self.missing_connect_query_source_frontier.clear();
+        self.missing_connect_query_target_frontier.clear();
+        self.missing_connect_query_source_distance.clear();
+        self.missing_connect_query_target_distance.clear();
+        self.missing_connect_query_current_distance.clear();
+        self.save_refill_utility_query_room_part_idx.clear();
+        self.save_refill_utility_query_target_mask.clear();
+        self.save_refill_utility_query_frontier.clear();
+        self.save_refill_utility_query_frontier_distance.clear();
+        self.save_refill_utility_query_save_to_current_distance
+            .clear();
+        self.save_refill_utility_query_save_from_current_distance
+            .clear();
+        self.save_refill_utility_query_refill_to_current_distance
+            .clear();
+        self.save_refill_utility_query_refill_from_current_distance
+            .clear();
+        self.toilet_crossed_room_idx.clear();
+    }
+}
+
+#[derive(Default)]
+pub struct FeatureScratch {
+    feature_pool: Vec<Features>,
+    frontier_locations: Vec<DoorLocation>,
+    nearest_neighbor_indices: Vec<usize>,
+    nearest_neighbor_keys: Vec<(Coord, usize, usize)>,
+    delaunay_midpoints: Vec<(i16, i16)>,
+    delaunay_points: Vec<Point>,
+    delaunay_edges: Vec<FrontierEdge>,
+    delaunay_incident_edges: Vec<Vec<usize>>,
+    delaunay_degrees: Vec<usize>,
+    delaunay_output_counts: Vec<usize>,
+}
+
+impl FeatureScratch {
+    fn take_features(&mut self) -> Features {
+        let mut features = self.feature_pool.pop().unwrap_or_default();
+        features.clear_all();
+        features
+    }
+
+    pub fn recycle_features(&mut self, mut features: Features) {
+        features.clear_all();
+        self.feature_pool.push(features);
+    }
+
+    pub fn recycle_feature_vec(&mut self, features: &mut Vec<Features>) {
+        for feature in features.drain(..) {
+            self.recycle_features(feature);
+        }
+    }
+}
+
 fn save_refill_utility_distance_can_improve(
     distance: GraphDistance,
     current_distance: GraphDistance,
 ) -> bool {
     current_distance == UNREACHABLE_DISTANCE
         || u16::from(distance) + 1 < u16::from(current_distance)
+}
+
+fn encode_room_part_distance_feature(distance: GraphDistance) -> u8 {
+    if distance == UNREACHABLE_DISTANCE {
+        0
+    } else {
+        distance.saturating_add(1)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -522,22 +611,42 @@ fn frontier_midpoint(location: DoorLocation) -> (i16, i16) {
     }
 }
 
-fn frontier_delaunay_neighbors(locations: &[DoorLocation], max_degree: usize) -> Vec<Vec<usize>> {
-    let midpoints = locations
-        .iter()
-        .copied()
-        .map(frontier_midpoint)
-        .collect::<Vec<_>>();
-    let points = midpoints
-        .iter()
-        .map(|&(x, y)| Point {
+fn write_frontier_delaunay_neighbors(
+    locations: &[DoorLocation],
+    max_degree: usize,
+    output: &mut [i16],
+    scratch: &mut FeatureScratch,
+) {
+    debug_assert_eq!(output.len(), locations.len() * max_degree);
+    output.fill(-1);
+
+    scratch.delaunay_midpoints.clear();
+    scratch
+        .delaunay_midpoints
+        .extend(locations.iter().copied().map(frontier_midpoint));
+    scratch.delaunay_points.clear();
+    scratch
+        .delaunay_points
+        .extend(scratch.delaunay_midpoints.iter().map(|&(x, y)| Point {
             x: f64::from(x),
             y: f64::from(y),
-        })
-        .collect::<Vec<_>>();
-    let mut edges = vec![];
-    let mut incident_edges = vec![vec![]; locations.len()];
-    let mut degrees = vec![0; locations.len()];
+        }));
+    scratch.delaunay_edges.clear();
+    scratch
+        .delaunay_incident_edges
+        .resize_with(locations.len(), Vec::new);
+    scratch.delaunay_incident_edges.truncate(locations.len());
+    for incident_edges in &mut scratch.delaunay_incident_edges {
+        incident_edges.clear();
+    }
+    scratch.delaunay_degrees.clear();
+    scratch.delaunay_degrees.resize(locations.len(), 0);
+
+    let midpoints = &scratch.delaunay_midpoints;
+    let points = &scratch.delaunay_points;
+    let edges = &mut scratch.delaunay_edges;
+    let incident_edges = &mut scratch.delaunay_incident_edges;
+    let degrees = &mut scratch.delaunay_degrees;
     let mut add_edge = |a: usize, b: usize| {
         debug_assert_ne!(a, b);
         let (a, b) = if a < b { (a, b) } else { (b, a) };
@@ -577,29 +686,87 @@ fn frontier_delaunay_neighbors(locations: &[DoorLocation], max_degree: usize) ->
         }
     }
 
-    prune_frontier_edges(&mut edges, &incident_edges, &mut degrees, max_degree);
+    prune_frontier_edges(edges, incident_edges, degrees, max_degree);
 
-    let mut neighbors = vec![vec![]; locations.len()];
-    for edge in edges.into_iter().filter(|edge| edge.active) {
+    scratch.delaunay_output_counts.clear();
+    scratch.delaunay_output_counts.resize(locations.len(), 0);
+    let output_counts = &mut scratch.delaunay_output_counts;
+    for edge in edges.iter().copied().filter(|edge| edge.active) {
         let [a, b] = edge.endpoints;
-        neighbors[a].push(b);
-        neighbors[b].push(a);
+        let a_offset = a * max_degree + output_counts[a];
+        output[a_offset] = b as i16;
+        output_counts[a] += 1;
+        let b_offset = b * max_degree + output_counts[b];
+        output[b_offset] = a as i16;
+        output_counts[b] += 1;
     }
-    for row in &mut neighbors {
-        row.sort_unstable();
-        debug_assert!(row.len() <= max_degree);
+    for row_idx in 0..locations.len() {
+        let row_start = row_idx * max_degree;
+        let row_end = row_start + output_counts[row_idx];
+        output[row_start..row_end].sort_unstable();
+        debug_assert!(output_counts[row_idx] <= max_degree);
     }
-    neighbors
 }
 
+#[cfg(test)]
+fn frontier_delaunay_neighbors(locations: &[DoorLocation], max_degree: usize) -> Vec<Vec<usize>> {
+    let mut scratch = FeatureScratch::default();
+    let mut output = vec![-1; locations.len() * max_degree];
+    write_frontier_delaunay_neighbors(locations, max_degree, &mut output, &mut scratch);
+    flat_frontier_neighbors_to_rows(&output, max_degree)
+}
+
+#[cfg(test)]
 fn frontier_nearest_neighbors(
     locations: &[DoorLocation],
     neighbor_count: usize,
     include_self: bool,
 ) -> Vec<Vec<usize>> {
-    let mut rows = Vec::with_capacity(locations.len());
-    let mut neighbors = vec![usize::MAX; neighbor_count];
-    let mut neighbor_keys = vec![(Coord::MAX, usize::MAX, usize::MAX); neighbor_count];
+    let mut scratch = FeatureScratch::default();
+    let mut output = vec![-1; locations.len() * neighbor_count];
+    write_frontier_nearest_neighbors(
+        locations,
+        neighbor_count,
+        include_self,
+        &mut output,
+        &mut scratch,
+    );
+    flat_frontier_neighbors_to_rows(&output, neighbor_count)
+}
+
+#[cfg(test)]
+fn flat_frontier_neighbors_to_rows(output: &[i16], neighbor_count: usize) -> Vec<Vec<usize>> {
+    output
+        .chunks(neighbor_count)
+        .map(|row| {
+            row.iter()
+                .copied()
+                .take_while(|&idx| idx >= 0)
+                .map(|idx| idx as usize)
+                .collect()
+        })
+        .collect()
+}
+
+fn write_frontier_nearest_neighbors(
+    locations: &[DoorLocation],
+    neighbor_count: usize,
+    include_self: bool,
+    output: &mut [i16],
+    scratch: &mut FeatureScratch,
+) {
+    debug_assert_eq!(output.len(), locations.len() * neighbor_count);
+    output.fill(-1);
+    scratch.nearest_neighbor_indices.clear();
+    scratch
+        .nearest_neighbor_indices
+        .resize(neighbor_count, usize::MAX);
+    scratch.nearest_neighbor_keys.clear();
+    scratch
+        .nearest_neighbor_keys
+        .resize(neighbor_count, (Coord::MAX, usize::MAX, usize::MAX));
+    let neighbors = &mut scratch.nearest_neighbor_indices;
+    let neighbor_keys = &mut scratch.nearest_neighbor_keys;
     for (src_idx, src) in locations.iter().enumerate() {
         neighbors.fill(usize::MAX);
         neighbor_keys.fill((Coord::MAX, usize::MAX, usize::MAX));
@@ -630,9 +797,11 @@ fn frontier_nearest_neighbors(
             neighbors[insert_idx] = dst_idx;
             neighbor_keys[insert_idx] = dst_key;
         }
-        rows.push(neighbors[..count].to_vec());
+        let row_start = src_idx * neighbor_count;
+        for (idx, &neighbor) in neighbors[..count].iter().enumerate() {
+            output[row_start + idx] = neighbor as i16;
+        }
     }
-    rows
 }
 
 fn write_single_frontier_nearest_neighbor(
@@ -1696,111 +1865,157 @@ impl Environment {
         (values, mask)
     }
 
+    #[cfg(test)]
     fn room_part_furthest_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
-        fn encode_distance(distance: GraphDistance) -> u8 {
-            if distance == UNREACHABLE_DISTANCE {
-                0
-            } else {
-                distance + 1
-            }
-        }
+        let mut destination = Vec::new();
+        let mut source = Vec::new();
+        self.room_part_furthest_distance_features_into(common, &mut destination, &mut source);
+        (destination, source)
+    }
 
+    fn room_part_furthest_distance_features_into(
+        &self,
+        common: &CommonData,
+        destination: &mut Vec<u8>,
+        source: &mut Vec<u8>,
+    ) {
         debug_assert_eq!(
             self.room_part_furthest_distance_cache
                 .furthest_destination
                 .len(),
             common.room_part.len()
         );
-        (
+        destination.extend(
             self.room_part_furthest_distance_cache
                 .furthest_destination
                 .iter()
                 .copied()
-                .map(encode_distance)
-                .collect(),
+                .map(encode_room_part_distance_feature),
+        );
+        source.extend(
             self.room_part_furthest_distance_cache
                 .furthest_source
                 .iter()
                 .copied()
-                .map(encode_distance)
-                .collect(),
-        )
+                .map(encode_room_part_distance_feature),
+        );
     }
 
-    fn encode_room_part_directed_distance_features(
+    fn encode_room_part_directed_distance_features_into(
         destination: &[GraphDistance],
         source: &[GraphDistance],
-    ) -> (Vec<u8>, Vec<u8>) {
-        fn encode_distance(distance: GraphDistance) -> u8 {
-            if distance == UNREACHABLE_DISTANCE {
-                0
-            } else {
-                distance.saturating_add(1)
-            }
-        }
-
-        (
-            destination.iter().copied().map(encode_distance).collect(),
-            source.iter().copied().map(encode_distance).collect(),
-        )
+        output_destination: &mut Vec<u8>,
+        output_source: &mut Vec<u8>,
+    ) {
+        output_destination.extend(
+            destination
+                .iter()
+                .copied()
+                .map(encode_room_part_distance_feature),
+        );
+        output_source.extend(
+            source
+                .iter()
+                .copied()
+                .map(encode_room_part_distance_feature),
+        );
     }
 
+    #[cfg(test)]
     fn room_part_save_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
+        let mut destination = Vec::new();
+        let mut source = Vec::new();
+        self.room_part_save_distance_features_into(common, &mut destination, &mut source);
+        (destination, source)
+    }
+
+    fn room_part_save_distance_features_into(
+        &self,
+        common: &CommonData,
+        destination: &mut Vec<u8>,
+        source: &mut Vec<u8>,
+    ) {
         debug_assert_eq!(
             self.room_part_save_distance_cache
                 .nearest_save_destination
                 .len(),
             common.room_part.len()
         );
-        Self::encode_room_part_directed_distance_features(
+        Self::encode_room_part_directed_distance_features_into(
             &self.room_part_save_distance_cache.nearest_save_destination,
             &self.room_part_save_distance_cache.nearest_save_source,
-        )
+            destination,
+            source,
+        );
     }
 
-    fn room_part_refill_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
+    fn room_part_refill_distance_features_into(
+        &self,
+        common: &CommonData,
+        destination: &mut Vec<u8>,
+        source: &mut Vec<u8>,
+    ) {
         debug_assert_eq!(
             self.room_part_refill_distance_cache
                 .nearest_save_destination
                 .len(),
             common.room_part.len()
         );
-        Self::encode_room_part_directed_distance_features(
+        Self::encode_room_part_directed_distance_features_into(
             &self
                 .room_part_refill_distance_cache
                 .nearest_save_destination,
             &self.room_part_refill_distance_cache.nearest_save_source,
-        )
+            destination,
+            source,
+        );
     }
 
+    #[cfg(test)]
     fn room_part_frontier_distance_features(&self, common: &CommonData) -> (Vec<u8>, Vec<u8>) {
+        let mut destination = Vec::new();
+        let mut source = Vec::new();
+        self.room_part_frontier_distance_features_into(common, &mut destination, &mut source);
+        (destination, source)
+    }
+
+    fn room_part_frontier_distance_features_into(
+        &self,
+        common: &CommonData,
+        destination: &mut Vec<u8>,
+        source: &mut Vec<u8>,
+    ) {
         debug_assert_eq!(
             self.room_part_frontier_distance_cache
                 .nearest_frontier_destination
                 .len(),
             common.room_part.len()
         );
-        Self::encode_room_part_directed_distance_features(
+        Self::encode_room_part_directed_distance_features_into(
             &self
                 .room_part_frontier_distance_cache
                 .nearest_frontier_destination,
             &self
                 .room_part_frontier_distance_cache
                 .nearest_frontier_source,
-        )
+            destination,
+            source,
+        );
     }
 
-    fn known_save_refill_distance_features(
+    fn known_save_refill_distance_features_into(
         &self,
         common: &CommonData,
         save_distance_cache: &RoomPartSaveDistanceCache,
-    ) -> (Vec<u8>, Vec<u8>) {
+        from_room: &mut Vec<u8>,
+        to_room: &mut Vec<u8>,
+    ) {
         debug_assert_eq!(
             save_distance_cache.nearest_save_destination.len(),
             common.room_part.len()
         );
-        let mut from_room = vec![KNOWN_DISTANCE_UNKNOWN; common.room_part.len()];
-        let mut to_room = vec![KNOWN_DISTANCE_UNKNOWN; common.room_part.len()];
+        from_room.resize(common.room_part.len(), KNOWN_DISTANCE_UNKNOWN);
+        to_room.resize(common.room_part.len(), KNOWN_DISTANCE_UNKNOWN);
         for &part in &self.active_room_parts {
             let part = part as usize;
             from_room[part] = encode_known_finalized_distance(
@@ -1814,7 +2029,6 @@ impl Environment {
                     .nearest_frontier_source[part],
             );
         }
-        (from_room, to_room)
     }
 
     #[cfg(test)]
@@ -2730,6 +2944,7 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
+        scratch: &mut FeatureScratch,
     ) -> Result<
         (
             StepOutcomes,
@@ -2788,6 +3003,7 @@ impl Environment {
                 frontier_neighbor_algorithm,
                 frontier_neighbor_count,
                 frontier_window_size,
+                scratch,
             )? {
                 CandidateOutcome::Rejected => {
                     rejected_count += 1;
@@ -2827,6 +3043,7 @@ impl Environment {
                             frontier_neighbor_algorithm,
                             frontier_neighbor_count,
                             frontier_window_size,
+                            scratch,
                         );
                     (candidate, post_candidate_outcomes, door_match, features)
                 })
@@ -2894,6 +3111,7 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
+        scratch: &mut FeatureScratch,
     ) -> Result<CandidateOutcome, String> {
         let profile = profile_start();
         let snapshot = self.apply_lookahead_candidate(candidate, common);
@@ -2971,6 +3189,7 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
+            scratch,
         );
         profile_end(ProfileMetric::EnvProposalFeatures, profile);
         let step_outcomes = StepOutcomes {
@@ -2996,6 +3215,7 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
+        scratch: &mut FeatureScratch,
     ) -> (StepOutcomes, Vec<i16>, Features) {
         let profile = profile_start();
         let snapshot = self.apply_lookahead_candidate(candidate, common);
@@ -3009,6 +3229,7 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
+            scratch,
         );
         profile_end(ProfileMetric::EnvProposalFeatures, profile);
         let profile = profile_start();
@@ -3076,9 +3297,10 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
+        scratch: &mut FeatureScratch,
     ) -> Features {
         if config.is_empty() {
-            return Features::default();
+            return scratch.take_features();
         }
         let extra_occupied =
             if config.frontier_occupancy && candidate.room_idx < common.room.len() as RoomIdx {
@@ -3099,6 +3321,7 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
+            scratch,
         )
     }
 
@@ -3310,6 +3533,7 @@ impl Environment {
             + 2
     }
 
+    #[cfg(test)]
     pub fn features(
         &self,
         common: &CommonData,
@@ -3317,6 +3541,26 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
+    ) -> Features {
+        let mut scratch = FeatureScratch::default();
+        self.features_with_scratch(
+            common,
+            config,
+            frontier_neighbor_algorithm,
+            frontier_neighbor_count,
+            frontier_window_size,
+            &mut scratch,
+        )
+    }
+
+    pub fn features_with_scratch(
+        &self,
+        common: &CommonData,
+        config: &FeatureConfig,
+        frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
+        frontier_neighbor_count: usize,
+        frontier_window_size: usize,
+        scratch: &mut FeatureScratch,
     ) -> Features {
         self.features_with_occupancy(
             common,
@@ -3326,6 +3570,7 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
+            scratch,
         )
     }
 
@@ -3338,8 +3583,10 @@ impl Environment {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
+        scratch: &mut FeatureScratch,
     ) -> Features {
         assert!(self.frontier.len() <= Self::max_frontiers(common));
+        let mut output = scratch.take_features();
         let profile = profile_start();
         let frontier_count = if config.has_frontier_features() {
             self.frontier.len()
@@ -3351,97 +3598,139 @@ impl Environment {
             ProfileMetric::EnvCounterFeatureFrontiers,
             frontier_count as u64,
         );
-        let inventory = if config.inventory {
-            self.connection_variant_unused_count
-                .iter()
-                .map(|&count| count as u8)
-                .collect::<Vec<_>>()
-        } else {
-            vec![]
-        };
-        let room_placed = if config.room_position {
-            self.room_used
-                .iter()
-                .map(|bit| u8::from(*bit))
-                .collect::<Vec<_>>()
-        } else {
-            vec![]
-        };
-        let (room_part_furthest_destination, room_part_furthest_source) =
-            if config.room_part_furthest_distance {
-                self.room_part_furthest_distance_features(common)
-            } else {
-                (vec![], vec![])
-            };
-        let (room_part_save_from_room_distance, room_part_save_to_room_distance) =
-            if config.room_part_save_distance {
-                self.room_part_save_distance_features(common)
-            } else {
-                (vec![], vec![])
-            };
-        let (room_part_refill_from_room_distance, room_part_refill_to_room_distance) =
-            if config.room_part_refill_distance {
-                self.room_part_refill_distance_features(common)
-            } else {
-                (vec![], vec![])
-            };
-        let (room_part_frontier_from_room_distance, room_part_frontier_to_room_distance) =
-            if config.room_part_frontier_distance {
-                self.room_part_frontier_distance_features(common)
-            } else {
-                (vec![], vec![])
-            };
-        let (known_save_from_room_distance, known_save_to_room_distance) =
-            self.known_save_refill_distance_features(common, &self.room_part_save_distance_cache);
-        let (known_refill_from_room_distance, known_refill_to_room_distance) =
-            self.known_save_refill_distance_features(common, &self.room_part_refill_distance_cache);
-        let mut frontier = vec![0; frontier_count * FEATURE_FRONTIER_WIDTH];
-        let mut frontier_door_variant = if config.frontier_door_variant {
-            vec![0; frontier_count]
-        } else {
-            vec![]
-        };
+        let mut inventory = std::mem::take(&mut output.inventory);
+        if config.inventory {
+            inventory.extend(
+                self.connection_variant_unused_count
+                    .iter()
+                    .map(|&count| count as u8),
+            );
+        }
+        let mut room_placed = std::mem::take(&mut output.room_placed);
+        if config.room_position {
+            room_placed.extend(self.room_used.iter().map(|bit| u8::from(*bit)));
+        }
+        let mut room_part_furthest_destination =
+            std::mem::take(&mut output.room_part_furthest_destination);
+        let mut room_part_furthest_source = std::mem::take(&mut output.room_part_furthest_source);
+        if config.room_part_furthest_distance {
+            self.room_part_furthest_distance_features_into(
+                common,
+                &mut room_part_furthest_destination,
+                &mut room_part_furthest_source,
+            );
+        }
+        let mut room_part_save_from_room_distance =
+            std::mem::take(&mut output.room_part_save_from_room_distance);
+        let mut room_part_save_to_room_distance =
+            std::mem::take(&mut output.room_part_save_to_room_distance);
+        if config.room_part_save_distance {
+            self.room_part_save_distance_features_into(
+                common,
+                &mut room_part_save_from_room_distance,
+                &mut room_part_save_to_room_distance,
+            );
+        }
+        let mut room_part_refill_from_room_distance =
+            std::mem::take(&mut output.room_part_refill_from_room_distance);
+        let mut room_part_refill_to_room_distance =
+            std::mem::take(&mut output.room_part_refill_to_room_distance);
+        if config.room_part_refill_distance {
+            self.room_part_refill_distance_features_into(
+                common,
+                &mut room_part_refill_from_room_distance,
+                &mut room_part_refill_to_room_distance,
+            );
+        }
+        let mut room_part_frontier_from_room_distance =
+            std::mem::take(&mut output.room_part_frontier_from_room_distance);
+        let mut room_part_frontier_to_room_distance =
+            std::mem::take(&mut output.room_part_frontier_to_room_distance);
+        if config.room_part_frontier_distance {
+            self.room_part_frontier_distance_features_into(
+                common,
+                &mut room_part_frontier_from_room_distance,
+                &mut room_part_frontier_to_room_distance,
+            );
+        }
+        let mut known_save_from_room_distance =
+            std::mem::take(&mut output.known_save_from_room_distance);
+        let mut known_save_to_room_distance =
+            std::mem::take(&mut output.known_save_to_room_distance);
+        self.known_save_refill_distance_features_into(
+            common,
+            &self.room_part_save_distance_cache,
+            &mut known_save_from_room_distance,
+            &mut known_save_to_room_distance,
+        );
+        let mut known_refill_from_room_distance =
+            std::mem::take(&mut output.known_refill_from_room_distance);
+        let mut known_refill_to_room_distance =
+            std::mem::take(&mut output.known_refill_to_room_distance);
+        self.known_save_refill_distance_features_into(
+            common,
+            &self.room_part_refill_distance_cache,
+            &mut known_refill_from_room_distance,
+            &mut known_refill_to_room_distance,
+        );
+        let mut frontier = std::mem::take(&mut output.frontier);
+        frontier.resize(frontier_count * FEATURE_FRONTIER_WIDTH, 0);
+        let mut frontier_door_variant = std::mem::take(&mut output.frontier_door_variant);
+        if config.frontier_door_variant {
+            frontier_door_variant.resize(frontier_count, 0);
+        }
         let frontier_window_area = frontier_window_size * frontier_window_size;
         let packed_frontier_window_size = frontier_window_area.div_ceil(8);
-        let mut frontier_occupancy = if config.frontier_occupancy {
-            vec![0; frontier_count * packed_frontier_window_size]
-        } else {
-            vec![]
-        };
-        let mut frontier_neighbor = if config.frontier_neighbor {
-            vec![-1; frontier_count * frontier_neighbor_count]
-        } else {
-            vec![]
-        };
-        let mut frontier_neighbor_pair = if config.frontier_neighbor_flags {
-            vec![0; frontier_count * frontier_neighbor_count]
-        } else {
-            vec![]
-        };
-        let mut connection_reachability = if config.connection_reachability {
-            vec![0; common.room_connection.len()]
-        } else {
-            vec![]
-        };
-        let mut frontier_connection_reachability = if config.frontier_connection_reachability {
-            vec![0; frontier_count * common.room_connection.len()]
-        } else {
-            vec![]
-        };
-        let mut missing_connect_query_connection_idx = Vec::new();
-        let mut missing_connect_query_source_frontier = Vec::new();
-        let mut missing_connect_query_target_frontier = Vec::new();
-        let mut missing_connect_query_source_distance = Vec::new();
-        let mut missing_connect_query_target_distance = Vec::new();
-        let mut missing_connect_query_current_distance = Vec::new();
-        let mut save_refill_utility_query_room_part_idx = Vec::new();
-        let mut save_refill_utility_query_target_mask = Vec::new();
-        let mut save_refill_utility_query_frontier = Vec::new();
-        let mut save_refill_utility_query_frontier_distance = Vec::new();
-        let mut save_refill_utility_query_save_to_current_distance = Vec::new();
-        let mut save_refill_utility_query_save_from_current_distance = Vec::new();
-        let mut save_refill_utility_query_refill_to_current_distance = Vec::new();
-        let mut save_refill_utility_query_refill_from_current_distance = Vec::new();
+        let mut frontier_occupancy = std::mem::take(&mut output.frontier_occupancy);
+        if config.frontier_occupancy {
+            frontier_occupancy.resize(frontier_count * packed_frontier_window_size, 0);
+        }
+        let mut frontier_neighbor = std::mem::take(&mut output.frontier_neighbor);
+        if config.frontier_neighbor {
+            frontier_neighbor.resize(frontier_count * frontier_neighbor_count, -1);
+        }
+        let mut frontier_neighbor_pair = std::mem::take(&mut output.frontier_neighbor_pair);
+        if config.frontier_neighbor_flags {
+            frontier_neighbor_pair.resize(frontier_count * frontier_neighbor_count, 0);
+        }
+        let mut connection_reachability = std::mem::take(&mut output.connection_reachability);
+        if config.connection_reachability {
+            connection_reachability.resize(common.room_connection.len(), 0);
+        }
+        let mut frontier_connection_reachability =
+            std::mem::take(&mut output.frontier_connection_reachability);
+        if config.frontier_connection_reachability {
+            frontier_connection_reachability
+                .resize(frontier_count * common.room_connection.len(), 0);
+        }
+        let mut missing_connect_query_connection_idx =
+            std::mem::take(&mut output.missing_connect_query_connection_idx);
+        let mut missing_connect_query_source_frontier =
+            std::mem::take(&mut output.missing_connect_query_source_frontier);
+        let mut missing_connect_query_target_frontier =
+            std::mem::take(&mut output.missing_connect_query_target_frontier);
+        let mut missing_connect_query_source_distance =
+            std::mem::take(&mut output.missing_connect_query_source_distance);
+        let mut missing_connect_query_target_distance =
+            std::mem::take(&mut output.missing_connect_query_target_distance);
+        let mut missing_connect_query_current_distance =
+            std::mem::take(&mut output.missing_connect_query_current_distance);
+        let mut save_refill_utility_query_room_part_idx =
+            std::mem::take(&mut output.save_refill_utility_query_room_part_idx);
+        let mut save_refill_utility_query_target_mask =
+            std::mem::take(&mut output.save_refill_utility_query_target_mask);
+        let mut save_refill_utility_query_frontier =
+            std::mem::take(&mut output.save_refill_utility_query_frontier);
+        let mut save_refill_utility_query_frontier_distance =
+            std::mem::take(&mut output.save_refill_utility_query_frontier_distance);
+        let mut save_refill_utility_query_save_to_current_distance =
+            std::mem::take(&mut output.save_refill_utility_query_save_to_current_distance);
+        let mut save_refill_utility_query_save_from_current_distance =
+            std::mem::take(&mut output.save_refill_utility_query_save_from_current_distance);
+        let mut save_refill_utility_query_refill_to_current_distance =
+            std::mem::take(&mut output.save_refill_utility_query_refill_to_current_distance);
+        let mut save_refill_utility_query_refill_from_current_distance =
+            std::mem::take(&mut output.save_refill_utility_query_refill_from_current_distance);
         profile_end(ProfileMetric::EnvFeaturesSetup, profile);
 
         let profile = profile_start();
@@ -3453,14 +3742,14 @@ impl Environment {
         sorted_frontiers.sort_unstable_by_key(|(location, _)| **location);
         profile_end(ProfileMetric::EnvFeaturesSortFrontiers, profile);
 
-        let row_door_output_idx = if config.has_frontier_features() {
-            sorted_frontiers
-                .iter()
-                .map(|(_, frontier)| frontier.door_output_idx)
-                .collect::<Vec<_>>()
-        } else {
-            vec![]
-        };
+        let mut row_door_output_idx = std::mem::take(&mut output.row_door_output_idx);
+        if config.has_frontier_features() {
+            row_door_output_idx.extend(
+                sorted_frontiers
+                    .iter()
+                    .map(|(_, frontier)| frontier.door_output_idx),
+            );
+        }
         let graph_size = common.room_part.len();
         let mut first_frontier_row_by_part = vec![-1; graph_size];
 
@@ -3834,10 +4123,9 @@ impl Environment {
 
         if config.frontier_neighbor {
             let profile = profile_start();
-            let locations = sorted_frontiers
-                .iter()
-                .map(|(location, _)| **location)
-                .collect::<Vec<_>>();
+            let mut locations = std::mem::take(&mut scratch.frontier_locations);
+            locations.clear();
+            locations.extend(sorted_frontiers.iter().map(|(location, _)| **location));
             match frontier_neighbor_algorithm {
                 FrontierNeighborAlgorithm::Nearest if frontier_neighbor_count == 1 => {
                     write_single_frontier_nearest_neighbor(
@@ -3853,26 +4141,32 @@ impl Environment {
                         &mut frontier_neighbor,
                     );
                 }
-                _ => {
-                    let neighbors = match frontier_neighbor_algorithm {
-                        FrontierNeighborAlgorithm::Delaunay => {
-                            frontier_delaunay_neighbors(&locations, frontier_neighbor_count)
-                        }
-                        FrontierNeighborAlgorithm::Nearest => {
-                            frontier_nearest_neighbors(&locations, frontier_neighbor_count, true)
-                        }
-                        FrontierNeighborAlgorithm::NearestExclusive => {
-                            frontier_nearest_neighbors(&locations, frontier_neighbor_count, false)
-                        }
-                    };
-                    for (src_idx, neighbors) in neighbors.iter().enumerate() {
-                        for (neighbor_idx, &dst_idx) in neighbors.iter().enumerate() {
-                            frontier_neighbor[src_idx * frontier_neighbor_count + neighbor_idx] =
-                                dst_idx as i16;
-                        }
+                _ => match frontier_neighbor_algorithm {
+                    FrontierNeighborAlgorithm::Delaunay => write_frontier_delaunay_neighbors(
+                        &locations,
+                        frontier_neighbor_count,
+                        &mut frontier_neighbor,
+                        scratch,
+                    ),
+                    FrontierNeighborAlgorithm::Nearest => write_frontier_nearest_neighbors(
+                        &locations,
+                        frontier_neighbor_count,
+                        true,
+                        &mut frontier_neighbor,
+                        scratch,
+                    ),
+                    FrontierNeighborAlgorithm::NearestExclusive => {
+                        write_frontier_nearest_neighbors(
+                            &locations,
+                            frontier_neighbor_count,
+                            false,
+                            &mut frontier_neighbor,
+                            scratch,
+                        )
                     }
-                }
+                },
             }
+            scratch.frontier_locations = locations;
             profile_end(ProfileMetric::EnvFeaturesFrontierNeighbor, profile);
         }
         if config.frontier_neighbor_flags {
@@ -3903,23 +4197,18 @@ impl Environment {
             profile_end(ProfileMetric::EnvFeaturesFrontierNeighborFlags, profile);
         }
         let profile = profile_start();
-        let room_x = if config.room_position {
-            self.room_x.clone()
-        } else {
-            vec![]
-        };
-        let room_y = if config.room_position {
-            self.room_y.clone()
-        } else {
-            vec![]
-        };
+        let mut room_x = std::mem::take(&mut output.room_x);
+        let mut room_y = std::mem::take(&mut output.room_y);
+        if config.room_position {
+            room_x.extend_from_slice(&self.room_x);
+            room_y.extend_from_slice(&self.room_y);
+        }
         profile_end(ProfileMetric::EnvFeaturesRoomPositionClone, profile);
 
-        let toilet_crossed_room_idx = if config.toilet_crossed_room {
-            vec![self.toilet_crossed_room_idx(common)]
-        } else {
-            vec![]
-        };
+        let mut toilet_crossed_room_idx = std::mem::take(&mut output.toilet_crossed_room_idx);
+        if config.toilet_crossed_room {
+            toilet_crossed_room_idx.push(self.toilet_crossed_room_idx(common));
+        }
 
         let profile = profile_start();
         let result = Features {
@@ -3967,6 +4256,7 @@ impl Environment {
         result
     }
 
+    #[cfg(test)]
     pub fn features_after_candidate(
         &mut self,
         common: &CommonData,
@@ -3976,8 +4266,30 @@ impl Environment {
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
     ) -> Features {
+        let mut scratch = FeatureScratch::default();
+        self.features_after_candidate_with_scratch(
+            common,
+            candidate,
+            config,
+            frontier_neighbor_algorithm,
+            frontier_neighbor_count,
+            frontier_window_size,
+            &mut scratch,
+        )
+    }
+
+    pub fn features_after_candidate_with_scratch(
+        &mut self,
+        common: &CommonData,
+        candidate: Action,
+        config: &FeatureConfig,
+        frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
+        frontier_neighbor_count: usize,
+        frontier_window_size: usize,
+        scratch: &mut FeatureScratch,
+    ) -> Features {
         if config.is_empty() {
-            return Features::default();
+            return scratch.take_features();
         }
         let extra_occupied =
             if config.frontier_occupancy && candidate.room_idx < common.room.len() as RoomIdx {
@@ -4001,6 +4313,7 @@ impl Environment {
             frontier_neighbor_algorithm,
             frontier_neighbor_count,
             frontier_window_size,
+            scratch,
         );
         let profile = profile_start();
         self.restore_feature_candidate(common, candidate, snapshot);
@@ -4694,6 +5007,7 @@ mod tests {
             .expect("test setup should have a valid proposal candidate");
         let sampled_frontier_idx = [frontier_idx, -1];
         let sampled_door_variant_idx = [door_variant_idx as DoorVariantIdx, -1];
+        let mut scratch = FeatureScratch::default();
 
         let (
             _pre_outcomes,
@@ -4715,6 +5029,7 @@ mod tests {
                 FrontierNeighborAlgorithm::Nearest,
                 1,
                 4,
+                &mut scratch,
             )
             .unwrap();
 

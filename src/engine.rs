@@ -6,8 +6,8 @@ use crate::common::{
     RoomIdx,
 };
 use crate::environment::{
-    Environment, FEATURE_FRONTIER_WIDTH, FeatureConfig, Features, FrontierNeighborAlgorithm,
-    StepOutcomes as EnvironmentStepOutcomes,
+    Environment, FEATURE_FRONTIER_WIDTH, FeatureConfig, FeatureScratch, Features,
+    FrontierNeighborAlgorithm, StepOutcomes as EnvironmentStepOutcomes,
 };
 use crossbeam_channel as channel;
 use numpy::{Element, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayMethods, PyReadonlyArray1};
@@ -479,6 +479,7 @@ fn worker_loop(
     response_tx: channel::Sender<WorkerResponse>,
 ) {
     let mut pending_features = Vec::new();
+    let mut feature_scratch = FeatureScratch::default();
     while let Ok(command) = command_rx.recv() {
         let profile_metric = command.profile_metric();
         let profile_start = if PROFILE_ENABLED.load(Ordering::Relaxed) {
@@ -675,7 +676,7 @@ fn worker_loop(
                     environments.len() * recommended_candidates * door_outcome_count
                 );
                 let mut consistency_error = None;
-                pending_features.clear();
+                feature_scratch.recycle_feature_vec(&mut pending_features);
                 for (env_idx, env) in environments.iter_mut().enumerate() {
                     let shortlist_start = env_idx * shortlist_candidates;
                     let shortlist_end = shortlist_start + shortlist_candidates;
@@ -698,6 +699,7 @@ fn worker_loop(
                         frontier_neighbor_algorithm,
                         frontier_neighbor_count,
                         frontier_window_size,
+                        &mut feature_scratch,
                     ) {
                         Ok(result) => result,
                         Err(err) => {
@@ -770,13 +772,14 @@ fn worker_loop(
                             .or(dummy_door_match.as_ref())
                             .expect("dummy door match must exist for padded candidates");
                         if candidate_idx >= candidate_features.len() {
-                            candidate_features.push(env.features_after_candidate(
+                            candidate_features.push(env.features_after_candidate_with_scratch(
                                 &common_data,
                                 dummy_candidate,
                                 &features,
                                 frontier_neighbor_algorithm,
                                 frontier_neighbor_count,
                                 frontier_window_size,
+                                &mut feature_scratch,
                             ));
                         }
                         let door_start = idx * door_outcome_count;
@@ -1176,20 +1179,21 @@ fn worker_loop(
                 environment_start,
                 environment_count,
             } => {
-                pending_features = environments
+                feature_scratch.recycle_feature_vec(&mut pending_features);
+                for env in environments
                     .iter()
                     .skip(environment_start)
                     .take(environment_count)
-                    .map(|env| {
-                        env.features(
-                            &common_data,
-                            &features,
-                            frontier_neighbor_algorithm,
-                            frontier_neighbor_count,
-                            frontier_window_size,
-                        )
-                    })
-                    .collect();
+                {
+                    pending_features.push(env.features_with_scratch(
+                        &common_data,
+                        &features,
+                        frontier_neighbor_algorithm,
+                        frontier_neighbor_count,
+                        frontier_window_size,
+                        &mut feature_scratch,
+                    ));
+                }
                 WorkerResponse::FeatureInfo(feature_info(&pending_features))
             }
             WorkerCommand::PackFeatures {
@@ -1198,7 +1202,7 @@ fn worker_loop(
             } => {
                 if pending_features.len() != expected_snapshot_count {
                     let actual = pending_features.len();
-                    pending_features.clear();
+                    feature_scratch.recycle_feature_vec(&mut pending_features);
                     WorkerResponse::Error(format!(
                         "pending feature count mismatch: expected {expected_snapshot_count}, got {actual}"
                     ))
@@ -1206,6 +1210,7 @@ fn worker_loop(
                     let mut outputs = unsafe { outputs.into_slices() };
                     for (idx, features) in pending_features.drain(..).enumerate() {
                         outputs.write_features(idx, &features);
+                        feature_scratch.recycle_features(features);
                     }
                     WorkerResponse::FeatureInfo(FeatureInfo {
                         frontier_row_count: outputs.frontier_row_count,
