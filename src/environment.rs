@@ -462,6 +462,62 @@ fn save_refill_utility_distance_can_improve(
         || u16::from(distance) + 1 < u16::from(current_distance)
 }
 
+#[derive(Clone, Copy)]
+struct SaveRefillUtilityQueryRow {
+    target_mask: u8,
+    frontier: i16,
+    frontier_distance: GraphDistance,
+    save_to_current_distance: GraphDistance,
+    save_from_current_distance: GraphDistance,
+    refill_to_current_distance: GraphDistance,
+    refill_from_current_distance: GraphDistance,
+}
+
+impl SaveRefillUtilityQueryRow {
+    fn new(frontier: i16, frontier_distance: GraphDistance) -> Self {
+        Self {
+            target_mask: 0,
+            frontier,
+            frontier_distance,
+            save_to_current_distance: UNREACHABLE_DISTANCE,
+            save_from_current_distance: UNREACHABLE_DISTANCE,
+            refill_to_current_distance: UNREACHABLE_DISTANCE,
+            refill_from_current_distance: UNREACHABLE_DISTANCE,
+        }
+    }
+
+    fn add_target(&mut self, target_bit: u8, current_distance: GraphDistance) {
+        self.target_mask |= 1u8 << target_bit;
+        match target_bit {
+            0 => self.save_to_current_distance = current_distance,
+            1 => self.save_from_current_distance = current_distance,
+            2 => self.refill_to_current_distance = current_distance,
+            3 => self.refill_from_current_distance = current_distance,
+            _ => unreachable!(),
+        }
+    }
+
+    fn same_context(&self, other: &Self) -> bool {
+        self.frontier == other.frontier && self.frontier_distance == other.frontier_distance
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.target_mask |= other.target_mask;
+        if other.target_mask & 1 != 0 {
+            self.save_to_current_distance = other.save_to_current_distance;
+        }
+        if other.target_mask & 2 != 0 {
+            self.save_from_current_distance = other.save_from_current_distance;
+        }
+        if other.target_mask & 4 != 0 {
+            self.refill_to_current_distance = other.refill_to_current_distance;
+        }
+        if other.target_mask & 8 != 0 {
+            self.refill_from_current_distance = other.refill_from_current_distance;
+        }
+    }
+}
+
 fn frontier_midpoint(location: DoorLocation) -> (i16, i16) {
     if location.vertical() {
         (i16::from(location.x()) * 2 + 1, i16::from(location.y()) * 2)
@@ -3643,97 +3699,32 @@ impl Environment {
         );
         let profile = profile_start();
         if config.save_utility_query || config.refill_utility_query {
-            let mut push_save_refill_query =
-                |room_part: RoomPartIdx,
-                 target_bit: u8,
-                 current_distance: GraphDistance,
-                 frontier_distance: GraphDistance,
-                 frontier_part: RoomPartIdx| {
-                    if frontier_distance != UNREACHABLE_DISTANCE
-                        && save_refill_utility_distance_can_improve(
-                            frontier_distance,
-                            current_distance,
-                        )
-                    {
-                        let Some(&frontier_idx) =
-                            first_frontier_row_by_part.get(frontier_part as usize)
-                        else {
-                            return;
-                        };
-                        if frontier_idx < 0 {
-                            return;
-                        }
-                        let target_mask = 1u8 << target_bit;
-                        if let Some(query_idx) = save_refill_utility_query_room_part_idx
-                            .iter()
-                            .zip(&save_refill_utility_query_frontier)
-                            .zip(&save_refill_utility_query_frontier_distance)
-                            .position(
-                                |(
-                                    (&existing_room_part, &existing_frontier),
-                                    &existing_frontier_distance,
-                                )| {
-                                    existing_room_part == i64::from(room_part)
-                                        && existing_frontier == frontier_idx
-                                        && existing_frontier_distance == frontier_distance
-                                },
-                            )
-                        {
-                            save_refill_utility_query_target_mask[query_idx] |= target_mask;
-                            match target_bit {
-                                0 => {
-                                    save_refill_utility_query_save_to_current_distance[query_idx] =
-                                        current_distance
-                                }
-                                1 => {
-                                    save_refill_utility_query_save_from_current_distance
-                                        [query_idx] = current_distance
-                                }
-                                2 => {
-                                    save_refill_utility_query_refill_to_current_distance
-                                        [query_idx] = current_distance
-                                }
-                                3 => {
-                                    save_refill_utility_query_refill_from_current_distance
-                                        [query_idx] = current_distance
-                                }
-                                _ => unreachable!(),
-                            }
-                            return;
-                        }
-                        save_refill_utility_query_room_part_idx.push(i64::from(room_part));
-                        save_refill_utility_query_target_mask.push(target_mask);
-                        save_refill_utility_query_frontier.push(frontier_idx);
-                        save_refill_utility_query_frontier_distance.push(frontier_distance);
-                        save_refill_utility_query_save_to_current_distance.push(
-                            if target_bit == 0 {
-                                current_distance
-                            } else {
-                                UNREACHABLE_DISTANCE
-                            },
-                        );
-                        save_refill_utility_query_save_from_current_distance.push(
-                            if target_bit == 1 {
-                                current_distance
-                            } else {
-                                UNREACHABLE_DISTANCE
-                            },
-                        );
-                        save_refill_utility_query_refill_to_current_distance.push(
-                            if target_bit == 2 {
-                                current_distance
-                            } else {
-                                UNREACHABLE_DISTANCE
-                            },
-                        );
-                        save_refill_utility_query_refill_from_current_distance.push(
-                            if target_bit == 3 {
-                                current_distance
-                            } else {
-                                UNREACHABLE_DISTANCE
-                            },
-                        );
+            let make_save_refill_row =
+                |frontier_distance: GraphDistance, frontier_part: RoomPartIdx| {
+                    if frontier_distance == UNREACHABLE_DISTANCE {
+                        return None;
                     }
+                    let frontier_idx = first_frontier_row_by_part
+                        .get(frontier_part as usize)
+                        .copied()
+                        .unwrap_or(-1);
+                    (frontier_idx >= 0)
+                        .then(|| SaveRefillUtilityQueryRow::new(frontier_idx, frontier_distance))
+                };
+            let mut push_save_refill_query =
+                |room_part: RoomPartIdx, row: SaveRefillUtilityQueryRow| {
+                    save_refill_utility_query_room_part_idx.push(i64::from(room_part));
+                    save_refill_utility_query_target_mask.push(row.target_mask);
+                    save_refill_utility_query_frontier.push(row.frontier);
+                    save_refill_utility_query_frontier_distance.push(row.frontier_distance);
+                    save_refill_utility_query_save_to_current_distance
+                        .push(row.save_to_current_distance);
+                    save_refill_utility_query_save_from_current_distance
+                        .push(row.save_from_current_distance);
+                    save_refill_utility_query_refill_to_current_distance
+                        .push(row.refill_to_current_distance);
+                    save_refill_utility_query_refill_from_current_distance
+                        .push(row.refill_from_current_distance);
                 };
             for &room_part in &self.active_room_parts {
                 let part = room_part as usize;
@@ -3762,37 +3753,60 @@ impl Environment {
                 let from_room_frontier_part = self
                     .room_part_frontier_distance_cache
                     .nearest_frontier_destination_part[part];
+                let mut to_row = make_save_refill_row(to_room_distance, to_room_frontier_part);
+                let mut from_row =
+                    make_save_refill_row(from_room_distance, from_room_frontier_part);
                 if config.save_utility_query {
-                    push_save_refill_query(
-                        room_part,
-                        0,
-                        save_current_to_room.unwrap(),
-                        to_room_distance,
-                        to_room_frontier_part,
-                    );
-                    push_save_refill_query(
-                        room_part,
-                        1,
-                        save_current_from_room.unwrap(),
-                        from_room_distance,
-                        from_room_frontier_part,
-                    );
+                    let current_distance = save_current_to_room.unwrap();
+                    if let Some(row) = &mut to_row {
+                        if save_refill_utility_distance_can_improve(
+                            row.frontier_distance,
+                            current_distance,
+                        ) {
+                            row.add_target(0, current_distance);
+                        }
+                    }
+                    let current_distance = save_current_from_room.unwrap();
+                    if let Some(row) = &mut from_row {
+                        if save_refill_utility_distance_can_improve(
+                            row.frontier_distance,
+                            current_distance,
+                        ) {
+                            row.add_target(1, current_distance);
+                        }
+                    }
                 }
                 if config.refill_utility_query {
-                    push_save_refill_query(
-                        room_part,
-                        2,
-                        refill_current_to_room.unwrap(),
-                        to_room_distance,
-                        to_room_frontier_part,
-                    );
-                    push_save_refill_query(
-                        room_part,
-                        3,
-                        refill_current_from_room.unwrap(),
-                        from_room_distance,
-                        from_room_frontier_part,
-                    );
+                    let current_distance = refill_current_to_room.unwrap();
+                    if let Some(row) = &mut to_row {
+                        if save_refill_utility_distance_can_improve(
+                            row.frontier_distance,
+                            current_distance,
+                        ) {
+                            row.add_target(2, current_distance);
+                        }
+                    }
+                    let current_distance = refill_current_from_room.unwrap();
+                    if let Some(row) = &mut from_row {
+                        if save_refill_utility_distance_can_improve(
+                            row.frontier_distance,
+                            current_distance,
+                        ) {
+                            row.add_target(3, current_distance);
+                        }
+                    }
+                }
+                if let Some(mut to_row) = to_row.filter(|row| row.target_mask != 0) {
+                    if let Some(from_row) = from_row.filter(|row| row.target_mask != 0) {
+                        if to_row.same_context(&from_row) {
+                            to_row.merge(from_row);
+                        } else {
+                            push_save_refill_query(room_part, from_row);
+                        }
+                    }
+                    push_save_refill_query(room_part, to_row);
+                } else if let Some(from_row) = from_row.filter(|row| row.target_mask != 0) {
+                    push_save_refill_query(room_part, from_row);
                 }
             }
         }
@@ -3801,32 +3815,34 @@ impl Environment {
             ProfileMetric::EnvCounterFeatureSaveRefillUtilityRows,
             save_refill_utility_query_room_part_idx.len() as u64,
         );
-        let mut save_to_masks = 0u64;
-        let mut save_from_masks = 0u64;
-        let mut refill_to_masks = 0u64;
-        let mut refill_from_masks = 0u64;
-        for &target_mask in &save_refill_utility_query_target_mask {
-            save_to_masks += u64::from(target_mask & 1 != 0);
-            save_from_masks += u64::from(target_mask & 2 != 0);
-            refill_to_masks += u64::from(target_mask & 4 != 0);
-            refill_from_masks += u64::from(target_mask & 8 != 0);
+        if profile_enabled() {
+            let mut save_to_masks = 0u64;
+            let mut save_from_masks = 0u64;
+            let mut refill_to_masks = 0u64;
+            let mut refill_from_masks = 0u64;
+            for &target_mask in &save_refill_utility_query_target_mask {
+                save_to_masks += u64::from(target_mask & 1 != 0);
+                save_from_masks += u64::from(target_mask & 2 != 0);
+                refill_to_masks += u64::from(target_mask & 4 != 0);
+                refill_from_masks += u64::from(target_mask & 8 != 0);
+            }
+            record_profile_count(
+                ProfileMetric::EnvCounterFeatureSaveRefillUtilitySaveToMasks,
+                save_to_masks,
+            );
+            record_profile_count(
+                ProfileMetric::EnvCounterFeatureSaveRefillUtilitySaveFromMasks,
+                save_from_masks,
+            );
+            record_profile_count(
+                ProfileMetric::EnvCounterFeatureSaveRefillUtilityRefillToMasks,
+                refill_to_masks,
+            );
+            record_profile_count(
+                ProfileMetric::EnvCounterFeatureSaveRefillUtilityRefillFromMasks,
+                refill_from_masks,
+            );
         }
-        record_profile_count(
-            ProfileMetric::EnvCounterFeatureSaveRefillUtilitySaveToMasks,
-            save_to_masks,
-        );
-        record_profile_count(
-            ProfileMetric::EnvCounterFeatureSaveRefillUtilitySaveFromMasks,
-            save_from_masks,
-        );
-        record_profile_count(
-            ProfileMetric::EnvCounterFeatureSaveRefillUtilityRefillToMasks,
-            refill_to_masks,
-        );
-        record_profile_count(
-            ProfileMetric::EnvCounterFeatureSaveRefillUtilityRefillFromMasks,
-            refill_from_masks,
-        );
 
         if config.frontier_neighbor {
             let profile = profile_start();
