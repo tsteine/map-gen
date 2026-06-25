@@ -636,10 +636,13 @@ class MissingConnectQueryFeatures:
 class SaveRefillUtilityQueryFeatures:
     query_snapshot_idx: torch.Tensor
     query_room_part_idx: torch.Tensor
-    query_kind: torch.Tensor
+    target_mask: torch.Tensor
     frontier: torch.Tensor
     frontier_distance: torch.Tensor
-    current_distance: torch.Tensor
+    save_to_current_distance: torch.Tensor
+    save_from_current_distance: torch.Tensor
+    refill_to_current_distance: torch.Tensor
+    refill_from_current_distance: torch.Tensor
 
     def to(
         self,
@@ -649,19 +652,33 @@ class SaveRefillUtilityQueryFeatures:
         return SaveRefillUtilityQueryFeatures(
             query_snapshot_idx=self.query_snapshot_idx.to(device, non_blocking=non_blocking),
             query_room_part_idx=self.query_room_part_idx.to(device, non_blocking=non_blocking),
-            query_kind=self.query_kind.to(device, non_blocking=non_blocking),
+            target_mask=self.target_mask.to(device, non_blocking=non_blocking),
             frontier=self.frontier.to(device, non_blocking=non_blocking),
             frontier_distance=self.frontier_distance.to(device, non_blocking=non_blocking),
-            current_distance=self.current_distance.to(device, non_blocking=non_blocking),
+            save_to_current_distance=self.save_to_current_distance.to(
+                device, non_blocking=non_blocking
+            ),
+            save_from_current_distance=self.save_from_current_distance.to(
+                device, non_blocking=non_blocking
+            ),
+            refill_to_current_distance=self.refill_to_current_distance.to(
+                device, non_blocking=non_blocking
+            ),
+            refill_from_current_distance=self.refill_from_current_distance.to(
+                device, non_blocking=non_blocking
+            ),
         )
 
     def mark_dynamic(self) -> None:
         torch._dynamo.maybe_mark_dynamic(self.query_snapshot_idx, 0)
         torch._dynamo.maybe_mark_dynamic(self.query_room_part_idx, 0)
-        torch._dynamo.maybe_mark_dynamic(self.query_kind, 0)
+        torch._dynamo.maybe_mark_dynamic(self.target_mask, 0)
         torch._dynamo.maybe_mark_dynamic(self.frontier, 0)
         torch._dynamo.maybe_mark_dynamic(self.frontier_distance, 0)
-        torch._dynamo.maybe_mark_dynamic(self.current_distance, 0)
+        torch._dynamo.maybe_mark_dynamic(self.save_to_current_distance, 0)
+        torch._dynamo.maybe_mark_dynamic(self.save_from_current_distance, 0)
+        torch._dynamo.maybe_mark_dynamic(self.refill_to_current_distance, 0)
+        torch._dynamo.maybe_mark_dynamic(self.refill_from_current_distance, 0)
 
 
 @dataclass
@@ -1197,8 +1214,8 @@ class EnvironmentGroup:
                     "save_refill_utility_query_room_part_idx": (
                         feature_slot.save_refill_utility_query_room_part_idx.numpy()
                     ),
-                    "save_refill_utility_query_kind": (
-                        feature_slot.save_refill_utility_query_kind.numpy()
+                    "save_refill_utility_query_target_mask": (
+                        feature_slot.save_refill_utility_query_target_mask.numpy()
                     ),
                     "save_refill_utility_query_frontier": (
                         feature_slot.save_refill_utility_query_frontier.numpy()
@@ -1206,8 +1223,17 @@ class EnvironmentGroup:
                     "save_refill_utility_query_frontier_distance": (
                         feature_slot.save_refill_utility_query_frontier_distance.numpy()
                     ),
-                    "save_refill_utility_query_current_distance": (
-                        feature_slot.save_refill_utility_query_current_distance.numpy()
+                    "save_refill_utility_query_save_to_current_distance": (
+                        feature_slot.save_refill_utility_query_save_to_current_distance.numpy()
+                    ),
+                    "save_refill_utility_query_save_from_current_distance": (
+                        feature_slot.save_refill_utility_query_save_from_current_distance.numpy()
+                    ),
+                    "save_refill_utility_query_refill_to_current_distance": (
+                        feature_slot.save_refill_utility_query_refill_to_current_distance.numpy()
+                    ),
+                    "save_refill_utility_query_refill_from_current_distance": (
+                        feature_slot.save_refill_utility_query_refill_from_current_distance.numpy()
                     ),
                     "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
                     "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),
@@ -1312,10 +1338,13 @@ class FeatureSlot:
         self.missing_connect_query_current_distance = None
         self.save_refill_utility_query_snapshot_idx = None
         self.save_refill_utility_query_room_part_idx = None
-        self.save_refill_utility_query_kind = None
+        self.save_refill_utility_query_target_mask = None
         self.save_refill_utility_query_frontier = None
         self.save_refill_utility_query_frontier_distance = None
-        self.save_refill_utility_query_current_distance = None
+        self.save_refill_utility_query_save_to_current_distance = None
+        self.save_refill_utility_query_save_from_current_distance = None
+        self.save_refill_utility_query_refill_to_current_distance = None
+        self.save_refill_utility_query_refill_from_current_distance = None
         self.toilet_crossed_room_idx = None
         self.row_snapshot_idx = None
         self.row_frontier_idx = None
@@ -1471,7 +1500,7 @@ class FeatureSlot:
             (self.save_refill_utility_query_row_capacity,),
             torch.int64,
         )
-        self.save_refill_utility_query_kind = self._empty(
+        self.save_refill_utility_query_target_mask = self._empty(
             (self.save_refill_utility_query_row_capacity,),
             torch.uint8,
         )
@@ -1483,7 +1512,19 @@ class FeatureSlot:
             (self.save_refill_utility_query_row_capacity,),
             torch.uint8,
         )
-        self.save_refill_utility_query_current_distance = self._empty(
+        self.save_refill_utility_query_save_to_current_distance = self._empty(
+            (self.save_refill_utility_query_row_capacity,),
+            torch.uint8,
+        )
+        self.save_refill_utility_query_save_from_current_distance = self._empty(
+            (self.save_refill_utility_query_row_capacity,),
+            torch.uint8,
+        )
+        self.save_refill_utility_query_refill_to_current_distance = self._empty(
+            (self.save_refill_utility_query_row_capacity,),
+            torch.uint8,
+        )
+        self.save_refill_utility_query_refill_from_current_distance = self._empty(
             (self.save_refill_utility_query_row_capacity,),
             torch.uint8,
         )
@@ -1648,7 +1689,7 @@ class FeatureSlot:
                 query_room_part_idx=self.save_refill_utility_query_room_part_idx[
                     :save_refill_utility_query_row_count
                 ],
-                query_kind=self.save_refill_utility_query_kind[
+                target_mask=self.save_refill_utility_query_target_mask[
                     :save_refill_utility_query_row_count
                 ],
                 frontier=self.save_refill_utility_query_frontier[
@@ -1657,7 +1698,16 @@ class FeatureSlot:
                 frontier_distance=self.save_refill_utility_query_frontier_distance[
                     :save_refill_utility_query_row_count
                 ],
-                current_distance=self.save_refill_utility_query_current_distance[
+                save_to_current_distance=self.save_refill_utility_query_save_to_current_distance[
+                    :save_refill_utility_query_row_count
+                ],
+                save_from_current_distance=self.save_refill_utility_query_save_from_current_distance[
+                    :save_refill_utility_query_row_count
+                ],
+                refill_to_current_distance=self.save_refill_utility_query_refill_to_current_distance[
+                    :save_refill_utility_query_row_count
+                ],
+                refill_from_current_distance=self.save_refill_utility_query_refill_from_current_distance[
                     :save_refill_utility_query_row_count
                 ],
             ),
@@ -1819,7 +1869,7 @@ class FeatureSlot:
                 query_room_part_idx=self.save_refill_utility_query_room_part_idx[
                     :save_refill_utility_query_row_count
                 ],
-                query_kind=self.save_refill_utility_query_kind[
+                target_mask=self.save_refill_utility_query_target_mask[
                     :save_refill_utility_query_row_count
                 ],
                 frontier=self.save_refill_utility_query_frontier[
@@ -1828,7 +1878,16 @@ class FeatureSlot:
                 frontier_distance=self.save_refill_utility_query_frontier_distance[
                     :save_refill_utility_query_row_count
                 ],
-                current_distance=self.save_refill_utility_query_current_distance[
+                save_to_current_distance=self.save_refill_utility_query_save_to_current_distance[
+                    :save_refill_utility_query_row_count
+                ],
+                save_from_current_distance=self.save_refill_utility_query_save_from_current_distance[
+                    :save_refill_utility_query_row_count
+                ],
+                refill_to_current_distance=self.save_refill_utility_query_refill_to_current_distance[
+                    :save_refill_utility_query_row_count
+                ],
+                refill_from_current_distance=self.save_refill_utility_query_refill_from_current_distance[
                     :save_refill_utility_query_row_count
                 ],
             ),
@@ -1959,8 +2018,8 @@ def extract_candidate_features(
                 "save_refill_utility_query_room_part_idx": (
                     feature_slot.save_refill_utility_query_room_part_idx.numpy()
                 ),
-                "save_refill_utility_query_kind": (
-                    feature_slot.save_refill_utility_query_kind.numpy()
+                "save_refill_utility_query_target_mask": (
+                    feature_slot.save_refill_utility_query_target_mask.numpy()
                 ),
                 "save_refill_utility_query_frontier": (
                     feature_slot.save_refill_utility_query_frontier.numpy()
@@ -1968,8 +2027,17 @@ def extract_candidate_features(
                 "save_refill_utility_query_frontier_distance": (
                     feature_slot.save_refill_utility_query_frontier_distance.numpy()
                 ),
-                "save_refill_utility_query_current_distance": (
-                    feature_slot.save_refill_utility_query_current_distance.numpy()
+                "save_refill_utility_query_save_to_current_distance": (
+                    feature_slot.save_refill_utility_query_save_to_current_distance.numpy()
+                ),
+                "save_refill_utility_query_save_from_current_distance": (
+                    feature_slot.save_refill_utility_query_save_from_current_distance.numpy()
+                ),
+                "save_refill_utility_query_refill_to_current_distance": (
+                    feature_slot.save_refill_utility_query_refill_to_current_distance.numpy()
+                ),
+                "save_refill_utility_query_refill_from_current_distance": (
+                    feature_slot.save_refill_utility_query_refill_from_current_distance.numpy()
                 ),
                 "toilet_crossed_room_idx": feature_slot.toilet_crossed_room_idx.numpy(),
                 "row_snapshot_idx": feature_slot.row_snapshot_idx.numpy(),

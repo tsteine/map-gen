@@ -443,10 +443,13 @@ pub struct Features {
     // Sparse utility query rows for save/refill distances. Frontier indices are
     // snapshot-local; -1 marks padding.
     pub save_refill_utility_query_room_part_idx: Vec<i64>,
-    pub save_refill_utility_query_kind: Vec<u8>,
+    pub save_refill_utility_query_target_mask: Vec<u8>,
     pub save_refill_utility_query_frontier: Vec<i16>,
     pub save_refill_utility_query_frontier_distance: Vec<u8>,
-    pub save_refill_utility_query_current_distance: Vec<u8>,
+    pub save_refill_utility_query_save_to_current_distance: Vec<u8>,
+    pub save_refill_utility_query_save_from_current_distance: Vec<u8>,
+    pub save_refill_utility_query_refill_to_current_distance: Vec<u8>,
+    pub save_refill_utility_query_refill_from_current_distance: Vec<u8>,
     // Concrete room crossed by the Toilet when exactly one non-Toilet room crosses it.
     pub toilet_crossed_room_idx: Vec<i16>,
 }
@@ -3384,10 +3387,13 @@ impl Environment {
         let mut missing_connect_query_target_cap_hit = Vec::new();
         let mut missing_connect_query_current_distance = Vec::new();
         let mut save_refill_utility_query_room_part_idx = Vec::new();
-        let mut save_refill_utility_query_kind = Vec::new();
+        let mut save_refill_utility_query_target_mask = Vec::new();
         let mut save_refill_utility_query_frontier = Vec::new();
         let mut save_refill_utility_query_frontier_distance = Vec::new();
-        let mut save_refill_utility_query_current_distance = Vec::new();
+        let mut save_refill_utility_query_save_to_current_distance = Vec::new();
+        let mut save_refill_utility_query_save_from_current_distance = Vec::new();
+        let mut save_refill_utility_query_refill_to_current_distance = Vec::new();
+        let mut save_refill_utility_query_refill_from_current_distance = Vec::new();
         profile_end(ProfileMetric::EnvFeaturesSetup, profile);
 
         let profile = profile_start();
@@ -3639,7 +3645,7 @@ impl Environment {
         if config.save_utility_query || config.refill_utility_query {
             let mut push_save_refill_query =
                 |room_part: RoomPartIdx,
-                 query_kind: u8,
+                 target_bit: u8,
                  current_distance: GraphDistance,
                  frontier_distance: GraphDistance,
                  frontier_part: RoomPartIdx| {
@@ -3657,11 +3663,76 @@ impl Environment {
                         if frontier_idx < 0 {
                             return;
                         }
+                        let target_mask = 1u8 << target_bit;
+                        if let Some(query_idx) = save_refill_utility_query_room_part_idx
+                            .iter()
+                            .zip(&save_refill_utility_query_frontier)
+                            .zip(&save_refill_utility_query_frontier_distance)
+                            .position(
+                                |(
+                                    (&existing_room_part, &existing_frontier),
+                                    &existing_frontier_distance,
+                                )| {
+                                    existing_room_part == i64::from(room_part)
+                                        && existing_frontier == frontier_idx
+                                        && existing_frontier_distance == frontier_distance
+                                },
+                            )
+                        {
+                            save_refill_utility_query_target_mask[query_idx] |= target_mask;
+                            match target_bit {
+                                0 => {
+                                    save_refill_utility_query_save_to_current_distance[query_idx] =
+                                        current_distance
+                                }
+                                1 => {
+                                    save_refill_utility_query_save_from_current_distance
+                                        [query_idx] = current_distance
+                                }
+                                2 => {
+                                    save_refill_utility_query_refill_to_current_distance
+                                        [query_idx] = current_distance
+                                }
+                                3 => {
+                                    save_refill_utility_query_refill_from_current_distance
+                                        [query_idx] = current_distance
+                                }
+                                _ => unreachable!(),
+                            }
+                            return;
+                        }
                         save_refill_utility_query_room_part_idx.push(i64::from(room_part));
-                        save_refill_utility_query_kind.push(query_kind);
-                        save_refill_utility_query_current_distance.push(current_distance);
+                        save_refill_utility_query_target_mask.push(target_mask);
                         save_refill_utility_query_frontier.push(frontier_idx);
                         save_refill_utility_query_frontier_distance.push(frontier_distance);
+                        save_refill_utility_query_save_to_current_distance.push(
+                            if target_bit == 0 {
+                                current_distance
+                            } else {
+                                UNREACHABLE_DISTANCE
+                            },
+                        );
+                        save_refill_utility_query_save_from_current_distance.push(
+                            if target_bit == 1 {
+                                current_distance
+                            } else {
+                                UNREACHABLE_DISTANCE
+                            },
+                        );
+                        save_refill_utility_query_refill_to_current_distance.push(
+                            if target_bit == 2 {
+                                current_distance
+                            } else {
+                                UNREACHABLE_DISTANCE
+                            },
+                        );
+                        save_refill_utility_query_refill_from_current_distance.push(
+                            if target_bit == 3 {
+                                current_distance
+                            } else {
+                                UNREACHABLE_DISTANCE
+                            },
+                        );
                     }
                 };
             for &room_part in &self.active_room_parts {
@@ -3729,6 +3800,32 @@ impl Environment {
         record_profile_count(
             ProfileMetric::EnvCounterFeatureSaveRefillUtilityRows,
             save_refill_utility_query_room_part_idx.len() as u64,
+        );
+        let mut save_to_masks = 0u64;
+        let mut save_from_masks = 0u64;
+        let mut refill_to_masks = 0u64;
+        let mut refill_from_masks = 0u64;
+        for &target_mask in &save_refill_utility_query_target_mask {
+            save_to_masks += u64::from(target_mask & 1 != 0);
+            save_from_masks += u64::from(target_mask & 2 != 0);
+            refill_to_masks += u64::from(target_mask & 4 != 0);
+            refill_from_masks += u64::from(target_mask & 8 != 0);
+        }
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureSaveRefillUtilitySaveToMasks,
+            save_to_masks,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureSaveRefillUtilitySaveFromMasks,
+            save_from_masks,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureSaveRefillUtilityRefillToMasks,
+            refill_to_masks,
+        );
+        record_profile_count(
+            ProfileMetric::EnvCounterFeatureSaveRefillUtilityRefillFromMasks,
+            refill_from_masks,
         );
 
         if config.frontier_neighbor {
@@ -3857,10 +3954,13 @@ impl Environment {
             missing_connect_query_target_cap_hit,
             missing_connect_query_current_distance,
             save_refill_utility_query_room_part_idx,
-            save_refill_utility_query_kind,
+            save_refill_utility_query_target_mask,
             save_refill_utility_query_frontier,
             save_refill_utility_query_frontier_distance,
-            save_refill_utility_query_current_distance,
+            save_refill_utility_query_save_to_current_distance,
+            save_refill_utility_query_save_from_current_distance,
+            save_refill_utility_query_refill_to_current_distance,
+            save_refill_utility_query_refill_from_current_distance,
             toilet_crossed_room_idx,
         };
         profile_end(ProfileMetric::EnvFeaturesOutput, profile);
@@ -4963,7 +5063,7 @@ mod tests {
     }
 
     #[test]
-    fn save_refill_utility_queries_emit_directional_kinds() {
+    fn save_refill_utility_queries_consolidate_shared_frontier_context() {
         let rooms: Vec<Room> = serde_json::from_str(
             r#"
             [{
@@ -4996,16 +5096,80 @@ mod tests {
         };
         let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4);
 
-        assert_eq!(features.save_refill_utility_query_room_part_idx, vec![0; 4]);
-        assert_eq!(features.save_refill_utility_query_kind, vec![0, 1, 2, 3]);
+        assert_eq!(features.save_refill_utility_query_room_part_idx, vec![0]);
+        assert_eq!(features.save_refill_utility_query_target_mask, vec![0b1111]);
         assert_eq!(
-            features.save_refill_utility_query_current_distance,
-            vec![UNREACHABLE_DISTANCE; 4]
+            features.save_refill_utility_query_save_to_current_distance,
+            vec![UNREACHABLE_DISTANCE]
         );
         assert_eq!(
-            features.save_refill_utility_query_frontier,
-            vec![0, 0, 0, 0]
+            features.save_refill_utility_query_save_from_current_distance,
+            vec![UNREACHABLE_DISTANCE]
         );
+        assert_eq!(
+            features.save_refill_utility_query_refill_to_current_distance,
+            vec![UNREACHABLE_DISTANCE]
+        );
+        assert_eq!(
+            features.save_refill_utility_query_refill_from_current_distance,
+            vec![UNREACHABLE_DISTANCE]
+        );
+        assert_eq!(features.save_refill_utility_query_frontier, vec![0]);
+    }
+
+    #[test]
+    fn save_refill_utility_queries_split_different_frontier_contexts() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [{
+                "map": [[1, 0, 1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"direction": "left", "x": 2, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": [[0, 1], [1, 0]]
+            }]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (6, 4), 8, 0);
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 1,
+                y: 1,
+            },
+            &common,
+        );
+        env.room_part_frontier_distance_cache
+            .nearest_frontier_source[0] = 1;
+        env.room_part_frontier_distance_cache
+            .nearest_frontier_source_part[0] = 0;
+        env.room_part_frontier_distance_cache
+            .nearest_frontier_destination[0] = 1;
+        env.room_part_frontier_distance_cache
+            .nearest_frontier_destination_part[0] = 1;
+        let config = FeatureConfig {
+            frontier_mask: true,
+            save_utility_query: true,
+            refill_utility_query: true,
+            ..FeatureConfig::all_disabled()
+        };
+        let features = env.features(&common, &config, FrontierNeighborAlgorithm::Delaunay, 4, 4);
+        let rows_for_part_zero = features
+            .save_refill_utility_query_room_part_idx
+            .iter()
+            .zip(&features.save_refill_utility_query_target_mask)
+            .filter(|&(&room_part, _)| room_part == 0)
+            .map(|(_, &target_mask)| target_mask)
+            .collect::<Vec<_>>();
+
+        assert_eq!(rows_for_part_zero.len(), 2);
+        assert!(rows_for_part_zero.contains(&0b0101));
+        assert!(rows_for_part_zero.contains(&0b1010));
     }
 
     #[test]

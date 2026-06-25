@@ -32,7 +32,6 @@ class ModelConfig(StrictBaseModel):
     missing_connect_query_distance_width: int
     utility_query_hidden_width: int
     utility_query_frontier_width: int
-    utility_query_kind_width: int
     known_save_refill_utility_override: bool
     num_layers: int
 
@@ -299,8 +298,6 @@ def validate_config(config: Config) -> None:
         raise ValueError("model.utility_query_hidden_width must be greater than zero")
     if config.model.utility_query_frontier_width <= 0:
         raise ValueError("model.utility_query_frontier_width must be greater than zero")
-    if config.model.utility_query_kind_width <= 0:
-        raise ValueError("model.utility_query_kind_width must be greater than zero")
     validate_feature_width("lookahead_outcomes", config.features.lookahead_outcomes)
     validate_feature_width("global_room_position", config.features.global_room_position)
     validate_feature_width(

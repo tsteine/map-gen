@@ -19,7 +19,6 @@
     "missing_connect_query_distance_width": 16,
     "utility_query_hidden_width": 256,
     "utility_query_frontier_width": 64,
-    "utility_query_kind_width": 16,
     "known_save_refill_utility_override": false,
     "num_layers": 2
   },

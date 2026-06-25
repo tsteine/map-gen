@@ -121,6 +121,10 @@ profile_metrics! {
     EnvCounterFeatureConnectionFrontierPairs => "env.counter.features.connection_frontier_pairs",
     EnvCounterFeatureMissingConnectQueryRows => "env.counter.features.missing_connect_query_rows",
     EnvCounterFeatureSaveRefillUtilityRows => "env.counter.features.save_refill_utility_rows",
+    EnvCounterFeatureSaveRefillUtilitySaveToMasks => "env.counter.features.save_refill_utility_save_to_masks",
+    EnvCounterFeatureSaveRefillUtilitySaveFromMasks => "env.counter.features.save_refill_utility_save_from_masks",
+    EnvCounterFeatureSaveRefillUtilityRefillToMasks => "env.counter.features.save_refill_utility_refill_to_masks",
+    EnvCounterFeatureSaveRefillUtilityRefillFromMasks => "env.counter.features.save_refill_utility_refill_from_masks",
 }
 
 static PROFILE_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -1514,10 +1518,13 @@ pub struct FeatureBuffers {
     missing_connect_query_current_distance: Py<PyArray1<u8>>,
     save_refill_utility_query_snapshot_idx: Py<PyArray1<i64>>,
     save_refill_utility_query_room_part_idx: Py<PyArray1<i64>>,
-    save_refill_utility_query_kind: Py<PyArray1<u8>>,
+    save_refill_utility_query_target_mask: Py<PyArray1<u8>>,
     save_refill_utility_query_frontier: Py<PyArray1<i16>>,
     save_refill_utility_query_frontier_distance: Py<PyArray1<u8>>,
-    save_refill_utility_query_current_distance: Py<PyArray1<u8>>,
+    save_refill_utility_query_save_to_current_distance: Py<PyArray1<u8>>,
+    save_refill_utility_query_save_from_current_distance: Py<PyArray1<u8>>,
+    save_refill_utility_query_refill_to_current_distance: Py<PyArray1<u8>>,
+    save_refill_utility_query_refill_from_current_distance: Py<PyArray1<u8>>,
     toilet_crossed_room_idx: Py<PyArray2<i16>>,
     row_snapshot_idx: Py<PyArray1<i64>>,
     row_frontier_idx: Py<PyArray1<FrontierIdx>>,
@@ -1685,9 +1692,9 @@ impl FeatureBuffers {
                 fields,
                 "save_refill_utility_query_room_part_idx"
             ),
-            save_refill_utility_query_kind: required_py_field!(
+            save_refill_utility_query_target_mask: required_py_field!(
                 fields,
-                "save_refill_utility_query_kind"
+                "save_refill_utility_query_target_mask"
             ),
             save_refill_utility_query_frontier: required_py_field!(
                 fields,
@@ -1697,9 +1704,21 @@ impl FeatureBuffers {
                 fields,
                 "save_refill_utility_query_frontier_distance"
             ),
-            save_refill_utility_query_current_distance: required_py_field!(
+            save_refill_utility_query_save_to_current_distance: required_py_field!(
                 fields,
-                "save_refill_utility_query_current_distance"
+                "save_refill_utility_query_save_to_current_distance"
+            ),
+            save_refill_utility_query_save_from_current_distance: required_py_field!(
+                fields,
+                "save_refill_utility_query_save_from_current_distance"
+            ),
+            save_refill_utility_query_refill_to_current_distance: required_py_field!(
+                fields,
+                "save_refill_utility_query_refill_to_current_distance"
+            ),
+            save_refill_utility_query_refill_from_current_distance: required_py_field!(
+                fields,
+                "save_refill_utility_query_refill_from_current_distance"
             ),
             toilet_crossed_room_idx: required_py_field!(fields, "toilet_crossed_room_idx"),
             row_snapshot_idx: required_py_field!(fields, "row_snapshot_idx"),
@@ -2265,10 +2284,13 @@ struct FeatureOutputShards {
     missing_connect_query_current_distance: OutputShard<u8>,
     save_refill_utility_query_snapshot_idx: OutputShard<i64>,
     save_refill_utility_query_room_part_idx: OutputShard<i64>,
-    save_refill_utility_query_kind: OutputShard<u8>,
+    save_refill_utility_query_target_mask: OutputShard<u8>,
     save_refill_utility_query_frontier: OutputShard<i16>,
     save_refill_utility_query_frontier_distance: OutputShard<u8>,
-    save_refill_utility_query_current_distance: OutputShard<u8>,
+    save_refill_utility_query_save_to_current_distance: OutputShard<u8>,
+    save_refill_utility_query_save_from_current_distance: OutputShard<u8>,
+    save_refill_utility_query_refill_to_current_distance: OutputShard<u8>,
+    save_refill_utility_query_refill_from_current_distance: OutputShard<u8>,
     snapshot_start: usize,
 }
 
@@ -2291,10 +2313,13 @@ struct FeatureOutputSlices<'a> {
     missing_connect_query_current_distance: &'a mut [u8],
     save_refill_utility_query_snapshot_idx: &'a mut [i64],
     save_refill_utility_query_room_part_idx: &'a mut [i64],
-    save_refill_utility_query_kind: &'a mut [u8],
+    save_refill_utility_query_target_mask: &'a mut [u8],
     save_refill_utility_query_frontier: &'a mut [i16],
     save_refill_utility_query_frontier_distance: &'a mut [u8],
-    save_refill_utility_query_current_distance: &'a mut [u8],
+    save_refill_utility_query_save_to_current_distance: &'a mut [u8],
+    save_refill_utility_query_save_from_current_distance: &'a mut [u8],
+    save_refill_utility_query_refill_to_current_distance: &'a mut [u8],
+    save_refill_utility_query_refill_from_current_distance: &'a mut [u8],
     snapshot_start: usize,
     frontier_row_count: usize,
     missing_connect_query_row_count: usize,
@@ -2349,8 +2374,8 @@ impl FeatureOutputShards {
                 self.save_refill_utility_query_room_part_idx
                     .into_mut_slice()
             },
-            save_refill_utility_query_kind: unsafe {
-                self.save_refill_utility_query_kind.into_mut_slice()
+            save_refill_utility_query_target_mask: unsafe {
+                self.save_refill_utility_query_target_mask.into_mut_slice()
             },
             save_refill_utility_query_frontier: unsafe {
                 self.save_refill_utility_query_frontier.into_mut_slice()
@@ -2359,8 +2384,20 @@ impl FeatureOutputShards {
                 self.save_refill_utility_query_frontier_distance
                     .into_mut_slice()
             },
-            save_refill_utility_query_current_distance: unsafe {
-                self.save_refill_utility_query_current_distance
+            save_refill_utility_query_save_to_current_distance: unsafe {
+                self.save_refill_utility_query_save_to_current_distance
+                    .into_mut_slice()
+            },
+            save_refill_utility_query_save_from_current_distance: unsafe {
+                self.save_refill_utility_query_save_from_current_distance
+                    .into_mut_slice()
+            },
+            save_refill_utility_query_refill_to_current_distance: unsafe {
+                self.save_refill_utility_query_refill_to_current_distance
+                    .into_mut_slice()
+            },
+            save_refill_utility_query_refill_from_current_distance: unsafe {
+                self.save_refill_utility_query_refill_from_current_distance
                     .into_mut_slice()
             },
             snapshot_start: self.snapshot_start,
@@ -2430,24 +2467,36 @@ impl FeatureOutputSlices<'_> {
         snapshot_idx: usize,
         query_snapshot_idx: &mut [i64],
         query_room_part_idx: &mut [i64],
-        query_kind: &mut [u8],
+        query_target_mask: &mut [u8],
         query_frontier: &mut [i16],
         query_frontier_distance: &mut [u8],
-        query_current_distance: &mut [u8],
+        query_save_to_current_distance: &mut [u8],
+        query_save_from_current_distance: &mut [u8],
+        query_refill_to_current_distance: &mut [u8],
+        query_refill_from_current_distance: &mut [u8],
         feature_room_part_idx: &[i64],
-        feature_kind: &[u8],
+        feature_target_mask: &[u8],
         feature_frontier: &[i16],
         feature_frontier_distance: &[u8],
-        feature_current_distance: &[u8],
+        feature_save_to_current_distance: &[u8],
+        feature_save_from_current_distance: &[u8],
+        feature_refill_to_current_distance: &[u8],
+        feature_refill_from_current_distance: &[u8],
     ) {
         for query_idx in 0..feature_room_part_idx.len() {
             let dst_idx = *query_row_count;
             query_snapshot_idx[dst_idx] = (snapshot_start + snapshot_idx) as i64;
             query_room_part_idx[dst_idx] = feature_room_part_idx[query_idx];
-            query_kind[dst_idx] = feature_kind[query_idx];
+            query_target_mask[dst_idx] = feature_target_mask[query_idx];
             query_frontier[dst_idx] = feature_frontier[query_idx];
             query_frontier_distance[dst_idx] = feature_frontier_distance[query_idx];
-            query_current_distance[dst_idx] = feature_current_distance[query_idx];
+            query_save_to_current_distance[dst_idx] = feature_save_to_current_distance[query_idx];
+            query_save_from_current_distance[dst_idx] =
+                feature_save_from_current_distance[query_idx];
+            query_refill_to_current_distance[dst_idx] =
+                feature_refill_to_current_distance[query_idx];
+            query_refill_from_current_distance[dst_idx] =
+                feature_refill_from_current_distance[query_idx];
             *query_row_count += 1;
         }
     }
@@ -2501,15 +2550,21 @@ impl FeatureOutputSlices<'_> {
             snapshot_idx,
             self.save_refill_utility_query_snapshot_idx,
             self.save_refill_utility_query_room_part_idx,
-            self.save_refill_utility_query_kind,
+            self.save_refill_utility_query_target_mask,
             self.save_refill_utility_query_frontier,
             self.save_refill_utility_query_frontier_distance,
-            self.save_refill_utility_query_current_distance,
+            self.save_refill_utility_query_save_to_current_distance,
+            self.save_refill_utility_query_save_from_current_distance,
+            self.save_refill_utility_query_refill_to_current_distance,
+            self.save_refill_utility_query_refill_from_current_distance,
             &features.save_refill_utility_query_room_part_idx,
-            &features.save_refill_utility_query_kind,
+            &features.save_refill_utility_query_target_mask,
             &features.save_refill_utility_query_frontier,
             &features.save_refill_utility_query_frontier_distance,
-            &features.save_refill_utility_query_current_distance,
+            &features.save_refill_utility_query_save_to_current_distance,
+            &features.save_refill_utility_query_save_from_current_distance,
+            &features.save_refill_utility_query_refill_to_current_distance,
+            &features.save_refill_utility_query_refill_from_current_distance,
         );
     }
 }
@@ -2831,10 +2886,13 @@ mod tests {
         let mut missing_connect_query_current_distance = Vec::new();
         let mut save_refill_utility_query_snapshot_idx = Vec::new();
         let mut save_refill_utility_query_room_part_idx = Vec::new();
-        let mut save_refill_utility_query_kind = Vec::new();
+        let mut save_refill_utility_query_target_mask = Vec::new();
         let mut save_refill_utility_query_frontier = Vec::new();
         let mut save_refill_utility_query_frontier_distance = Vec::new();
-        let mut save_refill_utility_query_current_distance = Vec::new();
+        let mut save_refill_utility_query_save_to_current_distance = Vec::new();
+        let mut save_refill_utility_query_save_from_current_distance = Vec::new();
+        let mut save_refill_utility_query_refill_to_current_distance = Vec::new();
+        let mut save_refill_utility_query_refill_from_current_distance = Vec::new();
 
         let outputs = FeatureOutputShards {
             global: empty_global_feature_output_shards(),
@@ -2885,8 +2943,8 @@ mod tests {
             save_refill_utility_query_room_part_idx: OutputShard::from_slice(
                 &mut save_refill_utility_query_room_part_idx,
             ),
-            save_refill_utility_query_kind: OutputShard::from_slice(
-                &mut save_refill_utility_query_kind,
+            save_refill_utility_query_target_mask: OutputShard::from_slice(
+                &mut save_refill_utility_query_target_mask,
             ),
             save_refill_utility_query_frontier: OutputShard::from_slice(
                 &mut save_refill_utility_query_frontier,
@@ -2894,8 +2952,17 @@ mod tests {
             save_refill_utility_query_frontier_distance: OutputShard::from_slice(
                 &mut save_refill_utility_query_frontier_distance,
             ),
-            save_refill_utility_query_current_distance: OutputShard::from_slice(
-                &mut save_refill_utility_query_current_distance,
+            save_refill_utility_query_save_to_current_distance: OutputShard::from_slice(
+                &mut save_refill_utility_query_save_to_current_distance,
+            ),
+            save_refill_utility_query_save_from_current_distance: OutputShard::from_slice(
+                &mut save_refill_utility_query_save_from_current_distance,
+            ),
+            save_refill_utility_query_refill_to_current_distance: OutputShard::from_slice(
+                &mut save_refill_utility_query_refill_to_current_distance,
+            ),
+            save_refill_utility_query_refill_from_current_distance: OutputShard::from_slice(
+                &mut save_refill_utility_query_refill_from_current_distance,
             ),
             snapshot_start: 10,
         };
@@ -4079,8 +4146,10 @@ impl EnvironmentGroup {
             .save_refill_utility_query_room_part_idx
             .bind(py)
             .readwrite();
-        let mut save_refill_utility_query_kind =
-            buffers.save_refill_utility_query_kind.bind(py).readwrite();
+        let mut save_refill_utility_query_target_mask = buffers
+            .save_refill_utility_query_target_mask
+            .bind(py)
+            .readwrite();
         let mut save_refill_utility_query_frontier = buffers
             .save_refill_utility_query_frontier
             .bind(py)
@@ -4089,8 +4158,20 @@ impl EnvironmentGroup {
             .save_refill_utility_query_frontier_distance
             .bind(py)
             .readwrite();
-        let mut save_refill_utility_query_current_distance = buffers
-            .save_refill_utility_query_current_distance
+        let mut save_refill_utility_query_save_to_current_distance = buffers
+            .save_refill_utility_query_save_to_current_distance
+            .bind(py)
+            .readwrite();
+        let mut save_refill_utility_query_save_from_current_distance = buffers
+            .save_refill_utility_query_save_from_current_distance
+            .bind(py)
+            .readwrite();
+        let mut save_refill_utility_query_refill_to_current_distance = buffers
+            .save_refill_utility_query_refill_to_current_distance
+            .bind(py)
+            .readwrite();
+        let mut save_refill_utility_query_refill_from_current_distance = buffers
+            .save_refill_utility_query_refill_from_current_distance
             .bind(py)
             .readwrite();
         let mut toilet_crossed_room_idx = buffers.toilet_crossed_room_idx.bind(py).readwrite();
@@ -4231,8 +4312,10 @@ impl EnvironmentGroup {
             .as_array()
             .shape()
             .to_vec();
-        let save_refill_utility_query_kind_shape =
-            save_refill_utility_query_kind.as_array().shape().to_vec();
+        let save_refill_utility_query_target_mask_shape = save_refill_utility_query_target_mask
+            .as_array()
+            .shape()
+            .to_vec();
         let save_refill_utility_query_frontier_shape = save_refill_utility_query_frontier
             .as_array()
             .shape()
@@ -4242,8 +4325,23 @@ impl EnvironmentGroup {
                 .as_array()
                 .shape()
                 .to_vec();
-        let save_refill_utility_query_current_distance_shape =
-            save_refill_utility_query_current_distance
+        let save_refill_utility_query_save_to_current_distance_shape =
+            save_refill_utility_query_save_to_current_distance
+                .as_array()
+                .shape()
+                .to_vec();
+        let save_refill_utility_query_save_from_current_distance_shape =
+            save_refill_utility_query_save_from_current_distance
+                .as_array()
+                .shape()
+                .to_vec();
+        let save_refill_utility_query_refill_to_current_distance_shape =
+            save_refill_utility_query_refill_to_current_distance
+                .as_array()
+                .shape()
+                .to_vec();
+        let save_refill_utility_query_refill_from_current_distance_shape =
+            save_refill_utility_query_refill_from_current_distance
                 .as_array()
                 .shape()
                 .to_vec();
@@ -4289,11 +4387,17 @@ impl EnvironmentGroup {
             || save_refill_utility_query_snapshot_idx_shape[0] < save_refill_utility_query_row_count
             || save_refill_utility_query_room_part_idx_shape[0]
                 < save_refill_utility_query_row_count
-            || save_refill_utility_query_kind_shape[0] < save_refill_utility_query_row_count
+            || save_refill_utility_query_target_mask_shape[0] < save_refill_utility_query_row_count
             || save_refill_utility_query_frontier_shape[0] < save_refill_utility_query_row_count
             || save_refill_utility_query_frontier_distance_shape[0]
                 < save_refill_utility_query_row_count
-            || save_refill_utility_query_current_distance_shape[0]
+            || save_refill_utility_query_save_to_current_distance_shape[0]
+                < save_refill_utility_query_row_count
+            || save_refill_utility_query_save_from_current_distance_shape[0]
+                < save_refill_utility_query_row_count
+            || save_refill_utility_query_refill_to_current_distance_shape[0]
+                < save_refill_utility_query_row_count
+            || save_refill_utility_query_refill_from_current_distance_shape[0]
                 < save_refill_utility_query_row_count
             || row_snapshot_idx_shape[0] < frontier_row_count
             || row_frontier_idx_shape[0] < frontier_row_count
@@ -4572,9 +4676,10 @@ impl EnvironmentGroup {
             .map_err(|_| {
                 PyValueError::new_err("save_refill_utility_query_room_part_idx must be contiguous")
             })?;
-        let save_refill_utility_query_kind =
-            save_refill_utility_query_kind.as_slice_mut().map_err(|_| {
-                PyValueError::new_err("save_refill_utility_query_kind must be contiguous")
+        let save_refill_utility_query_target_mask = save_refill_utility_query_target_mask
+            .as_slice_mut()
+            .map_err(|_| {
+                PyValueError::new_err("save_refill_utility_query_target_mask must be contiguous")
             })?;
         let save_refill_utility_query_frontier = save_refill_utility_query_frontier
             .as_slice_mut()
@@ -4589,13 +4694,38 @@ impl EnvironmentGroup {
                         "save_refill_utility_query_frontier_distance must be contiguous",
                     )
                 })?;
-        let save_refill_utility_query_current_distance = save_refill_utility_query_current_distance
-            .as_slice_mut()
-            .map_err(|_| {
-                PyValueError::new_err(
-                    "save_refill_utility_query_current_distance must be contiguous",
-                )
-            })?;
+        let save_refill_utility_query_save_to_current_distance =
+            save_refill_utility_query_save_to_current_distance
+                .as_slice_mut()
+                .map_err(|_| {
+                    PyValueError::new_err(
+                        "save_refill_utility_query_save_to_current_distance must be contiguous",
+                    )
+                })?;
+        let save_refill_utility_query_save_from_current_distance =
+            save_refill_utility_query_save_from_current_distance
+                .as_slice_mut()
+                .map_err(|_| {
+                    PyValueError::new_err(
+                        "save_refill_utility_query_save_from_current_distance must be contiguous",
+                    )
+                })?;
+        let save_refill_utility_query_refill_to_current_distance =
+            save_refill_utility_query_refill_to_current_distance
+                .as_slice_mut()
+                .map_err(|_| {
+                    PyValueError::new_err(
+                        "save_refill_utility_query_refill_to_current_distance must be contiguous",
+                    )
+                })?;
+        let save_refill_utility_query_refill_from_current_distance =
+            save_refill_utility_query_refill_from_current_distance
+                .as_slice_mut()
+                .map_err(|_| {
+                    PyValueError::new_err(
+                        "save_refill_utility_query_refill_from_current_distance must be contiguous",
+                    )
+                })?;
         let toilet_crossed_room_idx = toilet_crossed_room_idx
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("toilet_crossed_room_idx must be contiguous"))?;
@@ -4867,10 +4997,11 @@ impl EnvironmentGroup {
                                 ..save_refill_utility_query_row_start
                                     + worker_save_refill_utility_query_row_count],
                     ),
-                    save_refill_utility_query_kind: OutputShard::from_slice(
-                        &mut save_refill_utility_query_kind[save_refill_utility_query_row_start
-                            ..save_refill_utility_query_row_start
-                                + worker_save_refill_utility_query_row_count],
+                    save_refill_utility_query_target_mask: OutputShard::from_slice(
+                        &mut save_refill_utility_query_target_mask
+                            [save_refill_utility_query_row_start
+                                ..save_refill_utility_query_row_start
+                                    + worker_save_refill_utility_query_row_count],
                     ),
                     save_refill_utility_query_frontier: OutputShard::from_slice(
                         &mut save_refill_utility_query_frontier[save_refill_utility_query_row_start
@@ -4883,8 +5014,26 @@ impl EnvironmentGroup {
                                 ..save_refill_utility_query_row_start
                                     + worker_save_refill_utility_query_row_count],
                     ),
-                    save_refill_utility_query_current_distance: OutputShard::from_slice(
-                        &mut save_refill_utility_query_current_distance
+                    save_refill_utility_query_save_to_current_distance: OutputShard::from_slice(
+                        &mut save_refill_utility_query_save_to_current_distance
+                            [save_refill_utility_query_row_start
+                                ..save_refill_utility_query_row_start
+                                    + worker_save_refill_utility_query_row_count],
+                    ),
+                    save_refill_utility_query_save_from_current_distance: OutputShard::from_slice(
+                        &mut save_refill_utility_query_save_from_current_distance
+                            [save_refill_utility_query_row_start
+                                ..save_refill_utility_query_row_start
+                                    + worker_save_refill_utility_query_row_count],
+                    ),
+                    save_refill_utility_query_refill_to_current_distance: OutputShard::from_slice(
+                        &mut save_refill_utility_query_refill_to_current_distance
+                            [save_refill_utility_query_row_start
+                                ..save_refill_utility_query_row_start
+                                    + worker_save_refill_utility_query_row_count],
+                    ),
+                    save_refill_utility_query_refill_from_current_distance: OutputShard::from_slice(
+                        &mut save_refill_utility_query_refill_from_current_distance
                             [save_refill_utility_query_row_start
                                 ..save_refill_utility_query_row_start
                                     + worker_save_refill_utility_query_row_count],
