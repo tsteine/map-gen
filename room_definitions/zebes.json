@@ -3951,6 +3951,7 @@
         ],
         "connections": [],
         "missing_connections": [],
+        "special_type": "phantoon_map",
         "toilet_crossing_x": []
     },
     {
@@ -3964,6 +3965,7 @@
         ],
         "connections": [],
         "missing_connections": [],
+        "special_type": "phantoon_boss",
         "toilet_crossing_x": []
     },
     {

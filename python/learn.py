@@ -68,6 +68,7 @@ class MainLossBreakdown:
     door: float
     connection: float
     toilet: float
+    phantoon: float
     balance: float
     toilet_balance: float
     avg_frontiers: float
@@ -79,6 +80,7 @@ class MainLossBreakdown:
     door_contribution: float
     connection_contribution: float
     toilet_contribution: float
+    phantoon_contribution: float
     balance_contribution: float
     toilet_balance_contribution: float
     avg_frontiers_contribution: float
@@ -120,6 +122,7 @@ def empty_main_loss_breakdown() -> MainLossBreakdown:
         door=0.0,
         connection=0.0,
         toilet=0.0,
+        phantoon=0.0,
         balance=0.0,
         toilet_balance=0.0,
         avg_frontiers=0.0,
@@ -131,6 +134,7 @@ def empty_main_loss_breakdown() -> MainLossBreakdown:
         door_contribution=0.0,
         connection_contribution=0.0,
         toilet_contribution=0.0,
+        phantoon_contribution=0.0,
         balance_contribution=0.0,
         toilet_balance_contribution=0.0,
         avg_frontiers_contribution=0.0,
@@ -147,6 +151,7 @@ def accumulate_main_loss(target: MainLossBreakdown, source: MainLossBreakdown) -
     target.door += source.door
     target.connection += source.connection
     target.toilet += source.toilet
+    target.phantoon += source.phantoon
     target.balance += source.balance
     target.toilet_balance += source.toilet_balance
     target.avg_frontiers += source.avg_frontiers
@@ -158,6 +163,7 @@ def accumulate_main_loss(target: MainLossBreakdown, source: MainLossBreakdown) -
     target.door_contribution += source.door_contribution
     target.connection_contribution += source.connection_contribution
     target.toilet_contribution += source.toilet_contribution
+    target.phantoon_contribution += source.phantoon_contribution
     target.balance_contribution += source.balance_contribution
     target.toilet_balance_contribution += source.toilet_balance_contribution
     target.avg_frontiers_contribution += source.avg_frontiers_contribution
@@ -174,6 +180,7 @@ def average_main_loss(total_loss: MainLossBreakdown, count: int) -> MainLossBrea
         door=total_loss.door / count,
         connection=total_loss.connection / count,
         toilet=total_loss.toilet / count,
+        phantoon=total_loss.phantoon / count,
         balance=total_loss.balance / count,
         toilet_balance=total_loss.toilet_balance / count,
         avg_frontiers=total_loss.avg_frontiers / count,
@@ -185,6 +192,7 @@ def average_main_loss(total_loss: MainLossBreakdown, count: int) -> MainLossBrea
         door_contribution=total_loss.door_contribution / count,
         connection_contribution=total_loss.connection_contribution / count,
         toilet_contribution=total_loss.toilet_contribution / count,
+        phantoon_contribution=total_loss.phantoon_contribution / count,
         balance_contribution=total_loss.balance_contribution / count,
         toilet_balance_contribution=total_loss.toilet_balance_contribution / count,
         avg_frontiers_contribution=total_loss.avg_frontiers_contribution / count,
@@ -578,6 +586,7 @@ def train_feature_batch_backward(
         door_invalid=step_outcomes.door_invalid.unsqueeze(1),
         connection_invalid=step_outcomes.connection_invalid.unsqueeze(1),
         toilet_invalid=step_outcomes.toilet_invalid.unsqueeze(1),
+        phantoon_invalid=step_outcomes.phantoon_invalid.unsqueeze(1),
         door_match=step_outcomes.door_match.unsqueeze(1),
     )
     with torch.no_grad():
@@ -700,6 +709,7 @@ def train_feature_batch_backward(
         total_loss.door += prefix_loss.door.item() * prefix_weight
         total_loss.connection += prefix_loss.connection.item() * prefix_weight
         total_loss.toilet += prefix_loss.toilet.item() * prefix_weight
+        total_loss.phantoon += prefix_loss.phantoon.item() * prefix_weight
         total_loss.balance += prefix_loss.balance.item() * prefix_weight
         total_loss.toilet_balance += prefix_loss.toilet_balance.item() * prefix_weight
         total_loss.avg_frontiers += prefix_loss.avg_frontiers.item() * prefix_weight
@@ -714,6 +724,9 @@ def train_feature_batch_backward(
             prefix_loss.connection_contribution.item() * prefix_weight
         )
         total_loss.toilet_contribution += prefix_loss.toilet_contribution.item() * prefix_weight
+        total_loss.phantoon_contribution += (
+            prefix_loss.phantoon_contribution.item() * prefix_weight
+        )
         total_loss.balance_contribution += prefix_loss.balance_contribution.item() * prefix_weight
         total_loss.toilet_balance_contribution += (
             prefix_loss.toilet_balance_contribution.item() * prefix_weight

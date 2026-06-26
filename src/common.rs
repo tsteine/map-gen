@@ -41,10 +41,12 @@ pub struct Room {
     missing_connections: Vec<(PartIdx, PartIdx)>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 enum SpecialType {
     Toilet,
+    PhantoonBoss,
+    PhantoonMap,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -201,6 +203,7 @@ struct GeometryKey {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ConnectionsKey {
+    special_type: Option<SpecialType>,
     save: bool,
     refill: bool,
     connections: Vec<(PartIdx, PartIdx)>,
@@ -229,6 +232,10 @@ pub struct GeometryDirDoorData {
 pub struct CommonData {
     pub room: Vec<RoomData>,
     toilet_room_idx: Option<RoomIdx>,
+    phantoon_boss_room_idx: Option<RoomIdx>,
+    phantoon_map_room_idx: Option<RoomIdx>,
+    phantoon_boss_door: Option<(Direction, DirDoorIdx)>,
+    phantoon_map_door: Option<(Direction, DirDoorIdx)>,
     pub geometry: Vec<GeometryData>,
     pub geometry_rooms: Vec<Vec<RoomIdx>>,
     pub geometry_connection_variants: Vec<Vec<ConnectionVariantIdx>>,
@@ -286,6 +293,7 @@ impl ConnectionsKey {
         let mut missing_connections = room.missing_connections.clone();
         missing_connections.sort_unstable();
         Self {
+            special_type: room.special_type,
             save: room.save,
             refill: room.refill,
             connections,
@@ -465,6 +473,22 @@ impl CommonData {
         self.toilet_room_idx
     }
 
+    pub fn phantoon_boss_room_idx(&self) -> Option<RoomIdx> {
+        self.phantoon_boss_room_idx
+    }
+
+    pub fn phantoon_map_room_idx(&self) -> Option<RoomIdx> {
+        self.phantoon_map_room_idx
+    }
+
+    pub fn phantoon_boss_door(&self) -> Option<(Direction, DirDoorIdx)> {
+        self.phantoon_boss_door
+    }
+
+    pub fn phantoon_map_door(&self) -> Option<(Direction, DirDoorIdx)> {
+        self.phantoon_map_door
+    }
+
     pub fn new(rooms: Vec<Room>) -> Result<Self> {
         if rooms.len() > RoomIdx::MAX as usize {
             bail!(
@@ -487,18 +511,57 @@ impl CommonData {
         let mut geometry_by_key = HashMap::new();
         let mut connection_variant_by_key = HashMap::new();
         let mut toilet_room_idx = None;
+        let mut phantoon_boss_room_idx = None;
+        let mut phantoon_map_room_idx = None;
+        let mut phantoon_boss_door = None;
+        let mut phantoon_map_door = None;
         let mut geometry_dir_door: [Vec<GeometryDirDoorData>; NUM_DIRS] =
             std::array::from_fn(|_| vec![]);
         let mut room_dir_door: [Vec<RoomDirDoorData>; NUM_DIRS] = std::array::from_fn(|_| vec![]);
 
         for (room_idx, room) in rooms.iter().enumerate() {
-            if room.special_type == Some(SpecialType::Toilet) {
-                if let Some(first_toilet_room_idx) = toilet_room_idx {
+            match room.special_type {
+                Some(SpecialType::Toilet) => {
+                    if let Some(first_toilet_room_idx) = toilet_room_idx {
+                        bail!(
+                            "rooms {first_toilet_room_idx} and {room_idx} both have special_type toilet"
+                        );
+                    }
+                    toilet_room_idx = Some(room_idx as RoomIdx);
+                }
+                Some(SpecialType::PhantoonBoss) => {
+                    if let Some(first_phantoon_boss_room_idx) = phantoon_boss_room_idx {
+                        bail!(
+                            "rooms {first_phantoon_boss_room_idx} and {room_idx} both have special_type phantoon_boss"
+                        );
+                    }
+                    phantoon_boss_room_idx = Some(room_idx as RoomIdx);
+                }
+                Some(SpecialType::PhantoonMap) => {
+                    if let Some(first_phantoon_map_room_idx) = phantoon_map_room_idx {
+                        bail!(
+                            "rooms {first_phantoon_map_room_idx} and {room_idx} both have special_type phantoon_map"
+                        );
+                    }
+                    phantoon_map_room_idx = Some(room_idx as RoomIdx);
+                }
+                None => {}
+            }
+            if matches!(
+                room.special_type,
+                Some(SpecialType::PhantoonBoss | SpecialType::PhantoonMap)
+            ) {
+                let door_count = room.doors.iter().map(Vec::len).sum::<usize>();
+                if door_count != 1 {
+                    let special_type = match room.special_type {
+                        Some(SpecialType::PhantoonBoss) => "phantoon_boss",
+                        Some(SpecialType::PhantoonMap) => "phantoon_map",
+                        _ => unreachable!(),
+                    };
                     bail!(
-                        "rooms {first_toilet_room_idx} and {room_idx} both have special_type toilet"
+                        "room {room_idx} has special_type {special_type}, which requires exactly one door but has {door_count}"
                     );
                 }
-                toilet_room_idx = Some(room_idx as RoomIdx);
             }
             if room.doors.len() > PartIdx::MAX as usize {
                 bail!(
@@ -574,6 +637,17 @@ impl CommonData {
                         part_idx: part_idx as PartIdx,
                     });
                 }
+            }
+            match room.special_type {
+                Some(SpecialType::PhantoonBoss) => {
+                    let door = &door_data[0];
+                    phantoon_boss_door = Some((door.direction, door.dir_door_idx));
+                }
+                Some(SpecialType::PhantoonMap) => {
+                    let door = &door_data[0];
+                    phantoon_map_door = Some((door.direction, door.dir_door_idx));
+                }
+                _ => {}
             }
 
             let geometry_key = GeometryKey::from_room(room);
@@ -706,6 +780,10 @@ impl CommonData {
         let mut common = Self {
             room: room_data,
             toilet_room_idx,
+            phantoon_boss_room_idx,
+            phantoon_map_room_idx,
+            phantoon_boss_door,
+            phantoon_map_door,
             geometry: geometry_data,
             geometry_rooms,
             geometry_connection_variants,
@@ -725,11 +803,6 @@ impl CommonData {
             door_variant_idx_by_key,
         };
         common.build_intersection_set();
-        println!(
-            "Finished building intersection set with {} bits across {} geometries",
-            common.intersection_bitvec.len(),
-            common.geometry.len()
-        );
         Ok(common)
     }
 
@@ -1154,6 +1227,99 @@ mod tests {
         .unwrap();
 
         assert!(CommonData::new(rooms).is_err());
+    }
+
+    #[test]
+    fn common_data_rejects_multiple_phantoon_special_rooms() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_boss",
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_boss",
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        assert!(CommonData::new(rooms).is_err());
+
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_map",
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_map",
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        assert!(CommonData::new(rooms).is_err());
+    }
+
+    #[test]
+    fn phantoon_special_type_distinguishes_connection_variants() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_boss",
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_map",
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+
+        assert_eq!(common.geometry.len(), 1);
+        assert_eq!(common.connection_variant_rooms.len(), 3);
+        assert_eq!(common.phantoon_boss_room_idx(), Some(0));
+        assert_eq!(common.phantoon_map_room_idx(), Some(1));
     }
 
     #[test]

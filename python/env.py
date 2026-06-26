@@ -25,6 +25,7 @@ class GenerateConfig:
     reward_door: float
     reward_connection: float
     reward_toilet: float
+    reward_phantoon: float
     reward_balance: float
     reward_toilet_balance: float
     reward_frontier: float
@@ -123,6 +124,8 @@ class StepOutcomes:
     connection_invalid: torch.Tensor
     # -1 = unknown, 0 = valid (the Toilet crosses exactly one room), 1 = invalid
     toilet_invalid: torch.Tensor
+    # -1 = unknown, 0 = valid (Phantoon rooms connect to the same room), 1 = invalid
+    phantoon_invalid: torch.Tensor
     # -1 = unknown; for a valid door this is its matched partner's index within
     # the opposite direction; for an invalid door this is the opposite direction
     # door count sentinel.
@@ -133,6 +136,7 @@ class StepOutcomes:
             door_invalid=self.door_invalid.to(device, non_blocking=non_blocking),
             connection_invalid=self.connection_invalid.to(device, non_blocking=non_blocking),
             toilet_invalid=self.toilet_invalid.to(device, non_blocking=non_blocking),
+            phantoon_invalid=self.phantoon_invalid.to(device, non_blocking=non_blocking),
             door_match=self.door_match.to(device, non_blocking=non_blocking),
         )
 
@@ -141,6 +145,7 @@ class StepOutcomes:
             door_invalid=self.door_invalid[start:end],
             connection_invalid=self.connection_invalid[start:end],
             toilet_invalid=self.toilet_invalid[start:end],
+            phantoon_invalid=self.phantoon_invalid[start:end],
             door_match=self.door_match[start:end],
         )
 
@@ -285,9 +290,11 @@ class CandidateSlot:
         self.pre_door_invalid = None
         self.pre_connection_invalid = None
         self.pre_toilet_invalid = None
+        self.pre_phantoon_invalid = None
         self.door_invalid = None
         self.connection_invalid = None
         self.toilet_invalid = None
+        self.phantoon_invalid = None
         self.door_match = None
         self.clean_counts = None
         self.evaluated_counts = None
@@ -320,6 +327,7 @@ class CandidateSlot:
             torch.int8,
         )
         self.pre_toilet_invalid = self._empty((self.environment_capacity,), torch.int8)
+        self.pre_phantoon_invalid = self._empty((self.environment_capacity,), torch.int8)
         self.door_invalid = self._empty(
             (*candidate_shape, self.door_count),
             torch.int8,
@@ -329,6 +337,7 @@ class CandidateSlot:
             torch.int8,
         )
         self.toilet_invalid = self._empty(candidate_shape, torch.int8)
+        self.phantoon_invalid = self._empty(candidate_shape, torch.int8)
         self.door_match = self._empty((*candidate_shape, self.door_count), torch.int16)
         self.clean_counts = self._empty((self.environment_capacity,), torch.int64)
         self.evaluated_counts = self._empty((self.environment_capacity,), torch.int64)
@@ -360,6 +369,7 @@ class CandidateSlot:
             door_invalid=self.pre_door_invalid[:environment_count],
             connection_invalid=self.pre_connection_invalid[:environment_count],
             toilet_invalid=self.pre_toilet_invalid[:environment_count],
+            phantoon_invalid=self.pre_phantoon_invalid[:environment_count],
             door_match=self.door_match.new_empty((environment_count, 0)),
         )
 
@@ -372,6 +382,7 @@ class CandidateSlot:
             door_invalid=self.door_invalid[:environment_count, :candidate_count],
             connection_invalid=self.connection_invalid[:environment_count, :candidate_count],
             toilet_invalid=self.toilet_invalid[:environment_count, :candidate_count],
+            phantoon_invalid=self.phantoon_invalid[:environment_count, :candidate_count],
             door_match=self.door_match[:environment_count, :candidate_count],
         )
 
@@ -893,6 +904,9 @@ class EnvironmentGroup:
                         : self.num_envs
                     ].numpy(),
                     "pre_toilet_valid": candidate_slot.pre_toilet_invalid[: self.num_envs].numpy(),
+                    "pre_phantoon_valid": candidate_slot.pre_phantoon_invalid[
+                        : self.num_envs
+                    ].numpy(),
                     "door_valid": candidate_slot.door_invalid[
                         : self.num_envs, :candidate_count
                     ].numpy(),
@@ -900,6 +914,9 @@ class EnvironmentGroup:
                         : self.num_envs, :candidate_count
                     ].numpy(),
                     "toilet_valid": candidate_slot.toilet_invalid[
+                        : self.num_envs, :candidate_count
+                    ].numpy(),
+                    "phantoon_valid": candidate_slot.phantoon_invalid[
                         : self.num_envs, :candidate_count
                     ].numpy(),
                     "door_match": candidate_slot.door_match[
@@ -961,6 +978,7 @@ class EnvironmentGroup:
                     device
                 ),
                 toilet_invalid=torch.from_numpy(result.step_outcomes.toilet_valid).to(device),
+                phantoon_invalid=torch.from_numpy(result.step_outcomes.phantoon_valid).to(device),
                 door_match=torch.empty(
                     [result.step_outcomes.door_valid.shape[0], 0],
                     dtype=torch.int16,
@@ -1026,7 +1044,7 @@ class EnvironmentGroup:
         environment_start: int,
         environment_count: int,
     ) -> StepOutcomes:
-        door_invalid, connection_invalid, toilet_invalid, door_match = (
+        door_invalid, connection_invalid, toilet_invalid, phantoon_invalid, door_match = (
             self.env.get_current_feature_outcomes(
                 environment_start,
                 environment_count,
@@ -1036,6 +1054,7 @@ class EnvironmentGroup:
             door_invalid=torch.from_numpy(door_invalid).to(device),
             connection_invalid=torch.from_numpy(connection_invalid).to(device),
             toilet_invalid=torch.from_numpy(toilet_invalid).to(device),
+            phantoon_invalid=torch.from_numpy(phantoon_invalid).to(device),
             door_match=torch.from_numpy(door_match).to(device),
         )
 

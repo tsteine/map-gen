@@ -84,6 +84,7 @@ class GenerationConfig(StrictBaseModel):
     reward_door: ScheduleableFloat
     reward_connection: ScheduleableFloat
     reward_toilet: ScheduleableFloat
+    reward_phantoon: ScheduleableFloat
     reward_balance: ScheduleableFloat
     reward_toilet_balance: ScheduleableFloat
     reward_frontier: ScheduleableFloat
@@ -194,6 +195,7 @@ class TrainConfig(StrictBaseModel):
     door_weight: float
     connection_weight: float
     toilet_weight: float
+    phantoon_weight: float
     balance_weight: float
     toilet_balance_weight: float
     avg_frontiers_weight: float
@@ -364,6 +366,10 @@ def validate_config(config: Config) -> None:
     if config.generation.candidate_spatial_cell_size <= 0:
         raise ValueError("generation.candidate_spatial_cell_size must be greater than zero")
     validate_nonnegative_scheduleable_float(
+        config.generation.reward_phantoon,
+        "generation.reward_phantoon",
+    )
+    validate_nonnegative_scheduleable_float(
         config.generation.reward_toilet_balance,
         "generation.reward_toilet_balance",
     )
@@ -402,6 +408,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("train.proposal_weight must be greater than or equal to zero")
     if config.train.toilet_weight < 0:
         raise ValueError("train.toilet_weight must be greater than or equal to zero")
+    if config.train.phantoon_weight < 0:
+        raise ValueError("train.phantoon_weight must be greater than or equal to zero")
     if config.train.toilet_balance_weight < 0:
         raise ValueError("train.toilet_balance_weight must be greater than or equal to zero")
     if config.train.avg_frontiers_weight < 0:

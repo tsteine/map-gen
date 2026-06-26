@@ -495,6 +495,7 @@ def create_generate_config(
         reward_door=config.generation.reward_door,
         reward_connection=config.generation.reward_connection,
         reward_toilet=config.generation.reward_toilet,
+        reward_phantoon=config.generation.reward_phantoon,
         reward_balance=config.generation.reward_balance,
         reward_toilet_balance=config.generation.reward_toilet_balance,
         reward_frontier=config.generation.reward_frontier,
@@ -895,6 +896,12 @@ class TrainingSession:
                     toilet_invalid=torch.cat(
                         [outcomes.step_outcomes.toilet_invalid for outcomes in outcome_iterations]
                     ),
+                    phantoon_invalid=torch.cat(
+                        [
+                            outcomes.step_outcomes.phantoon_invalid
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
                     door_match=torch.cat(
                         [outcomes.step_outcomes.door_match for outcomes in outcome_iterations]
                     ),
@@ -1100,7 +1107,10 @@ class TrainingSession:
         toilet_invalid = (outcomes.toilet_invalid != 0).to(torch.int64)
         avg_toilet = torch.mean(toilet_invalid.to(torch.float32))
 
-        total_invalid = door_invalid + conn_invalid + toilet_invalid
+        phantoon_invalid = (outcomes.phantoon_invalid != 0).to(torch.int64)
+        avg_phantoon = torch.mean(phantoon_invalid.to(torch.float32))
+
+        total_invalid = door_invalid + conn_invalid + toilet_invalid + phantoon_invalid
         avg_invalid = torch.mean(total_invalid.to(torch.float32))
         min_invalid = torch.min(total_invalid)
         end_outcomes = episode_outcomes.end_outcomes
@@ -1189,6 +1199,7 @@ class TrainingSession:
         success_door = torch.mean((door_invalid == 0).to(torch.float32))
         success_conn = torch.mean((conn_invalid == 0).to(torch.float32))
         success_toilet = torch.mean((toilet_invalid == 0).to(torch.float32))
+        success_phantoon = torch.mean((phantoon_invalid == 0).to(torch.float32))
 
         horizontal_door_match_counts = door_match_counts.horizontal[:-1, :-1].to(torch.float64)
         vertical_door_match_counts = door_match_counts.vertical[:-1, :-1].to(torch.float64)
@@ -1240,6 +1251,7 @@ class TrainingSession:
         door_loss_pct = 100.0 * loss.door_contribution / loss_denominator
         connection_loss_pct = 100.0 * loss.connection_contribution / loss_denominator
         toilet_loss_pct = 100.0 * loss.toilet_contribution / loss_denominator
+        phantoon_loss_pct = 100.0 * loss.phantoon_contribution / loss_denominator
         main_balance_loss_pct = 100.0 * loss.balance_contribution / loss_denominator
         main_toilet_balance_loss_pct = 100.0 * loss.toilet_balance_contribution / loss_denominator
         avg_frontiers_loss_pct = 100.0 * loss.avg_frontiers_contribution / loss_denominator
@@ -1259,6 +1271,8 @@ class TrainingSession:
             "connection_loss_pct": connection_loss_pct,
             "toilet_loss": loss.toilet,
             "toilet_loss_pct": toilet_loss_pct,
+            "phantoon_loss": loss.phantoon,
+            "phantoon_loss_pct": phantoon_loss_pct,
             "main_balance_loss": loss.balance,
             "main_balance_loss_pct": main_balance_loss_pct,
             "main_toilet_balance_loss": loss.toilet_balance,
@@ -1283,6 +1297,7 @@ class TrainingSession:
             "success_door": success_door,
             "success_conn": success_conn,
             "success_toilet": success_toilet,
+            "success_phantoon": success_phantoon,
             "avg_invalid": avg_invalid,
             "avg_frontiers": avg_frontiers,
             "graph_diameter": graph_diameter,
@@ -1300,6 +1315,7 @@ class TrainingSession:
             "avg_door": avg_door,
             "avg_conn": avg_conn,
             "avg_toilet": avg_toilet,
+            "avg_phantoon": avg_phantoon,
             "min_invalid": min_invalid,
             "min_door": min_door,
             "min_conn": min_conn,
@@ -1312,6 +1328,7 @@ class TrainingSession:
             "reward_door": step_config.generation.reward_door,
             "reward_connection": step_config.generation.reward_connection,
             "reward_toilet": step_config.generation.reward_toilet,
+            "reward_phantoon": step_config.generation.reward_phantoon,
             "reward_balance": step_config.generation.reward_balance,
             "reward_toilet_balance": step_config.generation.reward_toilet_balance,
             "reward_frontier": step_config.generation.reward_frontier,
@@ -1324,6 +1341,7 @@ class TrainingSession:
             "distance_proximity_scale": step_config.distance_proximity_scale,
             "ema_decay": step_config.train.ema_decay,
             "toilet_weight": step_config.train.toilet_weight,
+            "phantoon_weight": step_config.train.phantoon_weight,
             "toilet_balance_weight": step_config.train.toilet_balance_weight,
             "avg_frontiers_weight": step_config.train.avg_frontiers_weight,
             "graph_diameter_weight": step_config.train.graph_diameter_weight,
@@ -1364,7 +1382,7 @@ class TrainingSession:
 
         schedule_progress = min(self.num_episodes / self.config.knot_episodes[-1], 1.0)
         logging.info(
-            "round %s, loss %.4f (d %.1f%%, c %.1f%%, t %.1f%%, "
+            "round %s, loss %.4f (d %.1f%%, c %.1f%%, t %.1f%%, ph %.1f%%, "
             "b %.1f%%, tb %.1f%%, d %.1f%%, "
             "s %.1f%%, r %.1f%%, p %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
@@ -1376,6 +1394,7 @@ class TrainingSession:
             door_loss_pct,
             connection_loss_pct,
             toilet_loss_pct,
+            phantoon_loss_pct,
             main_balance_loss_pct,
             main_toilet_balance_loss_pct,
             graph_diameter_loss_pct,
@@ -1811,6 +1830,7 @@ def build_session(args: Args) -> TrainingSession:
             door_weight=config.train.door_weight,
             connection_weight=config.train.connection_weight,
             toilet_weight=config.train.toilet_weight,
+            phantoon_weight=config.train.phantoon_weight,
             balance_weight=config.train.balance_weight,
             toilet_balance_weight=config.train.toilet_balance_weight,
             avg_frontiers_weight=config.train.avg_frontiers_weight,

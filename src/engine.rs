@@ -310,9 +310,11 @@ enum WorkerCommand {
         pre_door_valid: OutputShard<i8>,
         pre_connections_valid: OutputShard<i8>,
         pre_toilet_valid: OutputShard<i8>,
+        pre_phantoon_valid: OutputShard<i8>,
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
         toilet_valid: OutputShard<i8>,
+        phantoon_valid: OutputShard<i8>,
         door_match: OutputShard<i16>,
         clean_counts: OutputShard<usize>,
         evaluated_counts: OutputShard<usize>,
@@ -331,6 +333,7 @@ enum WorkerCommand {
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
         toilet_valid: OutputShard<i8>,
+        phantoon_valid: OutputShard<i8>,
         toilet_crossed_room_idx: OutputShard<i16>,
         avg_frontiers: OutputShard<f32>,
         graph_diameter: OutputShard<f32>,
@@ -358,6 +361,7 @@ enum WorkerCommand {
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
         toilet_valid: OutputShard<i8>,
+        phantoon_valid: OutputShard<i8>,
         door_match: OutputShard<i16>,
     },
     GetDoorMatchCounts {
@@ -622,9 +626,11 @@ fn worker_loop(
                 pre_door_valid,
                 pre_connections_valid,
                 pre_toilet_valid,
+                pre_phantoon_valid,
                 door_valid,
                 connections_valid,
                 toilet_valid,
+                phantoon_valid,
                 door_match,
                 clean_counts,
                 evaluated_counts,
@@ -641,9 +647,11 @@ fn worker_loop(
                 let pre_door_valid = unsafe { pre_door_valid.into_mut_slice() };
                 let pre_connections_valid = unsafe { pre_connections_valid.into_mut_slice() };
                 let pre_toilet_valid = unsafe { pre_toilet_valid.into_mut_slice() };
+                let pre_phantoon_valid = unsafe { pre_phantoon_valid.into_mut_slice() };
                 let door_valid = unsafe { door_valid.into_mut_slice() };
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
                 let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
+                let phantoon_valid = unsafe { phantoon_valid.into_mut_slice() };
                 let door_match = unsafe { door_match.into_mut_slice() };
                 let clean_counts = unsafe { clean_counts.into_mut_slice() };
                 let evaluated_counts = unsafe { evaluated_counts.into_mut_slice() };
@@ -677,6 +685,7 @@ fn worker_loop(
                     environments.len() * connection_outcome_count
                 );
                 debug_assert_eq!(pre_toilet_valid.len(), environments.len());
+                debug_assert_eq!(pre_phantoon_valid.len(), environments.len());
                 debug_assert_eq!(
                     door_valid.len(),
                     environments.len() * recommended_candidates * door_outcome_count
@@ -687,6 +696,10 @@ fn worker_loop(
                 );
                 debug_assert_eq!(
                     toilet_valid.len(),
+                    environments.len() * recommended_candidates
+                );
+                debug_assert_eq!(
+                    phantoon_valid.len(),
                     environments.len() * recommended_candidates
                 );
                 debug_assert_eq!(
@@ -741,6 +754,8 @@ fn worker_loop(
                         pre_connections_valid[pre_connection_start + outcome_idx] = *outcome as i8;
                     }
                     pre_toilet_valid[env_idx] = outcome_to_i8(pre_candidate_outcomes.toilet_valid);
+                    pre_phantoon_valid[env_idx] =
+                        outcome_to_i8(pre_candidate_outcomes.phantoon_valid);
                     let row_start = env_idx * recommended_candidates;
                     let dummy_outcome = if candidates.len() < recommended_candidates {
                         Some(EnvironmentStepOutcomes {
@@ -750,6 +765,7 @@ fn worker_loop(
                                 connection_outcome_count
                             ],
                             toilet_valid: DoorValidOutcome::Unknown,
+                            phantoon_valid: DoorValidOutcome::Unknown,
                             toilet_crossed_room_idx: -1,
                         })
                     } else {
@@ -819,6 +835,7 @@ fn worker_loop(
                             *dst = outcome as i8;
                         }
                         toilet_valid[idx] = outcome_to_i8(outcome.toilet_valid);
+                        phantoon_valid[idx] = outcome_to_i8(outcome.phantoon_valid);
                         for (dst, &value) in door_match[door_start..door_end]
                             .iter_mut()
                             .zip(match_values)
@@ -870,6 +887,7 @@ fn worker_loop(
                 door_valid,
                 connections_valid,
                 toilet_valid,
+                phantoon_valid,
                 toilet_crossed_room_idx,
                 avg_frontiers,
                 graph_diameter,
@@ -894,6 +912,7 @@ fn worker_loop(
                 let door_valid = unsafe { door_valid.into_mut_slice() };
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
                 let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
+                let phantoon_valid = unsafe { phantoon_valid.into_mut_slice() };
                 let toilet_crossed_room_idx = unsafe { toilet_crossed_room_idx.into_mut_slice() };
                 let avg_frontiers = unsafe { avg_frontiers.into_mut_slice() };
                 let graph_diameter = unsafe { graph_diameter.into_mut_slice() };
@@ -924,6 +943,7 @@ fn worker_loop(
                     environments.len() * connection_outcome_count
                 );
                 debug_assert_eq!(toilet_valid.len(), environments.len());
+                debug_assert_eq!(phantoon_valid.len(), environments.len());
                 debug_assert_eq!(toilet_crossed_room_idx.len(), environments.len());
                 debug_assert_eq!(avg_frontiers.len(), environments.len());
                 debug_assert_eq!(graph_diameter.len(), environments.len());
@@ -1081,6 +1101,7 @@ fn worker_loop(
                         };
                     }
                     toilet_valid[env_idx] = outcome_to_i8(outcomes.toilet_valid);
+                    phantoon_valid[env_idx] = outcome_to_i8(outcomes.phantoon_valid);
                     toilet_crossed_room_idx[env_idx] = outcomes.toilet_crossed_room_idx;
                 }
                 match consistency_error {
@@ -1096,6 +1117,7 @@ fn worker_loop(
                 door_valid,
                 connections_valid,
                 toilet_valid,
+                phantoon_valid,
                 door_match,
             } => {
                 // SAFETY: The main thread guarantees that for the duration of this command,
@@ -1103,6 +1125,7 @@ fn worker_loop(
                 let door_valid = unsafe { door_valid.into_mut_slice() };
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
                 let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
+                let phantoon_valid = unsafe { phantoon_valid.into_mut_slice() };
                 let door_match = unsafe { door_match.into_mut_slice() };
                 debug_assert_eq!(door_valid.len(), environment_count * door_outcome_count);
                 debug_assert_eq!(
@@ -1110,6 +1133,7 @@ fn worker_loop(
                     environment_count * connection_outcome_count
                 );
                 debug_assert_eq!(toilet_valid.len(), environment_count);
+                debug_assert_eq!(phantoon_valid.len(), environment_count);
                 debug_assert_eq!(door_match.len(), environment_count * door_outcome_count);
 
                 for (env_idx, env) in environments
@@ -1143,6 +1167,7 @@ fn worker_loop(
                         };
                     }
                     toilet_valid[env_idx] = outcome_to_i8(outcomes.toilet_valid);
+                    phantoon_valid[env_idx] = outcome_to_i8(outcomes.phantoon_valid);
                 }
                 WorkerResponse::Done
             }
@@ -1434,6 +1459,7 @@ pub struct StepOutcomes {
     door_valid: Py<PyArray2<i8>>,
     connections_valid: Py<PyArray2<i8>>,
     toilet_valid: Py<PyArray1<i8>>,
+    phantoon_valid: Py<PyArray1<i8>>,
 }
 
 #[pyclass(module = "map_gen")]
@@ -1494,9 +1520,11 @@ pub struct ProposalCandidateBuffers {
     pre_door_valid: Py<PyArray2<i8>>,
     pre_connections_valid: Py<PyArray2<i8>>,
     pre_toilet_valid: Py<PyArray1<i8>>,
+    pre_phantoon_valid: Py<PyArray1<i8>>,
     door_valid: Py<PyArray3<i8>>,
     connections_valid: Py<PyArray3<i8>>,
     toilet_valid: Py<PyArray2<i8>>,
+    phantoon_valid: Py<PyArray2<i8>>,
     door_match: Py<PyArray3<i16>>,
     clean_counts: Py<PyArray1<i64>>,
     evaluated_counts: Py<PyArray1<i64>>,
@@ -1584,9 +1612,11 @@ impl ProposalCandidateBuffers {
             pre_door_valid: required_py_field!(fields, "pre_door_valid"),
             pre_connections_valid: required_py_field!(fields, "pre_connections_valid"),
             pre_toilet_valid: required_py_field!(fields, "pre_toilet_valid"),
+            pre_phantoon_valid: required_py_field!(fields, "pre_phantoon_valid"),
             door_valid: required_py_field!(fields, "door_valid"),
             connections_valid: required_py_field!(fields, "connections_valid"),
             toilet_valid: required_py_field!(fields, "toilet_valid"),
+            phantoon_valid: required_py_field!(fields, "phantoon_valid"),
             door_match: required_py_field!(fields, "door_match"),
             clean_counts: required_py_field!(fields, "clean_counts"),
             evaluated_counts: required_py_field!(fields, "evaluated_counts"),
@@ -1765,6 +1795,11 @@ impl StepOutcomes {
     fn toilet_valid(&self, py: Python<'_>) -> Py<PyArray1<i8>> {
         self.toilet_valid.clone_ref(py)
     }
+
+    #[getter]
+    fn phantoon_valid(&self, py: Python<'_>) -> Py<PyArray1<i8>> {
+        self.phantoon_valid.clone_ref(py)
+    }
 }
 
 #[pymethods]
@@ -1868,6 +1903,7 @@ impl EpisodeOutcomes {
             door_valid: self.step_outcomes.door_valid.clone_ref(py),
             connections_valid: self.step_outcomes.connections_valid.clone_ref(py),
             toilet_valid: self.step_outcomes.toilet_valid.clone_ref(py),
+            phantoon_valid: self.step_outcomes.phantoon_valid.clone_ref(py),
         }
     }
 
@@ -3567,9 +3603,11 @@ impl EnvironmentGroup {
         let mut pre_door_valid = buffers.pre_door_valid.bind(py).readwrite();
         let mut pre_connections_valid = buffers.pre_connections_valid.bind(py).readwrite();
         let mut pre_toilet_valid = buffers.pre_toilet_valid.bind(py).readwrite();
+        let mut pre_phantoon_valid = buffers.pre_phantoon_valid.bind(py).readwrite();
         let mut door_valid = buffers.door_valid.bind(py).readwrite();
         let mut connections_valid = buffers.connections_valid.bind(py).readwrite();
         let mut toilet_valid = buffers.toilet_valid.bind(py).readwrite();
+        let mut phantoon_valid = buffers.phantoon_valid.bind(py).readwrite();
         let mut door_match = buffers.door_match.bind(py).readwrite();
         let mut clean_counts = buffers.clean_counts.bind(py).readwrite();
         let mut evaluated_counts = buffers.evaluated_counts.bind(py).readwrite();
@@ -3638,6 +3676,11 @@ impl EnvironmentGroup {
             &[self.num_environments],
         )?;
         check_shape(
+            "pre_phantoon_valid",
+            pre_phantoon_valid.as_array().shape(),
+            &[self.num_environments],
+        )?;
+        check_shape(
             "door_valid",
             door_valid.as_array().shape(),
             &[
@@ -3658,6 +3701,11 @@ impl EnvironmentGroup {
         check_shape(
             "toilet_valid",
             toilet_valid.as_array().shape(),
+            &[self.num_environments, recommended_candidates],
+        )?;
+        check_shape(
+            "phantoon_valid",
+            phantoon_valid.as_array().shape(),
             &[self.num_environments, recommended_candidates],
         )?;
         check_shape(
@@ -3709,6 +3757,9 @@ impl EnvironmentGroup {
         let pre_toilet_valid = pre_toilet_valid
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("pre_toilet_valid must be contiguous"))?;
+        let pre_phantoon_valid = pre_phantoon_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("pre_phantoon_valid must be contiguous"))?;
         let door_valid = door_valid
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("door_valid must be contiguous"))?;
@@ -3718,6 +3769,9 @@ impl EnvironmentGroup {
         let toilet_valid = toilet_valid
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("toilet_valid must be contiguous"))?;
+        let phantoon_valid = phantoon_valid
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("phantoon_valid must be contiguous"))?;
         let door_match = door_match
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("door_match must be contiguous"))?;
@@ -3739,9 +3793,11 @@ impl EnvironmentGroup {
         pre_door_valid.fill(DoorValidOutcome::Unknown as i8);
         pre_connections_valid.fill(DoorValidOutcome::Unknown as i8);
         pre_toilet_valid.fill(DoorValidOutcome::Unknown as i8);
+        pre_phantoon_valid.fill(DoorValidOutcome::Unknown as i8);
         door_valid.fill(DoorValidOutcome::Unknown as i8);
         connections_valid.fill(DoorValidOutcome::Unknown as i8);
         toilet_valid.fill(DoorValidOutcome::Unknown as i8);
+        phantoon_valid.fill(DoorValidOutcome::Unknown as i8);
         door_match.fill(-1);
         let mut worker_clean_counts = vec![0; self.num_environments];
         let mut worker_evaluated_counts = vec![0; self.num_environments];
@@ -3800,6 +3856,9 @@ impl EnvironmentGroup {
                     pre_toilet_valid: OutputShard::from_slice(
                         &mut pre_toilet_valid[worker.start..worker.end()],
                     ),
+                    pre_phantoon_valid: OutputShard::from_slice(
+                        &mut pre_phantoon_valid[worker.start..worker.end()],
+                    ),
                     door_valid: OutputShard::from_slice(
                         &mut door_valid[door_output_start..door_output_end],
                     ),
@@ -3808,6 +3867,9 @@ impl EnvironmentGroup {
                     ),
                     toilet_valid: OutputShard::from_slice(
                         &mut toilet_valid[output_start..output_end],
+                    ),
+                    phantoon_valid: OutputShard::from_slice(
+                        &mut phantoon_valid[output_start..output_end],
                     ),
                     door_match: OutputShard::from_slice(
                         &mut door_match[door_match_output_start..door_match_output_end],
@@ -3899,6 +3961,7 @@ impl EnvironmentGroup {
         let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
         let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
         let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; self.num_environments];
+        let mut phantoon_valid = vec![DoorValidOutcome::Unknown as i8; self.num_environments];
         let mut toilet_crossed_room_idx = vec![-1i16; self.num_environments];
         let mut avg_frontiers = vec![0.0; self.num_environments];
         let mut graph_diameter = vec![0.0; self.num_environments];
@@ -3949,6 +4012,9 @@ impl EnvironmentGroup {
                     ),
                     toilet_valid: OutputShard::from_slice(
                         &mut toilet_valid[worker.start..worker.end()],
+                    ),
+                    phantoon_valid: OutputShard::from_slice(
+                        &mut phantoon_valid[worker.start..worker.end()],
                     ),
                     toilet_crossed_room_idx: OutputShard::from_slice(
                         &mut toilet_crossed_room_idx[worker.start..worker.end()],
@@ -4033,6 +4099,7 @@ impl EnvironmentGroup {
                 )?
                 .unbind(),
                 toilet_valid: toilet_valid.into_pyarray(py).unbind(),
+                phantoon_valid: phantoon_valid.into_pyarray(py).unbind(),
             },
             end_outcomes: EndOutcomes {
                 toilet_crossed_room_idx: toilet_crossed_room_idx.into_pyarray(py).unbind(),
@@ -4156,6 +4223,7 @@ impl EnvironmentGroup {
         Bound<'py, PyArray2<i8>>,
         Bound<'py, PyArray2<i8>>,
         Bound<'py, PyArray1<i8>>,
+        Bound<'py, PyArray1<i8>>,
         Bound<'py, PyArray2<i16>>,
     )> {
         if environment_start + environment_count > self.num_environments {
@@ -4169,6 +4237,7 @@ impl EnvironmentGroup {
         let mut door_valid = vec![DoorValidOutcome::Unknown as i8; door_output_len];
         let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
         let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; environment_count];
+        let mut phantoon_valid = vec![DoorValidOutcome::Unknown as i8; environment_count];
         let mut door_match = vec![-1; door_output_len];
 
         py.detach(|| {
@@ -4204,6 +4273,9 @@ impl EnvironmentGroup {
                     toilet_valid: OutputShard::from_slice(
                         &mut toilet_valid[input_start..input_start + environment_count],
                     ),
+                    phantoon_valid: OutputShard::from_slice(
+                        &mut phantoon_valid[input_start..input_start + environment_count],
+                    ),
                     door_match: OutputShard::from_slice(
                         &mut door_match[door_match_output_start..door_match_output_end],
                     ),
@@ -4226,6 +4298,7 @@ impl EnvironmentGroup {
                 connection_outcome_count,
             )?,
             toilet_valid.into_pyarray(py),
+            phantoon_valid.into_pyarray(py),
             pyarray2_from_flat_vec(py, door_match, environment_count, door_outcome_count)?,
         ))
     }

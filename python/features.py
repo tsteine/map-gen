@@ -353,7 +353,7 @@ class GlobalRoomPositionFeature(GlobalFeature):
         )
         room_position = (
             self.embedding_x[room_connection_variant_idx, room_x]
-            + self.embedding_y[room_connection_variant_idx, room_y]
+            * self.embedding_y[room_connection_variant_idx, room_y]
         ).to(dtype)
         placed = features.global_features.room_placed.to(dtype).unsqueeze(-1)
         placed_count = placed.sum(dim=1).clamp_min(1)
@@ -636,7 +636,7 @@ class FrontierPositionFeature(FrontierNodeFeature):
         frontier = features.frontier_features.frontier
         x = frontier[:, 1].to(torch.int64)
         y = frontier[:, 2].to(torch.int64)
-        return (self.embedding_x[x] + self.embedding_y[y]).to(dtype)
+        return (self.embedding_x[x] * self.embedding_y[y]).to(dtype)
 
 
 class FrontierOrientationFeature(FrontierNodeFeature):

@@ -179,6 +179,8 @@ fn introduces_invalid_outcome(before: &StepOutcomes, after: &StepOutcomes) -> bo
             })
         || (before.toilet_valid == DoorValidOutcome::Unknown
             && after.toilet_valid == DoorValidOutcome::Invalid)
+        || (before.phantoon_valid == DoorValidOutcome::Unknown
+            && after.phantoon_valid == DoorValidOutcome::Invalid)
 }
 
 enum CandidateOutcome {
@@ -203,6 +205,7 @@ pub enum FrontierNeighborAlgorithm {
 // Frontier: location of an unconnected door on the map.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frontier {
+    direction: Direction,
     dir_door_idx: DirDoorIdx,
     door_output_idx: i16,
     door_variant_idx: DoorVariantIdx,
@@ -238,6 +241,8 @@ pub struct StepOutcomes {
     pub connections_valid: Vec<DoorValidOutcome>,
     // Whether the Toilet crosses exactly one room.
     pub toilet_valid: DoorValidOutcome,
+    // Whether Phantoon's Room and Wrecked Ship Map Room connect to the same room.
+    pub phantoon_valid: DoorValidOutcome,
     // Concrete room crossed by the Toilet when exactly one non-Toilet room crosses it.
     pub toilet_crossed_room_idx: i16,
 }
@@ -2524,6 +2529,7 @@ impl Environment {
                     door_kind,
                 );
                 let frontier = Frontier {
+                    direction: door.direction,
                     dir_door_idx: door.dir_door_idx,
                     door_output_idx: door_output_idx as i16,
                     door_variant_idx,
@@ -3367,6 +3373,19 @@ impl Environment {
             pre_candidate_outcomes.toilet_valid
         };
 
+        let phantoon_valid = if pre_candidate_outcomes.phantoon_valid == DoorValidOutcome::Unknown {
+            let after = self.phantoon_outcome(common);
+            if after == DoorValidOutcome::Invalid {
+                let profile = profile_start();
+                self.restore_lookahead_candidate(common, snapshot);
+                profile_end(ProfileMetric::EnvProposalRestore, profile);
+                return Ok(CandidateOutcome::Rejected);
+            }
+            after
+        } else {
+            pre_candidate_outcomes.phantoon_valid
+        };
+
         let profile = profile_start();
         let features = self.feature_plan_for_applied_candidate(
             common,
@@ -3382,6 +3401,7 @@ impl Environment {
             door_valid: door_valid.clone(),
             connections_valid: connections_valid.clone(),
             toilet_valid,
+            phantoon_valid,
             toilet_crossed_room_idx: self.toilet_crossed_room_idx(common),
         };
         let profile = profile_start();
@@ -3621,6 +3641,7 @@ impl Environment {
                 (
                     location,
                     Frontier {
+                        direction: frontier.direction,
                         dir_door_idx: frontier.dir_door_idx,
                         door_output_idx: frontier.door_output_idx,
                         door_variant_idx: frontier.door_variant_idx,
@@ -5029,6 +5050,7 @@ impl Environment {
             door_valid,
             connections_valid,
             toilet_valid: self.toilet_outcome(common),
+            phantoon_valid: self.phantoon_outcome(common),
             toilet_crossed_room_idx: self.toilet_crossed_room_idx(common),
         }
     }
@@ -5094,6 +5116,98 @@ impl Environment {
             }
         }
         crossed_room_idx
+    }
+
+    fn phantoon_outcome(&self, common: &CommonData) -> DoorValidOutcome {
+        let (Some(boss_room_idx), Some(map_room_idx)) = (
+            common.phantoon_boss_room_idx(),
+            common.phantoon_map_room_idx(),
+        ) else {
+            return DoorValidOutcome::Valid;
+        };
+        let boss_used = self.room_used[boss_room_idx as usize];
+        let map_used = self.room_used[map_room_idx as usize];
+        let boss_neighbor = boss_used
+            .then(|| self.matched_neighbor_room_idx(common, common.phantoon_boss_door()))
+            .flatten();
+        let map_neighbor = map_used
+            .then(|| self.matched_neighbor_room_idx(common, common.phantoon_map_door()))
+            .flatten();
+        match (boss_neighbor, map_neighbor) {
+            (Some(boss_neighbor), Some(map_neighbor)) => {
+                if boss_neighbor == map_neighbor {
+                    DoorValidOutcome::Valid
+                } else {
+                    DoorValidOutcome::Invalid
+                }
+            }
+            (Some(boss_neighbor), None) => {
+                if self.room_can_match_neighbor_frontier(
+                    common,
+                    map_room_idx,
+                    common.phantoon_map_door(),
+                    boss_neighbor,
+                ) {
+                    DoorValidOutcome::Unknown
+                } else {
+                    DoorValidOutcome::Invalid
+                }
+            }
+            (None, Some(map_neighbor)) => {
+                if self.room_can_match_neighbor_frontier(
+                    common,
+                    boss_room_idx,
+                    common.phantoon_boss_door(),
+                    map_neighbor,
+                ) {
+                    DoorValidOutcome::Unknown
+                } else {
+                    DoorValidOutcome::Invalid
+                }
+            }
+            _ => {
+                if self.finished {
+                    DoorValidOutcome::Invalid
+                } else {
+                    DoorValidOutcome::Unknown
+                }
+            }
+        }
+    }
+
+    fn matched_neighbor_room_idx(
+        &self,
+        common: &CommonData,
+        door: Option<(Direction, DirDoorIdx)>,
+    ) -> Option<RoomIdx> {
+        let (direction, dir_door_idx) = door?;
+        let matched_door_idx = self.door_matches[direction as usize][dir_door_idx as usize];
+        if matched_door_idx == DirDoorIdx::MAX {
+            return None;
+        }
+        Some(
+            common.room_dir_door[direction.opposite() as usize][matched_door_idx as usize].room_idx,
+        )
+    }
+
+    fn room_can_match_neighbor_frontier(
+        &self,
+        common: &CommonData,
+        room_idx: RoomIdx,
+        door: Option<(Direction, DirDoorIdx)>,
+        neighbor_room_idx: RoomIdx,
+    ) -> bool {
+        if self.room_used[room_idx as usize] {
+            return false;
+        }
+        let (direction, _dir_door_idx) = match door {
+            Some(door) => door,
+            None => return false,
+        };
+        self.frontier.values().any(|frontier| {
+            let frontier_room_idx = common.room_part[frontier.room_part_idx as usize].0;
+            frontier_room_idx == neighbor_room_idx && frontier.direction == direction.opposite()
+        })
     }
 
     fn door_outcome(&self, common: &CommonData, dir: usize, i: usize) -> DoorValidOutcome {
@@ -5180,6 +5294,12 @@ impl Environment {
                 "toilet",
                 stage,
             )?;
+            check_outcome_transition_consistency(
+                &[known_outcomes.phantoon_valid],
+                &[outcomes.phantoon_valid],
+                "phantoon",
+                stage,
+            )?;
         }
         self.known_outcomes = Some(merge_known_outcomes(
             self.known_outcomes.as_ref(),
@@ -5200,6 +5320,7 @@ fn merge_known_outcomes(known: Option<&StepOutcomes>, current: &StepOutcomes) ->
             &current.connections_valid,
         ),
         toilet_valid: merge_known_outcome_value(known.toilet_valid, current.toilet_valid),
+        phantoon_valid: merge_known_outcome_value(known.phantoon_valid, current.phantoon_valid),
         toilet_crossed_room_idx: current.toilet_crossed_room_idx,
     }
 }
@@ -5553,6 +5674,7 @@ mod tests {
         env.frontier.insert(
             door_location(0, 0, false),
             Frontier {
+                direction: Direction::Right,
                 dir_door_idx: 0,
                 door_output_idx: -1,
                 door_variant_idx: 0,
@@ -5565,6 +5687,7 @@ mod tests {
         env.frontier.insert(
             door_location(1, 0, false),
             Frontier {
+                direction: Direction::Right,
                 dir_door_idx: 0,
                 door_output_idx: -1,
                 door_variant_idx: 0,
@@ -5718,12 +5841,14 @@ mod tests {
                 door_valid: vec![Unknown],
                 connections_valid: vec![Valid],
                 toilet_valid: Valid,
+                phantoon_valid: Valid,
                 toilet_crossed_room_idx: -1,
             },
             &StepOutcomes {
                 door_valid: vec![Invalid],
                 connections_valid: vec![Valid],
                 toilet_valid: Valid,
+                phantoon_valid: Valid,
                 toilet_crossed_room_idx: -1,
             },
         ));
@@ -5732,12 +5857,14 @@ mod tests {
                 door_valid: vec![Invalid],
                 connections_valid: vec![Unknown],
                 toilet_valid: Unknown,
+                phantoon_valid: Unknown,
                 toilet_crossed_room_idx: -1,
             },
             &StepOutcomes {
                 door_valid: vec![Invalid],
                 connections_valid: vec![Valid],
                 toilet_valid: Unknown,
+                phantoon_valid: Unknown,
                 toilet_crossed_room_idx: -1,
             },
         ));
@@ -7005,6 +7132,7 @@ mod tests {
         env.frontier.insert(
             door_location(0, 0, false),
             Frontier {
+                direction: Direction::Right,
                 dir_door_idx: 0,
                 door_output_idx: -1,
                 door_variant_idx: 0,
@@ -7076,6 +7204,7 @@ mod tests {
             env.frontier.insert(
                 door_location(idx, 0, false),
                 Frontier {
+                    direction: Direction::Right,
                     dir_door_idx: 0,
                     door_output_idx: -1,
                     door_variant_idx: 0,
@@ -8315,5 +8444,226 @@ mod tests {
             .step_outcomes;
         assert_eq!(outcomes.toilet_valid, DoorValidOutcome::Invalid);
         assert_eq!(outcomes.toilet_crossed_room_idx, -1);
+    }
+
+    fn phantoon_outcome_test_common() -> CommonData {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[
+                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                    ]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[
+                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                    ]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_boss",
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_map",
+                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        CommonData::new(rooms).unwrap()
+    }
+
+    fn phantoon_outcome_dead_end_test_common() -> CommonData {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_boss",
+                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "special_type": "phantoon_map",
+                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        CommonData::new(rooms).unwrap()
+    }
+
+    #[test]
+    fn phantoon_outcome_is_valid_without_special_rooms() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"[{"map": [[1]], "toilet_crossing_x": [], "doors": [], "connections": [], "missing_connections": []}]"#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let env = Environment::new(&common, (4, 4), 8, 0);
+
+        assert_eq!(
+            env.outcomes(&common).phantoon_valid,
+            DoorValidOutcome::Valid
+        );
+    }
+
+    #[test]
+    fn phantoon_outcome_requires_placed_rooms_at_finish() {
+        let common = phantoon_outcome_test_common();
+        let mut env = Environment::new(&common, (8, 4), 8, 0);
+
+        assert_eq!(
+            env.outcomes(&common).phantoon_valid,
+            DoorValidOutcome::Unknown
+        );
+        env.finish();
+        assert_eq!(
+            env.outcomes(&common).phantoon_valid,
+            DoorValidOutcome::Invalid
+        );
+    }
+
+    #[test]
+    fn phantoon_outcome_accepts_same_neighbor_room() {
+        let common = phantoon_outcome_test_common();
+        let mut env = Environment::new(&common, (8, 4), 8, 0);
+        env.step_known(
+            Action {
+                room_idx: 0,
+                x: 2,
+                y: 1,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 2,
+                x: 1,
+                y: 1,
+            },
+            &common,
+        );
+        assert_eq!(
+            env.outcomes(&common).phantoon_valid,
+            DoorValidOutcome::Unknown
+        );
+        env.step_known(
+            Action {
+                room_idx: 3,
+                x: 3,
+                y: 1,
+            },
+            &common,
+        );
+
+        assert_eq!(
+            env.outcomes(&common).phantoon_valid,
+            DoorValidOutcome::Valid
+        );
+    }
+
+    #[test]
+    fn phantoon_outcome_rejects_different_neighbor_rooms() {
+        let common = phantoon_outcome_test_common();
+        let mut env = Environment::new(&common, (8, 4), 8, 0);
+        env.step_known(
+            Action {
+                room_idx: 0,
+                x: 2,
+                y: 1,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 1,
+                x: 4,
+                y: 1,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 2,
+                x: 1,
+                y: 1,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 3,
+                x: 5,
+                y: 1,
+            },
+            &common,
+        );
+
+        assert_eq!(
+            env.outcomes(&common).phantoon_valid,
+            DoorValidOutcome::Invalid
+        );
+    }
+
+    #[test]
+    fn phantoon_outcome_rejects_partial_match_without_neighbor_frontier() {
+        let common = phantoon_outcome_dead_end_test_common();
+        let mut env = Environment::new(&common, (8, 4), 8, 0);
+        env.step_known(
+            Action {
+                room_idx: 0,
+                x: 2,
+                y: 1,
+            },
+            &common,
+        );
+        env.step_known(
+            Action {
+                room_idx: 1,
+                x: 1,
+                y: 1,
+            },
+            &common,
+        );
+
+        assert_eq!(
+            env.outcomes(&common).phantoon_valid,
+            DoorValidOutcome::Invalid
+        );
     }
 }

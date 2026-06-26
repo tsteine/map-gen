@@ -35,6 +35,8 @@ class Predictions:
     connection_invalid: torch.Tensor
     # log-odds of invalid Toilet crossing count:
     toilet_invalid: torch.Tensor
+    # log-odds of invalid Phantoon same-room connection:
+    phantoon_invalid: torch.Tensor
     # Predicted balance-model log-odds for the matched target door:
     balance_score: torch.Tensor
     # Predicted balance-model log-odds for the room crossed by the Toilet:
@@ -81,8 +83,9 @@ def get_predictions(raw_preds, output_sizes):
         door_invalid=preds[0],
         connection_invalid=preds[1],
         toilet_invalid=preds[2].squeeze(-1),
-        balance_score=preds[3],
-        toilet_balance_score=preds[4].squeeze(-1),
+        phantoon_invalid=preds[3].squeeze(-1),
+        balance_score=preds[4],
+        toilet_balance_score=preds[5].squeeze(-1),
         avg_frontiers=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1]]),
         graph_diameter=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1]]),
         save_to_room_utility=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
@@ -548,6 +551,7 @@ class FrontierModel(torch.nn.Module):
             door_output_size,
             connection_output_size,
             1,
+            1,
             door_output_size,
             1,
         )
@@ -695,6 +699,7 @@ class FrontierModel(torch.nn.Module):
             else None
         )
         self.toilet_output = torch.nn.Linear(embedding_width, 1)
+        self.phantoon_output = torch.nn.Linear(embedding_width, 1)
         self.balance_score_output = torch.nn.Linear(
             embedding_width,
             output_metadata.num_door_variants,
@@ -861,6 +866,7 @@ class FrontierModel(torch.nn.Module):
         connection_variant = self.connection_output(X)
         connection = connection_variant[..., self.connection_variant_outcome_idx]
         toilet = self.toilet_output(X)
+        phantoon = self.phantoon_output(X)
         balance_score_variant = self.balance_score_output(X)
         balance_score = balance_score_variant[..., self.door_variant_outcome_idx]
         toilet_balance_score = self.toilet_balance_score_output(X)
@@ -882,7 +888,10 @@ class FrontierModel(torch.nn.Module):
         )
         missing_connect_utility = self.missing_connect_utility_output(X).to(torch.float32)
         preds = get_predictions(
-            torch.cat([door, connection, toilet, balance_score, toilet_balance_score], dim=-1),
+            torch.cat(
+                [door, connection, toilet, phantoon, balance_score, toilet_balance_score],
+                dim=-1,
+            ),
             self.output_sizes,
         )
         door_invalid = apply_frontier_door_output_logits(
@@ -1004,6 +1013,7 @@ class FrontierModel(torch.nn.Module):
             door_invalid=door_invalid,
             connection_invalid=connection_invalid,
             toilet_invalid=preds.toilet_invalid,
+            phantoon_invalid=preds.phantoon_invalid,
             balance_score=balance_score,
             toilet_balance_score=preds.toilet_balance_score,
             avg_frontiers=avg_frontiers,
