@@ -1417,6 +1417,7 @@ class TrainingSession:
             ("environment proposal spans", "env.proposal."),
             ("environment lookahead spans", "env.lookahead."),
             ("environment feature spans", "env.features."),
+            ("feature pack spans", "pack.features."),
             ("environment counters", "env.counter."),
         ]:
             section_rows = [row for row in rows if row[0].startswith(prefix)]

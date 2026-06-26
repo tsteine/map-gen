@@ -111,6 +111,14 @@ profile_metrics! {
     EnvFeaturesConnectionReachabilityBase => "env.features.connection_reachability.base",
     EnvFeaturesConnectionReachabilityFrontiers => "env.features.connection_reachability.frontiers",
     EnvFeaturesMissingConnectQueries => "env.features.connection_reachability.missing_connect_queries",
+    PackFeaturesGlobal => "pack.features.global",
+    PackFeaturesFrontierRows => "pack.features.frontier_rows",
+    PackFeaturesFrontierOccupancy => "pack.features.frontier_occupancy",
+    PackFeaturesFrontierNeighbor => "pack.features.frontier_neighbor",
+    PackFeaturesFrontierNeighborFlags => "pack.features.frontier_neighbor_flags",
+    PackFeaturesFrontierConnectionReachability => "pack.features.frontier_connection_reachability",
+    PackFeaturesMissingConnectQueries => "pack.features.missing_connect_queries",
+    PackFeaturesSaveRefillUtilityQueries => "pack.features.save_refill_utility_queries",
     EnvCounterProposalCalls => "env.counter.proposal.calls",
     EnvCounterProposalShortlistCandidates => "env.counter.proposal.shortlist_candidates",
     EnvCounterProposalEvaluatedCandidates => "env.counter.proposal.evaluated_candidates",
@@ -154,6 +162,12 @@ pub(crate) fn record_profile_metric(metric: ProfileMetric, duration: Duration) {
 pub(crate) fn record_profile_count(metric: ProfileMetric, count: u64) {
     if PROFILE_ENABLED.load(Ordering::Relaxed) {
         PROFILE_COUNTS[metric.idx()].fetch_add(count, Ordering::Relaxed);
+    }
+}
+
+fn record_profile_metric_if_enabled(metric: ProfileMetric, duration: Duration) {
+    if PROFILE_ENABLED.load(Ordering::Relaxed) {
+        record_profile_metric(metric, duration);
     }
 }
 
@@ -2714,14 +2728,20 @@ impl FeatureOutputSlices<'_> {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         scratch: &mut FeatureScratch,
     ) {
+        let profile = PROFILE_ENABLED.load(Ordering::Relaxed);
+        let profile_start = profile.then(Instant::now);
         self.global
             .write_feature_plan(snapshot_idx, environment, common, plan);
+        if let Some(start) = profile_start {
+            record_profile_metric(ProfileMetric::PackFeaturesGlobal, start.elapsed());
+        }
 
         let frontier_count = plan.frontiers.len();
         let frontier_row_start = self.frontier_row_count;
         let frontier_neighbor_count = self.frontier_rows.frontier_neighbor_count;
         let frontier_window_size = self.frontier_rows.frontier_window_size;
         if !self.frontier_rows.frontier_neighbor.is_empty() {
+            let profile_start = profile.then(Instant::now);
             let neighbor_start = frontier_row_start * frontier_neighbor_count;
             let neighbor_end = neighbor_start + frontier_count * frontier_neighbor_count;
             let mut locations = std::mem::take(scratch.frontier_locations());
@@ -2735,8 +2755,12 @@ impl FeatureOutputSlices<'_> {
                 scratch,
             );
             *scratch.frontier_locations() = locations;
+            if let Some(start) = profile_start {
+                record_profile_metric(ProfileMetric::PackFeaturesFrontierNeighbor, start.elapsed());
+            }
         }
         if !self.frontier_rows.frontier_neighbor_pair.is_empty() {
+            let profile_start = profile.then(Instant::now);
             let pair_start = frontier_row_start * frontier_neighbor_count;
             let pair_end = pair_start + frontier_count * frontier_neighbor_count;
             self.frontier_rows.frontier_neighbor_pair[pair_start..pair_end].fill(0);
@@ -2761,8 +2785,17 @@ impl FeatureOutputSlices<'_> {
                     self.frontier_rows.frontier_neighbor_pair[pair_idx] = flags;
                 }
             }
+            if let Some(start) = profile_start {
+                record_profile_metric(
+                    ProfileMetric::PackFeaturesFrontierNeighborFlags,
+                    start.elapsed(),
+                );
+            }
         }
 
+        let frontier_rows_start = profile.then(Instant::now);
+        let mut frontier_occupancy_duration = Duration::ZERO;
+        let mut frontier_connection_reachability_duration = Duration::ZERO;
         for (frontier_idx, frontier) in plan.frontiers.iter().enumerate() {
             let frontier_row_idx = self.frontier_row_count;
             self.row_snapshot_idx[frontier_row_idx] = (self.snapshot_start + snapshot_idx) as i64;
@@ -2789,6 +2822,7 @@ impl FeatureOutputSlices<'_> {
                 self.frontier_rows.frontier_door_variant[frontier_row_idx] =
                     frontier.door_variant_idx;
             }
+            let detail_start = profile.then(Instant::now);
             write_frontier_occupancy_row(
                 self.frontier_rows.frontier_occupancy,
                 frontier_row_idx,
@@ -2798,21 +2832,40 @@ impl FeatureOutputSlices<'_> {
                 plan,
                 frontier_window_size,
             );
+            if let Some(start) = detail_start {
+                frontier_occupancy_duration += start.elapsed();
+            }
             if !self
                 .frontier_rows
                 .frontier_connection_reachability
                 .is_empty()
             {
+                let detail_start = profile.then(Instant::now);
                 let src_start = frontier_idx * self.frontier_rows.connection_count;
                 let src_end = src_start + self.frontier_rows.connection_count;
                 let dst_start = frontier_row_idx * self.frontier_rows.connection_count;
                 let dst_end = dst_start + self.frontier_rows.connection_count;
                 self.frontier_rows.frontier_connection_reachability[dst_start..dst_end]
                     .copy_from_slice(&plan.frontier_connection_reachability[src_start..src_end]);
+                if let Some(start) = detail_start {
+                    frontier_connection_reachability_duration += start.elapsed();
+                }
             }
             self.frontier_row_count += 1;
         }
+        if let Some(start) = frontier_rows_start {
+            record_profile_metric(ProfileMetric::PackFeaturesFrontierRows, start.elapsed());
+            record_profile_metric_if_enabled(
+                ProfileMetric::PackFeaturesFrontierOccupancy,
+                frontier_occupancy_duration,
+            );
+            record_profile_metric_if_enabled(
+                ProfileMetric::PackFeaturesFrontierConnectionReachability,
+                frontier_connection_reachability_duration,
+            );
+        }
 
+        let profile_start = profile.then(Instant::now);
         Self::write_missing_connect_query_rows(
             &mut self.missing_connect_query_row_count,
             self.snapshot_start,
@@ -2832,6 +2885,13 @@ impl FeatureOutputSlices<'_> {
             &plan.missing_connect_query_target_distance,
             &plan.missing_connect_query_current_distance,
         );
+        if let Some(start) = profile_start {
+            record_profile_metric(
+                ProfileMetric::PackFeaturesMissingConnectQueries,
+                start.elapsed(),
+            );
+        }
+        let profile_start = profile.then(Instant::now);
         Self::write_save_refill_utility_query_rows(
             &mut self.save_refill_utility_query_row_count,
             self.snapshot_start,
@@ -2854,6 +2914,12 @@ impl FeatureOutputSlices<'_> {
             &plan.save_refill_utility_query_refill_to_current_distance,
             &plan.save_refill_utility_query_refill_from_current_distance,
         );
+        if let Some(start) = profile_start {
+            record_profile_metric(
+                ProfileMetric::PackFeaturesSaveRefillUtilityQueries,
+                start.elapsed(),
+            );
+        }
     }
 
     #[cfg(test)]
