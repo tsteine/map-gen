@@ -12,8 +12,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from safetensors import safe_open
 from werkzeug.exceptions import BadRequest
 
-from area_assignment import assign_room_areas
-from env import Engine, GenerateConfig
+from area_assignment import DoorRoomLookup, assign_room_areas, build_door_room_lookup
+from env import DoorMatches, Engine, GenerateConfig
 from generate import run_generation_groups
 from model import FrontierModel
 from train import create_balance_model, frontier_model_kwargs, without_prefix
@@ -79,6 +79,7 @@ class ServingState:
     envs: list
     model: torch.nn.Module
     balance_model: torch.nn.Module
+    door_room_lookup: DoorRoomLookup
     profile: bool
     lock: threading.Lock
 
@@ -208,6 +209,7 @@ def create_serving_state(
         model = torch.compile(model)
         balance_model = torch.compile(balance_model)
     envs = create_environment_groups(serving_config, model_export.training_config, engine, seed)
+    door_room_lookup = build_door_room_lookup(rooms, device)
     return ServingState(
         serving_config=serving_config,
         training_config=model_export.training_config,
@@ -216,6 +218,7 @@ def create_serving_state(
         envs=envs,
         model=model,
         balance_model=balance_model,
+        door_room_lookup=door_room_lookup,
         profile=profile,
         lock=threading.Lock(),
     )
@@ -300,6 +303,25 @@ def valid_map_mask(outcomes) -> torch.Tensor:
     return ~invalid
 
 
+def collect_door_matches(envs: list, device: torch.device) -> DoorMatches:
+    group_door_matches = [env.get_door_matches(device) for env in envs]
+    return DoorMatches(
+        left=torch.cat([door_matches.left for door_matches in group_door_matches]),
+        right=torch.cat([door_matches.right for door_matches in group_door_matches]),
+        up=torch.cat([door_matches.up for door_matches in group_door_matches]),
+        down=torch.cat([door_matches.down for door_matches in group_door_matches]),
+    )
+
+
+def filter_door_matches(door_matches: DoorMatches, mask: torch.Tensor) -> DoorMatches:
+    return DoorMatches(
+        left=door_matches.left[mask],
+        right=door_matches.right[mask],
+        up=door_matches.up[mask],
+        down=door_matches.down[mask],
+    )
+
+
 def initialize_serving_state(state: ServingState) -> None:
     global SERVING_STATE
     SERVING_STATE = state
@@ -335,9 +357,11 @@ def generate_response():
             verify_outcome_consistency=state.serving_config.verify_outcome_consistency,
             profile=state.profile,
         )
+        door_matches = collect_door_matches(state.envs, state.device)
     valid_mask = valid_map_mask(outcomes)
     valid_room_idx = episode_data.actions.room_idx[valid_mask]
-    area = assign_room_areas(valid_room_idx)
+    valid_door_matches = filter_door_matches(door_matches, valid_mask)
+    area = assign_room_areas(valid_room_idx, valid_door_matches, state.door_room_lookup)
     return jsonify(
         {
             "num_generated": int(episode_data.actions.room_idx.shape[0]),
