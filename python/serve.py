@@ -33,6 +33,7 @@ class ServingConfig(StrictBaseModel):
     port: int
     device: str
     compile_model: bool
+    autocast: bool
     verify_outcome_consistency: bool
     gpu_prefetch_batches: int
     room_set: Path
@@ -58,7 +59,6 @@ class GenerateRequest(StrictBaseModel):
     reward_save_distance: float
     reward_refill_distance: float
     reward_missing_connect_utility: float
-    autocast: bool
 
 
 @dataclass
@@ -269,7 +269,7 @@ def create_generate_configs(
             reward_refill_distance=generate_request.reward_refill_distance,
             reward_missing_connect_utility=generate_request.reward_missing_connect_utility,
             distance_proximity_scale=state.training_config.distance_proximity_scale,
-            autocast=generate_request.autocast,
+            autocast=state.serving_config.autocast,
         )
         for env in envs
     ]

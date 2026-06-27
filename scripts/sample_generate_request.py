@@ -25,7 +25,6 @@ def main() -> int:
         "reward_save_distance": 0.1,
         "reward_refill_distance": 0.1,
         "reward_missing_connect_utility": 0.5,
-        "autocast": False,
     }
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(

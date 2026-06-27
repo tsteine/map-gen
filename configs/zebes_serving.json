@@ -3,6 +3,7 @@
   "port": 5000,
   "device": "cpu",
   "compile_model": false,
+  "autocast": false,
   "verify_outcome_consistency": false,
   "gpu_prefetch_batches": 0,
   "room_set": "room_definitions/zebes.json",
