@@ -16,6 +16,10 @@ _COLORS = [
     "#7bdff2",
     "#cdb4db",
 ]
+_SPECIAL_TYPE_MARKERS = {
+    "phantoon_boss": "P",
+    "phantoon_map": "W",
+}
 
 
 def _as_list(values: Any) -> List[Any]:
@@ -68,6 +72,10 @@ def _door_sides(room: dict) -> Set[Tuple[int, int, str]]:
     }
 
 
+def _special_marker(room: dict) -> Optional[str]:
+    return _SPECIAL_TYPE_MARKERS.get(room.get("special_type"))
+
+
 def _room_geometries(rooms: Sequence[dict]) -> List[dict]:
     cache_key = id(rooms)
     cached = _ROOM_GEOMETRY_CACHE.get(cache_key)
@@ -85,6 +93,7 @@ def _room_geometries(rooms: Sequence[dict]) -> List[dict]:
                 "cells": cells,
                 "doors": doors,
                 "label": room.get("name", str(room.get("room_id", room_idx))),
+                "special_marker": _special_marker(room),
                 "min_x": min(xs),
                 "max_x": max(xs) + 1,
                 "min_y": min(ys),
@@ -276,7 +285,10 @@ class MapVisualizer:
         self.placement_count += 1
         self.dirty = True
 
-        if self.show_names:
+        label = geometry["special_marker"] if geometry["special_marker"] is not None else None
+        if label is None and self.show_names:
+            label = geometry["label"]
+        if label is not None:
             cells = geometry["cells"]
             xs = [room_x + x for x, _ in cells]
             ys = [room_y + y for _, y in cells]
@@ -284,10 +296,11 @@ class MapVisualizer:
                 self.ax.text(
                     (min(xs) + max(xs) + 1) / 2,
                     (min(ys) + max(ys) + 1) / 2,
-                    geometry["label"],
+                    label,
                     ha="center",
                     va="center",
-                    fontsize=8,
+                    fontsize=10 if geometry["special_marker"] is not None else 8,
+                    fontweight="bold" if geometry["special_marker"] is not None else "normal",
                     clip_on=True,
                 )
             )
@@ -403,14 +416,17 @@ def display_map(
         room_colors.extend(colors)
         wall_segments.extend(segments)
 
-        if show_names:
+        label = geometry["special_marker"] if geometry["special_marker"] is not None else None
+        if label is None and show_names:
+            label = geometry["label"]
+        if label is not None:
             xs = [room_x + x for x, _ in cells]
             ys = [room_y + y for _, y in cells]
             label_specs.append(
                 (
                     (min(xs) + max(xs) + 1) / 2,
                     (min(ys) + max(ys) + 1) / 2,
-                    geometry["label"],
+                    label,
                 )
             )
 
@@ -486,7 +502,7 @@ def save_episode_frames(
     wall_segments: List[Tuple[Tuple[float, float], Tuple[float, float]]] = []
     saved_paths = []
     placements = _normalize_actions(actions, environment_index)
-    save_label_positions: List[Tuple[float, float]] = []
+    label_positions: List[Tuple[float, float, str]] = []
     for step_idx, action in enumerate(placements):
         room_idx, room_x, room_y = action
         if not 0 <= room_idx < len(rooms):
@@ -502,8 +518,11 @@ def save_episode_frames(
         room_polygons.extend(polygons)
         room_colors.extend(colors)
         wall_segments.extend(segments)
-        if rooms[room_idx].get("save", False):
-            save_label_positions.append(_room_center(geometry, room_x, room_y))
+        marker = geometry["special_marker"]
+        if marker is not None:
+            label_positions.append((*_room_center(geometry, room_x, room_y), marker))
+        elif rooms[room_idx].get("save", False):
+            label_positions.append((*_room_center(geometry, room_x, room_y), "S"))
 
         image = Image.new("RGB", canvas_size, "white")
         draw = ImageDraw.Draw(image)
@@ -528,15 +547,15 @@ def save_episode_frames(
                 fill="black",
                 width=2,
             )
-        for label_x, label_y in save_label_positions:
+        for label_x, label_y, label in label_positions:
             pixel_x = margin + label_x * scale
             pixel_y = margin + label_y * scale
-            text_bbox = draw.textbbox((0, 0), "S")
+            text_bbox = draw.textbbox((0, 0), label)
             text_width = text_bbox[2] - text_bbox[0]
             text_height = text_bbox[3] - text_bbox[1]
             draw.text(
                 (pixel_x - text_width / 2, pixel_y - text_height / 2),
-                "S",
+                label,
                 fill="black",
             )
         frame_path = output_dir / f"step_{step_idx + 1:03d}.png"

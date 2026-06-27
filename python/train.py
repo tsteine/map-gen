@@ -73,6 +73,7 @@ class Args:
 type RustProfileReport = list[tuple[str, int, int]]
 
 IGNORE_SCORES_TEMPERATURE = 1.0e9
+TRAINING_CHECKPOINT_FORMAT = "map-gen-training-session-checkpoint-v3"
 
 
 def compute_door_match_count_ss(counts: torch.Tensor, dim: int) -> torch.Tensor:
@@ -264,8 +265,16 @@ def load_named_optimizer_checkpoint_state(
 def validate_checkpoint_metadata(path: Path, metadata: dict[str, str] | None) -> dict[str, str]:
     if metadata is None:
         raise ValueError(f"checkpoint metadata missing in {path}")
-    if metadata["format"] != "map-gen-training-session-checkpoint-v2":
+    if metadata["format"] != TRAINING_CHECKPOINT_FORMAT:
         raise ValueError(f"unsupported checkpoint format in {path}")
+    for field in (
+        "config",
+        "aim_run_hash",
+        "num_episodes",
+        "experience_num_files",
+    ):
+        if field not in metadata:
+            raise ValueError(f"checkpoint metadata field {field!r} missing in {path}")
     return metadata
 
 
@@ -727,7 +736,8 @@ class TrainingSession:
         tensors.update(prefixed_state_dict("ema_model", self.ema_model))
         tensors.update(prefixed_state_dict("balance_model", self.balance_model))
         metadata = {
-            "format": "map-gen-training-session-checkpoint-v2",
+            "format": TRAINING_CHECKPOINT_FORMAT,
+            "config": self.config.model_dump_json(),
             "aim_run_hash": self.aim_run.hash,
             "num_episodes": str(self.num_episodes),
             "experience_num_files": str(self.experience.num_files),

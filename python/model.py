@@ -274,17 +274,17 @@ class MissingConnectQueryHead(torch.nn.Module):
         row_start_by_snapshot: torch.Tensor,
         query,
         connection_output_count: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         query_count = query.query_connection_idx.shape[0]
+        output_shape = (snapshot_count, 1, connection_output_count)
         if query_count == 0 or frontier_state.shape[0] == 0:
-            return (
-                frontier_state.new_zeros([snapshot_count, 1, connection_output_count]),
-                torch.zeros(
-                    [snapshot_count, 1, connection_output_count],
-                    dtype=torch.bool,
-                    device=frontier_state.device,
-                ),
+            output = frontier_state.new_zeros(output_shape)
+            mask = torch.zeros(
+                output_shape,
+                dtype=torch.bool,
+                device=frontier_state.device,
             )
+            return output, output.clone(), mask, mask.clone()
         query_snapshot_idx = query.query_snapshot_idx.to(torch.int64)
         source_state = self._gather(
             frontier_state,
@@ -341,7 +341,6 @@ class MissingConnectQueryHead(torch.nn.Module):
         mask[flat_idx] = True
         classification_mask = torch.zeros_like(output, dtype=torch.bool)
         classification_mask[flat_idx] = query.current_distance == self.unreachable_distance
-        output_shape = (snapshot_count, 1, connection_output_count)
         return (
             output.view(output_shape),
             utility_output.view(output_shape),
