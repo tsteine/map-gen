@@ -110,12 +110,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_config_path(config_path: Path, path: Path) -> Path:
-    if path.is_absolute():
-        return path
-    return config_path.parent / path
-
-
 def load_serving_config(path: Path) -> ServingConfig:
     return ServingConfig.model_validate_json(path.read_text())
 
@@ -186,14 +180,12 @@ def create_environment_groups(
 
 
 def create_serving_state(
-    serving_config_path: Path,
     serving_config: ServingConfig,
     model_export: ModelExport,
     seed: int | None,
     profile: bool,
 ) -> ServingState:
-    room_set = resolve_config_path(serving_config_path, serving_config.room_set)
-    rooms = json.loads(room_set.read_text())
+    rooms = json.loads(serving_config.room_set.read_text())
     device = torch.device(serving_config.device)
     if device.type == "cuda":
         torch.cuda.set_device(device)
@@ -358,7 +350,6 @@ def main() -> None:
     serving_config = load_serving_config(args.serving_config)
     model_export = load_model_export(args.model_export)
     state = create_serving_state(
-        args.serving_config,
         serving_config,
         model_export,
         args.seed,
