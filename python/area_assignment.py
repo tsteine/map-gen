@@ -27,7 +27,18 @@ class RoomGeometry:
 
 
 @dataclass(frozen=True)
+class MapStationData:
+    map_station: torch.Tensor
+    phantoon_map: torch.Tensor
+    left_slot: torch.Tensor
+    right_slot: torch.Tensor
+    movable_left_map: torch.Tensor
+    movable_right_map: torch.Tensor
+
+
+@dataclass(frozen=True)
 class AreaAssignment:
+    room_idx: torch.Tensor
     area: torch.Tensor
     valid_mask: torch.Tensor
     crossing_count: torch.Tensor
@@ -85,6 +96,51 @@ def build_room_geometry(rooms: list[dict], device: torch.device) -> RoomGeometry
         max_x=torch.tensor(max_x, device=device, dtype=torch.int64),
         min_y=torch.tensor(min_y, device=device, dtype=torch.int64),
         max_y=torch.tensor(max_y, device=device, dtype=torch.int64),
+    )
+
+
+def flat_doors(room: dict) -> list[dict]:
+    return [door for door_group in room["doors"] for door in door_group]
+
+
+def is_single_tile_single_door_room(room: dict, direction: str) -> bool:
+    doors = flat_doors(room)
+    return (
+        room["map"] == [[1]]
+        and len(doors) == 1
+        and doors[0]["direction"] == direction
+        and doors[0]["x"] == 0
+        and doors[0]["y"] == 0
+        and doors[0]["kind"] == 0
+    )
+
+
+def build_map_station_data(rooms: list[dict], device: torch.device) -> MapStationData:
+    map_station = []
+    phantoon_map = []
+    left_slot = []
+    right_slot = []
+    movable_left_map = []
+    movable_right_map = []
+    for room in rooms:
+        is_map_station = bool(room.get("map_station", False))
+        is_phantoon_map = room.get("special_type") == "phantoon_map"
+        can_host_station = not room.get("save", False) and not room.get("refill", False)
+        is_left_slot = can_host_station and is_single_tile_single_door_room(room, "left")
+        is_right_slot = can_host_station and is_single_tile_single_door_room(room, "right")
+        map_station.append(is_map_station)
+        phantoon_map.append(is_phantoon_map)
+        left_slot.append(is_left_slot and not is_phantoon_map)
+        right_slot.append(is_right_slot and not is_phantoon_map)
+        movable_left_map.append(is_map_station and not is_phantoon_map and is_left_slot)
+        movable_right_map.append(is_map_station and not is_phantoon_map and is_right_slot)
+    return MapStationData(
+        map_station=torch.tensor(map_station, device=device, dtype=torch.bool),
+        phantoon_map=torch.tensor(phantoon_map, device=device, dtype=torch.bool),
+        left_slot=torch.tensor(left_slot, device=device, dtype=torch.bool),
+        right_slot=torch.tensor(right_slot, device=device, dtype=torch.bool),
+        movable_left_map=torch.tensor(movable_left_map, device=device, dtype=torch.bool),
+        movable_right_map=torch.tensor(movable_right_map, device=device, dtype=torch.bool),
     )
 
 
@@ -277,15 +333,187 @@ def area_assignment_valid_mask(
     return area_valid.all(dim=2).reshape(environment_count, attempt_count)
 
 
+def map_station_area_valid_mask(
+    area_by_attempt: torch.Tensor,
+    room_idx: torch.Tensor,
+    map_station_data: MapStationData,
+) -> torch.Tensor:
+    environment_count, attempt_count, _room_count = area_by_attempt.shape
+    area_ids = torch.arange(AREA_COUNT, device=room_idx.device)
+    area_mask = area_by_attempt[:, :, None, :] == area_ids[None, None, :, None]
+    placed_map_station = map_station_data.map_station[room_idx.to(torch.int64)]
+    placed_phantoon_map = map_station_data.phantoon_map[room_idx.to(torch.int64)]
+    placed_left_slot = map_station_data.left_slot[room_idx.to(torch.int64)]
+    placed_right_slot = map_station_data.right_slot[room_idx.to(torch.int64)]
+    placed_movable_left_map = map_station_data.movable_left_map[room_idx.to(torch.int64)]
+    placed_movable_right_map = map_station_data.movable_right_map[room_idx.to(torch.int64)]
+
+    area_has_phantoon_map = torch.any(area_mask & placed_phantoon_map[:, None, None, :], dim=3)
+    area_has_left_slot = torch.any(area_mask & placed_left_slot[:, None, None, :], dim=3)
+    area_has_right_slot = torch.any(area_mask & placed_right_slot[:, None, None, :], dim=3)
+
+    unsatisfied_area = ~area_has_phantoon_map
+    left_only_area = unsatisfied_area & area_has_left_slot & ~area_has_right_slot
+    right_only_area = unsatisfied_area & area_has_right_slot & ~area_has_left_slot
+    both_area = unsatisfied_area & area_has_left_slot & area_has_right_slot
+    no_slot_area = unsatisfied_area & ~area_has_left_slot & ~area_has_right_slot
+
+    placed_map_station_count = torch.sum(placed_map_station.to(torch.int64), dim=1)
+    placed_phantoon_map_count = torch.sum(placed_phantoon_map.to(torch.int64), dim=1)
+    movable_left_map_count = torch.sum(placed_movable_left_map.to(torch.int64), dim=1)
+    movable_right_map_count = torch.sum(placed_movable_right_map.to(torch.int64), dim=1)
+
+    left_only_count = torch.sum(left_only_area.to(torch.int64), dim=2)
+    right_only_count = torch.sum(right_only_area.to(torch.int64), dim=2)
+    both_count = torch.sum(both_area.to(torch.int64), dim=2)
+    remaining_left_map_count = movable_left_map_count[:, None] - left_only_count
+    remaining_right_map_count = movable_right_map_count[:, None] - right_only_count
+
+    return (
+        (placed_map_station_count == AREA_COUNT)[:, None]
+        & (placed_phantoon_map_count == 1)[:, None]
+        & (torch.sum(area_has_phantoon_map.to(torch.int64), dim=2) == 1)
+        & ~torch.any(no_slot_area, dim=2)
+        & (remaining_left_map_count >= 0)
+        & (remaining_right_map_count >= 0)
+        & (both_count <= remaining_left_map_count + remaining_right_map_count)
+    ).reshape(environment_count, attempt_count)
+
+
 def area_crossing_counts(area_by_attempt: torch.Tensor, adjacency: torch.Tensor) -> torch.Tensor:
-    room_count = adjacency.shape[1]
     upper_adjacency = torch.triu(adjacency, diagonal=1)
     same_area = area_by_attempt[:, :, :, None] == area_by_attempt[:, :, None, :]
     crossing_edge = upper_adjacency[:, None, :, :] & ~same_area
     return torch.sum(crossing_edge.to(torch.int64), dim=(2, 3))
 
 
+def map_station_target_direction(
+    area: torch.Tensor,
+    room_idx: torch.Tensor,
+    map_station_data: MapStationData,
+) -> torch.Tensor:
+    area_ids = torch.arange(AREA_COUNT, device=room_idx.device)
+    area_mask = area[:, None, :] == area_ids[None, :, None]
+    placed_phantoon_map = map_station_data.phantoon_map[room_idx.to(torch.int64)]
+    placed_left_slot = map_station_data.left_slot[room_idx.to(torch.int64)]
+    placed_right_slot = map_station_data.right_slot[room_idx.to(torch.int64)]
+    placed_movable_left_map = map_station_data.movable_left_map[room_idx.to(torch.int64)]
+
+    area_has_phantoon_map = torch.any(area_mask & placed_phantoon_map[:, None, :], dim=2)
+    area_has_left_slot = torch.any(area_mask & placed_left_slot[:, None, :], dim=2)
+    area_has_right_slot = torch.any(area_mask & placed_right_slot[:, None, :], dim=2)
+
+    unsatisfied_area = ~area_has_phantoon_map
+    left_only_area = unsatisfied_area & area_has_left_slot & ~area_has_right_slot
+    right_only_area = unsatisfied_area & area_has_right_slot & ~area_has_left_slot
+    both_area = unsatisfied_area & area_has_left_slot & area_has_right_slot
+    left_only_count = torch.sum(left_only_area.to(torch.int64), dim=1)
+    movable_left_map_count = torch.sum(placed_movable_left_map.to(torch.int64), dim=1)
+    remaining_left_map_count = movable_left_map_count - left_only_count
+    both_rank = torch.cumsum(both_area.to(torch.int64), dim=1) - 1
+    both_uses_left = both_area & (both_rank < remaining_left_map_count[:, None])
+
+    left_target = left_only_area | both_uses_left
+    right_target = right_only_area | (both_area & ~both_uses_left)
+    zero_target = torch.zeros_like(left_target, dtype=torch.int64)
+    return torch.where(
+        left_target,
+        torch.ones_like(zero_target),
+        torch.where(right_target, torch.full_like(zero_target, 2), zero_target),
+    )
+
+
+def first_position_by_area(mask: torch.Tensor, area: torch.Tensor) -> torch.Tensor:
+    room_count = area.shape[1]
+    high = torch.full_like(area, room_count, dtype=torch.int64)
+    room_position = torch.arange(room_count, device=area.device, dtype=torch.int64)[None, :]
+    return torch.where(mask, room_position, high).amin(dim=1)
+
+
+def ranked_positions(mask: torch.Tensor, count: int) -> torch.Tensor:
+    room_count = mask.shape[1]
+    high = torch.full(mask.shape, room_count, device=mask.device, dtype=torch.int64)
+    room_position = torch.arange(room_count, device=mask.device, dtype=torch.int64)[None, :]
+    ranked = torch.where(mask, room_position, high)
+    return torch.topk(ranked, k=count, dim=1, largest=False).values
+
+
+def apply_map_station_swaps(
+    room_idx: torch.Tensor,
+    area: torch.Tensor,
+    map_station_data: MapStationData,
+) -> torch.Tensor:
+    if room_idx.shape[0] == 0:
+        return room_idx
+
+    swapped_room_idx = room_idx.clone()
+    room_idx_i64 = room_idx.to(torch.int64)
+    target_direction = map_station_target_direction(area, room_idx, map_station_data)
+    environment_idx = torch.arange(room_idx.shape[0], device=room_idx.device)
+
+    for direction, slot_by_room, movable_map_by_room in (
+        (1, map_station_data.left_slot, map_station_data.movable_left_map),
+        (2, map_station_data.right_slot, map_station_data.movable_right_map),
+    ):
+        direction_target_area = target_direction == direction
+        max_target_count = int(direction_target_area.to(torch.int64).sum(dim=1).max().item())
+        if max_target_count == 0:
+            continue
+
+        placed_slot = slot_by_room[room_idx_i64]
+        placed_movable_map = movable_map_by_room[room_idx_i64]
+        direction_target_count = torch.sum(direction_target_area.to(torch.int64), dim=1)
+        target_positions = []
+        for area_id in range(AREA_COUNT):
+            area_target = direction_target_area[:, area_id]
+            target_mask = area_target[:, None] & placed_slot & (area == area_id)
+            target_positions.append(first_position_by_area(target_mask, area))
+        target_positions = torch.stack(target_positions, dim=1)
+        active_target_areas = ranked_positions(direction_target_area, max_target_count).clamp(
+            max=AREA_COUNT - 1
+        )
+        target_positions = torch.gather(target_positions, dim=1, index=active_target_areas)
+        target_rank = torch.arange(max_target_count, device=room_idx.device)[None, :]
+        active = target_rank < direction_target_count[:, None]
+        target_is_self = (
+            torch.gather(placed_movable_map, dim=1, index=target_positions) & active
+        )
+        self_source_mask = torch.zeros_like(placed_movable_map)
+        active_environment_idx = environment_idx[:, None].expand_as(active)[active]
+        self_source_mask[active_environment_idx, target_positions[active]] = target_is_self[active]
+        remaining_source_mask = placed_movable_map & ~self_source_mask
+        max_remaining_source_count = int(
+            (active & ~target_is_self).to(torch.int64).sum(dim=1).max().item()
+        )
+        if max_remaining_source_count > 0:
+            remaining_source_positions = ranked_positions(
+                remaining_source_mask,
+                max_remaining_source_count,
+            ).clamp(max=room_idx.shape[1] - 1)
+            remaining_source_rank = torch.cumsum((active & ~target_is_self).to(torch.int64), dim=1)
+            remaining_source_rank = (remaining_source_rank - 1).clamp(min=0)
+            remaining_source_rank = remaining_source_rank.clamp(max=max_remaining_source_count - 1)
+            nonself_source_positions = torch.gather(
+                remaining_source_positions,
+                dim=1,
+                index=remaining_source_rank,
+            )
+        else:
+            nonself_source_positions = target_positions
+        source_positions = torch.where(target_is_self, target_positions, nonself_source_positions)
+
+        active_source_positions = source_positions[active]
+        active_target_positions = target_positions[active]
+        source_values = room_idx[active_environment_idx, active_source_positions]
+        target_values = room_idx[active_environment_idx, active_target_positions]
+        swapped_room_idx[active_environment_idx, active_source_positions] = target_values
+        swapped_room_idx[active_environment_idx, active_target_positions] = source_values
+
+    return swapped_room_idx
+
+
 def select_best_valid_assignment(
+    room_idx: torch.Tensor,
     area_by_attempt: torch.Tensor,
     valid_attempt_mask: torch.Tensor,
     crossing_counts: torch.Tensor,
@@ -304,6 +532,7 @@ def select_best_valid_assignment(
         best_attempt,
     ]
     return AreaAssignment(
+        room_idx=room_idx[valid_map_mask],
         area=selected_area[valid_map_mask],
         valid_mask=valid_map_mask,
         crossing_count=selected_crossing_count[valid_map_mask],
@@ -358,6 +587,15 @@ def area_assignment_valid_mask_compiled(
 
 
 @torch.compile
+def map_station_area_valid_mask_compiled(
+    area_by_attempt: torch.Tensor,
+    room_idx: torch.Tensor,
+    map_station_data: MapStationData,
+) -> torch.Tensor:
+    return map_station_area_valid_mask(area_by_attempt, room_idx, map_station_data)
+
+
+@torch.compile
 def area_crossing_counts_compiled(
     area_by_attempt: torch.Tensor,
     adjacency: torch.Tensor,
@@ -367,12 +605,14 @@ def area_crossing_counts_compiled(
 
 @torch.compile
 def select_best_valid_assignment_compiled(
+    room_idx: torch.Tensor,
     area_by_attempt: torch.Tensor,
     valid_attempt_mask: torch.Tensor,
     center_valid_mask: torch.Tensor,
     crossing_counts: torch.Tensor,
 ) -> AreaAssignment:
     return select_best_valid_assignment(
+        room_idx,
         area_by_attempt,
         valid_attempt_mask & center_valid_mask[:, None],
         crossing_counts,
@@ -386,6 +626,7 @@ def assign_room_areas_from_centers(
     door_matches,
     door_room_lookup: DoorRoomLookup,
     room_geometry: RoomGeometry,
+    map_station_data: MapStationData,
     centers: torch.Tensor,
     center_valid_mask: torch.Tensor,
     max_width: int,
@@ -428,6 +669,19 @@ def assign_room_areas_from_centers(
     )
 
     profile_time = profile_start(profiler.enabled)
+    valid_attempt_mask = valid_attempt_mask & map_station_area_valid_mask_compiled(
+        area_by_attempt,
+        room_idx,
+        map_station_data,
+    )
+    add_area_profile(
+        profiler,
+        device,
+        "python.area_assignment.map_station_valid_mask",
+        profile_time,
+    )
+
+    profile_time = profile_start(profiler.enabled)
     crossing_counts = area_crossing_counts_compiled(area_by_attempt, adjacency)
     add_area_profile(
         profiler,
@@ -438,6 +692,7 @@ def assign_room_areas_from_centers(
 
     profile_time = profile_start(profiler.enabled)
     assignment = select_best_valid_assignment_compiled(
+        room_idx,
         area_by_attempt,
         valid_attempt_mask,
         center_valid_mask,
@@ -449,7 +704,25 @@ def assign_room_areas_from_centers(
         "python.area_assignment.select_best_valid_assignment",
         profile_time,
     )
-    return assignment
+
+    profile_time = profile_start(profiler.enabled)
+    swapped_room_idx = apply_map_station_swaps(
+        assignment.room_idx,
+        assignment.area,
+        map_station_data,
+    )
+    add_area_profile(
+        profiler,
+        device,
+        "python.area_assignment.apply_map_station_swaps",
+        profile_time,
+    )
+    return AreaAssignment(
+        room_idx=swapped_room_idx,
+        area=assignment.area,
+        valid_mask=assignment.valid_mask,
+        crossing_count=assignment.crossing_count,
+    )
 
 
 def assign_room_areas(
@@ -459,6 +732,7 @@ def assign_room_areas(
     door_matches,
     door_room_lookup: DoorRoomLookup,
     room_geometry: RoomGeometry,
+    map_station_data: MapStationData,
     attempt_count: int,
     max_width: int,
     max_height: int,
@@ -468,6 +742,7 @@ def assign_room_areas(
 ) -> AreaAssignment:
     if room_idx.shape[0] == 0:
         return AreaAssignment(
+            room_idx=torch.empty(room_idx.shape, device=room_idx.device, dtype=room_idx.dtype),
             area=torch.empty(room_idx.shape, device=room_idx.device, dtype=torch.int64),
             valid_mask=torch.empty((0,), device=room_idx.device, dtype=torch.bool),
             crossing_count=torch.empty((0,), device=room_idx.device, dtype=torch.int64),
@@ -489,6 +764,7 @@ def assign_room_areas(
         door_matches,
         door_room_lookup,
         room_geometry,
+        map_station_data,
         centers,
         center_valid_mask,
         max_width,

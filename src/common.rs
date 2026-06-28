@@ -33,6 +33,8 @@ pub struct Room {
     save: bool,
     #[serde(default)]
     refill: bool,
+    #[serde(default, rename = "map_station")]
+    _map_station: bool,
     map: Vec<Vec<u8>>,
     toilet_crossing_x: Vec<Coord>,
     special_type: Option<SpecialType>,
@@ -1320,6 +1322,37 @@ mod tests {
         assert_eq!(common.connection_variant_rooms.len(), 3);
         assert_eq!(common.phantoon_boss_room_idx(), Some(0));
         assert_eq!(common.phantoon_map_room_idx(), Some(1));
+    }
+
+    #[test]
+    fn map_station_does_not_distinguish_connection_variants() {
+        let rooms: Vec<Room> = serde_json::from_str(
+            r#"
+            [
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "map_station": true,
+                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                },
+                {
+                    "map": [[1]],
+                    "toilet_crossing_x": [],
+                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "connections": [],
+                    "missing_connections": []
+                }
+            ]
+            "#,
+        )
+        .unwrap();
+        let common = CommonData::new(rooms).unwrap();
+
+        assert_eq!(common.geometry.len(), 1);
+        assert_eq!(common.connection_variant_rooms.len(), 1);
+        assert_eq!(common.room[0].connection_variant_idx, common.room[1].connection_variant_idx);
     }
 
     #[test]

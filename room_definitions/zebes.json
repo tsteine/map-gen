@@ -160,6 +160,7 @@
     {
         "room_id": 15,
         "name": "Crateria Map Room",
+        "map_station": true,
         "map": [
             [1]
         ],
@@ -997,6 +998,7 @@
     {
         "room_id": 48,
         "name": "Brinstar Map Room",
+        "map_station": true,
         "map": [
             [1]
         ],
@@ -2171,6 +2173,7 @@
     {
         "room_id": 203,
         "name": "Maridia Map Room",
+        "map_station": true,
         "map": [
             [1]
         ],
@@ -2977,6 +2980,7 @@
     {
         "room_id": 87,
         "name": "Norfair Map Room",
+        "map_station": true,
         "map": [
             [1]
         ],
@@ -3943,6 +3947,7 @@
     {
         "room_id": 157,
         "name": "Wrecked Ship Map Room",
+        "map_station": true,
         "map": [
             [1]
         ],
@@ -4144,6 +4149,7 @@
     {
         "room_id": 225,
         "name": "Tourian Map Room",
+        "map_station": true,
         "map": [
             [1]
         ],

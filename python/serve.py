@@ -14,9 +14,11 @@ from werkzeug.exceptions import BadRequest
 
 from area_assignment import (
     DoorRoomLookup,
+    MapStationData,
     RoomGeometry,
     assign_room_areas,
     build_door_room_lookup,
+    build_map_station_data,
     build_room_geometry,
 )
 from env import DoorMatches, Engine, GenerateConfig
@@ -93,6 +95,7 @@ class ServingState:
     balance_model: torch.nn.Module
     door_room_lookup: DoorRoomLookup
     room_geometry: RoomGeometry
+    map_station_data: MapStationData
     profile: bool
     lock: threading.Lock
 
@@ -245,6 +248,7 @@ def create_serving_state(
     envs = create_environment_groups(serving_config, model_export.training_config, engine, seed)
     door_room_lookup = build_door_room_lookup(rooms, device)
     room_geometry = build_room_geometry(rooms, device)
+    map_station_data = build_map_station_data(rooms, device)
     return ServingState(
         serving_config=serving_config,
         training_config=model_export.training_config,
@@ -255,6 +259,7 @@ def create_serving_state(
         balance_model=balance_model,
         door_room_lookup=door_room_lookup,
         room_geometry=room_geometry,
+        map_station_data=map_station_data,
         profile=profile,
         lock=threading.Lock(),
     )
@@ -460,6 +465,7 @@ def generate_response():
         valid_door_matches,
         state.door_room_lookup,
         state.room_geometry,
+        state.map_station_data,
         state.serving_config.area_assignment_attempts,
         state.serving_config.area_bounding_box_width,
         state.serving_config.area_bounding_box_height,
@@ -476,7 +482,7 @@ def generate_response():
 
     profile_time = profile_start(state.profile)
     area_valid_mask = area_assignment.valid_mask
-    final_room_idx = valid_room_idx[area_valid_mask]
+    final_room_idx = area_assignment.room_idx
     final_room_x = valid_room_x[area_valid_mask]
     final_room_y = valid_room_y[area_valid_mask]
     num_generated = int(episode_data.actions.room_idx.shape[0])
