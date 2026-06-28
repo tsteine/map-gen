@@ -30,6 +30,7 @@ class RoomGeometry:
 class AreaAssignment:
     area: torch.Tensor
     valid_mask: torch.Tensor
+    crossing_count: torch.Tensor
 
 
 def add_area_profile(
@@ -276,18 +277,37 @@ def area_assignment_valid_mask(
     return area_valid.all(dim=2).reshape(environment_count, attempt_count)
 
 
-def select_first_valid_assignment(
+def area_crossing_counts(area_by_attempt: torch.Tensor, adjacency: torch.Tensor) -> torch.Tensor:
+    room_count = adjacency.shape[1]
+    upper_adjacency = torch.triu(adjacency, diagonal=1)
+    same_area = area_by_attempt[:, :, :, None] == area_by_attempt[:, :, None, :]
+    crossing_edge = upper_adjacency[:, None, :, :] & ~same_area
+    return torch.sum(crossing_edge.to(torch.int64), dim=(2, 3))
+
+
+def select_best_valid_assignment(
     area_by_attempt: torch.Tensor,
     valid_attempt_mask: torch.Tensor,
+    crossing_counts: torch.Tensor,
 ) -> AreaAssignment:
-    environment_count, _, room_count = area_by_attempt.shape
+    environment_count, _, _room_count = area_by_attempt.shape
     valid_map_mask = valid_attempt_mask.any(dim=1)
-    first_valid_attempt = torch.argmax(valid_attempt_mask.to(torch.int64), dim=1)
+    high = torch.iinfo(crossing_counts.dtype).max
+    ranked_crossings = torch.where(valid_attempt_mask, crossing_counts, high)
+    best_attempt = torch.argmin(ranked_crossings, dim=1)
     selected_area = area_by_attempt[
         torch.arange(environment_count, device=area_by_attempt.device),
-        first_valid_attempt,
+        best_attempt,
     ]
-    return AreaAssignment(area=selected_area[valid_map_mask], valid_mask=valid_map_mask)
+    selected_crossing_count = crossing_counts[
+        torch.arange(environment_count, device=area_by_attempt.device),
+        best_attempt,
+    ]
+    return AreaAssignment(
+        area=selected_area[valid_map_mask],
+        valid_mask=valid_map_mask,
+        crossing_count=selected_crossing_count[valid_map_mask],
+    )
 
 
 @torch.compile
@@ -338,14 +358,24 @@ def area_assignment_valid_mask_compiled(
 
 
 @torch.compile
-def select_first_valid_assignment_compiled(
+def area_crossing_counts_compiled(
+    area_by_attempt: torch.Tensor,
+    adjacency: torch.Tensor,
+) -> torch.Tensor:
+    return area_crossing_counts(area_by_attempt, adjacency)
+
+
+@torch.compile
+def select_best_valid_assignment_compiled(
     area_by_attempt: torch.Tensor,
     valid_attempt_mask: torch.Tensor,
     center_valid_mask: torch.Tensor,
+    crossing_counts: torch.Tensor,
 ) -> AreaAssignment:
-    return select_first_valid_assignment(
+    return select_best_valid_assignment(
         area_by_attempt,
         valid_attempt_mask & center_valid_mask[:, None],
+        crossing_counts,
     )
 
 
@@ -398,15 +428,25 @@ def assign_room_areas_from_centers(
     )
 
     profile_time = profile_start(profiler.enabled)
-    assignment = select_first_valid_assignment_compiled(
+    crossing_counts = area_crossing_counts_compiled(area_by_attempt, adjacency)
+    add_area_profile(
+        profiler,
+        device,
+        "python.area_assignment.area_crossing_counts",
+        profile_time,
+    )
+
+    profile_time = profile_start(profiler.enabled)
+    assignment = select_best_valid_assignment_compiled(
         area_by_attempt,
         valid_attempt_mask,
         center_valid_mask,
+        crossing_counts,
     )
     add_area_profile(
         profiler,
         device,
-        "python.area_assignment.select_first_valid_assignment",
+        "python.area_assignment.select_best_valid_assignment",
         profile_time,
     )
     return assignment
@@ -430,6 +470,7 @@ def assign_room_areas(
         return AreaAssignment(
             area=torch.empty(room_idx.shape, device=room_idx.device, dtype=torch.int64),
             valid_mask=torch.empty((0,), device=room_idx.device, dtype=torch.bool),
+            crossing_count=torch.empty((0,), device=room_idx.device, dtype=torch.int64),
         )
 
     profile_time = profile_start(profiler.enabled)

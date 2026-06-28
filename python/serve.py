@@ -488,6 +488,12 @@ def generate_response():
             "room_y": tensor_to_list(final_room_y),
         },
         "area": tensor_to_list(area_assignment.area),
+        "area_crossings": tensor_to_list(area_assignment.crossing_count),
+        "avg_area_crossings": (
+            None
+            if num_valid == 0
+            else float(torch.mean(area_assignment.crossing_count.to(torch.float32)).item())
+        ),
     }
     add_serving_profile(
         serving_profiler,
