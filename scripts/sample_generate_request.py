@@ -5,6 +5,14 @@ import urllib.request
 
 
 URL = "http://127.0.0.1:5000/generate"
+AREA_COUNT = 6
+
+
+def area_room_counts(area_assignments: list[list[int]]) -> list[list[int]]:
+    return [
+        [sum(1 for area in map_areas if area == area_id) for area_id in range(AREA_COUNT)]
+        for map_areas in area_assignments
+    ]
 
 
 def main() -> int:
@@ -40,6 +48,8 @@ def main() -> int:
         print(error.read().decode("utf-8"))
         return 1
     print(response_body)
+    response_data = json.loads(response_body)
+    print(json.dumps(area_room_counts(response_data["area"])))
     return 0
 
 

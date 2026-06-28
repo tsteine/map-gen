@@ -48,6 +48,8 @@ class ServingConfig(StrictBaseModel):
     area_assignment_attempts: int
     area_bounding_box_width: int
     area_bounding_box_height: int
+    area_min_rooms: int
+    area_max_rooms: int
     room_set: Path
     num_environments: int
     pipeline_groups: int
@@ -180,6 +182,10 @@ def create_environment_groups(
         raise ValueError("area_bounding_box_width must be greater than zero")
     if serving_config.area_bounding_box_height <= 0:
         raise ValueError("area_bounding_box_height must be greater than zero")
+    if serving_config.area_min_rooms <= 0:
+        raise ValueError("area_min_rooms must be greater than zero")
+    if serving_config.area_max_rooms < serving_config.area_min_rooms:
+        raise ValueError("area_max_rooms must be at least area_min_rooms")
     group_environments = serving_config.num_environments // serving_config.pipeline_groups
     group_threads = serving_config.num_threads // serving_config.pipeline_groups
     if group_threads <= 0:
@@ -445,6 +451,8 @@ def generate_response():
         state.serving_config.area_assignment_attempts,
         state.serving_config.area_bounding_box_width,
         state.serving_config.area_bounding_box_height,
+        state.serving_config.area_min_rooms,
+        state.serving_config.area_max_rooms,
         serving_profiler,
     )
     add_serving_profile(

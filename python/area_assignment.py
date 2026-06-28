@@ -251,11 +251,14 @@ def area_assignment_valid_mask(
     room_geometry: RoomGeometry,
     max_width: int,
     max_height: int,
+    min_rooms: int,
+    max_rooms: int,
 ) -> torch.Tensor:
     environment_count, attempt_count, room_count = area_by_attempt.shape
     min_x, max_x, min_y, max_y = placed_room_bounds(room_idx, room_x, room_y, room_geometry)
     area_ids = torch.arange(AREA_COUNT, device=room_idx.device)
     area_mask = area_by_attempt[:, :, None, :] == area_ids[None, None, :, None]
+    area_room_count = torch.sum(area_mask.to(torch.int64), dim=3)
     high = torch.iinfo(torch.int64).max
     low = torch.iinfo(torch.int64).min
     area_min_x = torch.where(area_mask, min_x[:, None, None, :], high).amin(dim=3)
@@ -265,6 +268,8 @@ def area_assignment_valid_mask(
     area_has_room = area_mask.any(dim=3)
     area_valid = (
         area_has_room
+        & (area_room_count >= min_rooms)
+        & (area_room_count <= max_rooms)
         & (area_max_x - area_min_x <= max_width)
         & (area_max_y - area_min_y <= max_height)
     )
@@ -316,6 +321,8 @@ def area_assignment_valid_mask_compiled(
     room_geometry: RoomGeometry,
     max_width: int,
     max_height: int,
+    min_rooms: int,
+    max_rooms: int,
 ) -> torch.Tensor:
     return area_assignment_valid_mask(
         area_by_attempt=area_by_attempt,
@@ -325,6 +332,8 @@ def area_assignment_valid_mask_compiled(
         room_geometry=room_geometry,
         max_width=max_width,
         max_height=max_height,
+        min_rooms=min_rooms,
+        max_rooms=max_rooms,
     )
 
 
@@ -351,6 +360,8 @@ def assign_room_areas_from_centers(
     center_valid_mask: torch.Tensor,
     max_width: int,
     max_height: int,
+    min_rooms: int,
+    max_rooms: int,
     profiler: GenerationProfiler,
 ) -> AreaAssignment:
     device = room_idx.device
@@ -376,6 +387,8 @@ def assign_room_areas_from_centers(
         room_geometry,
         max_width,
         max_height,
+        min_rooms,
+        max_rooms,
     )
     add_area_profile(
         profiler,
@@ -409,6 +422,8 @@ def assign_room_areas(
     attempt_count: int,
     max_width: int,
     max_height: int,
+    min_rooms: int,
+    max_rooms: int,
     profiler: GenerationProfiler,
 ) -> AreaAssignment:
     if room_idx.shape[0] == 0:
@@ -437,5 +452,7 @@ def assign_room_areas(
         center_valid_mask,
         max_width,
         max_height,
+        min_rooms,
+        max_rooms,
         profiler,
     )

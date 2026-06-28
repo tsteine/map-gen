@@ -9,6 +9,8 @@
   "area_assignment_attempts": 32,
   "area_bounding_box_width": 59,
   "area_bounding_box_height": 28,
+  "area_min_rooms": 1,
+  "area_max_rooms": 70,
   "room_set": "room_definitions/zebes.json",
   "num_environments": 1,
   "pipeline_groups": 1,
