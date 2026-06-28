@@ -83,6 +83,8 @@ def _door_sides(room: dict) -> Set[Tuple[int, int, str]]:
 
 
 def _special_marker(room: dict) -> Optional[str]:
+    if room.get("map_station", False) and room.get("special_type") != "phantoon_map":
+        return "M"
     return _SPECIAL_TYPE_MARKERS.get(room.get("special_type"))
 
 
