@@ -21,7 +21,7 @@ def main() -> int:
         "recommended_candidates": 4,
         "shortlist_candidates": 16,
         "temperature": 0.03,
-        "proposal_temperature": 0.1,
+        "proposal_temperature": 0.3,
         "reward_door": 1.0,
         "reward_connection": 1.0,
         "reward_toilet": 1.0,
@@ -50,6 +50,7 @@ def main() -> int:
     # print(response_body)
     response_data = json.loads(response_body)
     # print(json.dumps(area_room_counts(response_data["area"])))
+    print(len(response_data["area_crossings"]))
     print(json.dumps(response_data["area_crossings"]))
     print(response_data["avg_area_crossings"])
     return 0

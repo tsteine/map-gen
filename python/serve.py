@@ -42,6 +42,7 @@ class ServingConfig(StrictBaseModel):
     port: int
     device: str
     compile_model: bool
+    model_dtype: str
     autocast: bool
     verify_outcome_consistency: bool
     gpu_prefetch_batches: int
@@ -205,6 +206,14 @@ def create_environment_groups(
     ]
 
 
+def serving_model_dtype(serving_config: ServingConfig) -> torch.dtype:
+    if serving_config.model_dtype == "float32":
+        return torch.float32
+    if serving_config.model_dtype == "bfloat16":
+        return torch.bfloat16
+    raise ValueError('model_dtype must be "float32" or "bfloat16"')
+
+
 def create_serving_state(
     serving_config: ServingConfig,
     model_export: ModelExport,
@@ -216,15 +225,18 @@ def create_serving_state(
     if device.type == "cuda":
         torch.cuda.set_device(device)
         torch.set_float32_matmul_precision("high")
+    model_dtype = serving_model_dtype(serving_config)
     engine = Engine(rooms, model_export.training_config.features)
     model = FrontierModel(**frontier_model_kwargs(model_export.training_config, rooms, engine)).to(
         device
     )
     model.load_state_dict(without_prefix(model_export.tensors, "ema_model"))
+    model.to(dtype=model_dtype)
     model.requires_grad_(False)
     model.eval()
     balance_model = create_balance_model(model_export.training_config, rooms, device)
     balance_model.load_state_dict(without_prefix(model_export.tensors, "balance_model"))
+    balance_model.to(dtype=model_dtype)
     balance_model.requires_grad_(False)
     balance_model.eval()
     if serving_config.compile_model:

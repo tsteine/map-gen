@@ -3,6 +3,7 @@
   "port": 5000,
   "device": "cuda:1",
   "compile_model": true,
+  "model_dtype": "bfloat16",
   "autocast": false,
   "verify_outcome_consistency": false,
   "gpu_prefetch_batches": 1,
@@ -12,7 +13,7 @@
   "area_min_rooms": 15,
   "area_max_rooms": 70,
   "room_set": "room_definitions/zebes.json",
-  "num_environments": 256,
+  "num_environments": 128,
   "pipeline_groups": 1,
-  "num_threads": 16
+  "num_threads": 8
 }
