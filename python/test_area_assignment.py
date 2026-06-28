@@ -4,8 +4,11 @@ from area_assignment import (
     AREA_COUNT,
     apply_map_station_swaps,
     build_map_station_data,
+    build_toilet_data,
     map_station_area_valid_mask,
     map_station_area_valid_mask_compiled,
+    toilet_area_valid_mask,
+    toilet_area_valid_mask_compiled,
 )
 
 
@@ -126,6 +129,48 @@ def main() -> None:
         overlap_swapped_room_idx[0],
         overlap_area[0],
         map_station_data.map_station,
+    )
+
+    toilet_rooms = [
+        nonslot_room("Crossed Room"),
+        room("Toilet", "right", False, special_type="toilet"),
+    ]
+    toilet_data = build_toilet_data(toilet_rooms, device)
+    toilet_room_idx = torch.tensor([[0, 1]], device=device)
+    toilet_crossed_room_idx = torch.tensor([0], device=device)
+    same_area = torch.tensor([[[2, 2]]], device=device)
+    different_area = torch.tensor([[[2, 3]]], device=device)
+    assert bool(
+        toilet_area_valid_mask(
+            same_area,
+            toilet_room_idx,
+            toilet_crossed_room_idx,
+            toilet_data,
+        ).item()
+    )
+    assert not bool(
+        toilet_area_valid_mask(
+            different_area,
+            toilet_room_idx,
+            toilet_crossed_room_idx,
+            toilet_data,
+        ).item()
+    )
+    assert bool(
+        toilet_area_valid_mask_compiled(
+            same_area,
+            toilet_room_idx,
+            toilet_crossed_room_idx,
+            toilet_data,
+        ).item()
+    )
+    assert not bool(
+        toilet_area_valid_mask_compiled(
+            different_area,
+            toilet_room_idx,
+            toilet_crossed_room_idx,
+            toilet_data,
+        ).item()
     )
 
     no_slot_room_idx = torch.tensor([[0, 1, 2, 3, 4, 5, 7, 10]], device=device)

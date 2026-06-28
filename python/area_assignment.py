@@ -37,6 +37,12 @@ class MapStationData:
 
 
 @dataclass(frozen=True)
+class ToiletData:
+    toilet: torch.Tensor
+    room_count: int
+
+
+@dataclass(frozen=True)
 class AreaAssignment:
     room_idx: torch.Tensor
     area: torch.Tensor
@@ -141,6 +147,17 @@ def build_map_station_data(rooms: list[dict], device: torch.device) -> MapStatio
         right_slot=torch.tensor(right_slot, device=device, dtype=torch.bool),
         movable_left_map=torch.tensor(movable_left_map, device=device, dtype=torch.bool),
         movable_right_map=torch.tensor(movable_right_map, device=device, dtype=torch.bool),
+    )
+
+
+def build_toilet_data(rooms: list[dict], device: torch.device) -> ToiletData:
+    return ToiletData(
+        toilet=torch.tensor(
+            [room.get("special_type") == "toilet" for room in rooms],
+            device=device,
+            dtype=torch.bool,
+        ),
+        room_count=len(rooms),
     )
 
 
@@ -380,6 +397,42 @@ def map_station_area_valid_mask(
     ).reshape(environment_count, attempt_count)
 
 
+def toilet_area_valid_mask(
+    area_by_attempt: torch.Tensor,
+    room_idx: torch.Tensor,
+    toilet_crossed_room_idx: torch.Tensor,
+    toilet_data: ToiletData,
+) -> torch.Tensor:
+    environment_count, attempt_count, _room_count = area_by_attempt.shape
+    placed_toilet = toilet_data.toilet[room_idx.to(torch.int64)]
+    has_toilet = torch.any(placed_toilet, dim=1)
+    toilet_position = torch.argmax(placed_toilet.to(torch.int64), dim=1)
+
+    room_position_by_room = build_room_position_by_room(room_idx, toilet_data.room_count)
+    crossed_room_idx = toilet_crossed_room_idx.to(torch.int64)
+    crossed_lookup_idx = torch.clamp(crossed_room_idx, min=0)
+    crossed_position = room_position_by_room[
+        torch.arange(environment_count, device=room_idx.device),
+        crossed_lookup_idx,
+    ]
+    has_crossed_room = crossed_room_idx >= 0
+    crossed_room_is_placed = crossed_position >= 0
+
+    environment_idx = torch.arange(environment_count, device=room_idx.device)
+    toilet_area = area_by_attempt[
+        environment_idx[:, None],
+        torch.arange(attempt_count, device=room_idx.device)[None, :],
+        toilet_position[:, None],
+    ]
+    crossed_area = area_by_attempt[
+        environment_idx[:, None],
+        torch.arange(attempt_count, device=room_idx.device)[None, :],
+        torch.clamp(crossed_position, min=0)[:, None],
+    ]
+    constraint_applies = has_toilet & has_crossed_room & crossed_room_is_placed
+    return (~constraint_applies[:, None]) | (toilet_area == crossed_area)
+
+
 def area_crossing_counts(area_by_attempt: torch.Tensor, adjacency: torch.Tensor) -> torch.Tensor:
     upper_adjacency = torch.triu(adjacency, diagonal=1)
     same_area = area_by_attempt[:, :, :, None] == area_by_attempt[:, :, None, :]
@@ -595,6 +648,21 @@ def map_station_area_valid_mask_compiled(
 
 
 @torch.compile
+def toilet_area_valid_mask_compiled(
+    area_by_attempt: torch.Tensor,
+    room_idx: torch.Tensor,
+    toilet_crossed_room_idx: torch.Tensor,
+    toilet_data: ToiletData,
+) -> torch.Tensor:
+    return toilet_area_valid_mask(
+        area_by_attempt,
+        room_idx,
+        toilet_crossed_room_idx,
+        toilet_data,
+    )
+
+
+@torch.compile
 def area_crossing_counts_compiled(
     area_by_attempt: torch.Tensor,
     adjacency: torch.Tensor,
@@ -622,10 +690,12 @@ def assign_room_areas_from_centers(
     room_idx: torch.Tensor,
     room_x: torch.Tensor,
     room_y: torch.Tensor,
+    toilet_crossed_room_idx: torch.Tensor,
     door_matches,
     door_room_lookup: DoorRoomLookup,
     room_geometry: RoomGeometry,
     map_station_data: MapStationData,
+    toilet_data: ToiletData,
     centers: torch.Tensor,
     center_valid_mask: torch.Tensor,
     max_width: int,
@@ -681,6 +751,20 @@ def assign_room_areas_from_centers(
     )
 
     profile_time = profile_start(profiler.enabled)
+    valid_attempt_mask = valid_attempt_mask & toilet_area_valid_mask_compiled(
+        area_by_attempt,
+        room_idx,
+        toilet_crossed_room_idx,
+        toilet_data,
+    )
+    add_area_profile(
+        profiler,
+        device,
+        "python.area_assignment.toilet_area_valid_mask",
+        profile_time,
+    )
+
+    profile_time = profile_start(profiler.enabled)
     crossing_counts = area_crossing_counts_compiled(area_by_attempt, adjacency)
     add_area_profile(
         profiler,
@@ -728,10 +812,12 @@ def assign_room_areas(
     room_idx: torch.Tensor,
     room_x: torch.Tensor,
     room_y: torch.Tensor,
+    toilet_crossed_room_idx: torch.Tensor,
     door_matches,
     door_room_lookup: DoorRoomLookup,
     room_geometry: RoomGeometry,
     map_station_data: MapStationData,
+    toilet_data: ToiletData,
     attempt_count: int,
     max_width: int,
     max_height: int,
@@ -760,10 +846,12 @@ def assign_room_areas(
         room_idx,
         room_x,
         room_y,
+        toilet_crossed_room_idx,
         door_matches,
         door_room_lookup,
         room_geometry,
         map_station_data,
+        toilet_data,
         centers,
         center_valid_mask,
         max_width,
