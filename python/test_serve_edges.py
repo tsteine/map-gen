@@ -1,7 +1,11 @@
 import torch
 
 from env import DoorMatches
-from serve import build_door_lookups, response_edges
+from serve import (
+    build_door_lookups,
+    response_edges,
+    response_toilet_crossing_room_placement_idx,
+)
 
 
 def room(name: str, direction: str) -> dict:
@@ -35,6 +39,16 @@ def main() -> None:
         "to_room_placement_idx": [[1]],
         "to_door_idx": [[0]],
     }
+
+    toilet_crossing_room_placement_idx = response_toilet_crossing_room_placement_idx(
+        room_idx=[
+            [4, 7, 2],
+            [5, 6, 8],
+            [1, 3, 9],
+        ],
+        toilet_crossed_room_idx=[7, -1, 4],
+    )
+    assert toilet_crossing_room_placement_idx == [1, -1, -1]
 
 
 if __name__ == "__main__":

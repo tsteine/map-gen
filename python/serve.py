@@ -507,6 +507,16 @@ def response_edges(
     return edge_lists
 
 
+def response_toilet_crossing_room_placement_idx(
+    room_idx: list[list[int]],
+    toilet_crossed_room_idx: list[int],
+) -> list[int]:
+    return [
+        placement_positions_by_room(map_room_idx).get(crossed_room_idx, -1)
+        for map_room_idx, crossed_room_idx in zip(room_idx, toilet_crossed_room_idx)
+    ]
+
+
 def initialize_serving_state(state: ServingState) -> None:
     global SERVING_STATE
     SERVING_STATE = state
@@ -632,8 +642,10 @@ def generate_response():
     final_room_idx = area_assignment.room_idx
     final_room_x = valid_room_x[area_valid_mask]
     final_room_y = valid_room_y[area_valid_mask]
+    final_toilet_crossed_room_idx = valid_toilet_crossed_room_idx[area_valid_mask]
     final_door_matches = filter_door_matches(valid_door_matches, area_valid_mask)
     final_room_idx_list = tensor_to_list(final_room_idx)
+    final_toilet_crossed_room_idx_list = tensor_to_list(final_toilet_crossed_room_idx)
     num_generated = int(episode_data.actions.room_idx.shape[0])
     num_pre_valid = int(torch.sum(valid_mask).item())
     num_valid = int(torch.sum(area_valid_mask).item())
@@ -655,6 +667,10 @@ def generate_response():
             "room_y": tensor_to_list(final_room_y),
         },
         "edges": response_edges(final_room_idx_list, final_door_matches, state.door_lookups),
+        "toilet_crossing_room_placement_idx": response_toilet_crossing_room_placement_idx(
+            final_room_idx_list,
+            final_toilet_crossed_room_idx_list,
+        ),
         "area": tensor_to_list(area_assignment.area),
         "subarea": tensor_to_list(area_assignment.subarea),
         "subsubarea": tensor_to_list(area_assignment.subsubarea),
