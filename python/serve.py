@@ -54,6 +54,7 @@ class ServingConfig(StrictBaseModel):
     port: int
     device: str
     compile_model: bool
+    cuda_memory_fraction: float
     model_dtype: str
     autocast: bool
     verify_outcome_consistency: bool
@@ -252,6 +253,10 @@ def create_serving_state(
     device = torch.device(serving_config.device)
     if device.type == "cuda":
         torch.cuda.set_device(device)
+        torch.cuda.memory.set_per_process_memory_fraction(
+            serving_config.cuda_memory_fraction,
+            device,
+        )
         torch.set_float32_matmul_precision("high")
     model_dtype = serving_model_dtype(serving_config)
     engine = Engine(rooms, model_export.training_config.features)

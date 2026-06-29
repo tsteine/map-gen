@@ -3,6 +3,7 @@
   "port": 5000,
   "device": "cpu",
   "compile_model": true,
+  "cuda_memory_fraction": 1.0,
   "model_dtype": "float32",
   "autocast": false,
   "verify_outcome_consistency": false,

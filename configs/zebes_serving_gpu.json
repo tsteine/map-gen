@@ -3,8 +3,9 @@
   "port": 5000,
   "device": "cuda:0",
   "compile_model": true,
+  "cuda_memory_fraction": 0.5,
   "model_dtype": "bfloat16",
-  "autocast": false,
+  "autocast": true,
   "verify_outcome_consistency": false,
   "gpu_prefetch_batches": 1,
   "area_assignment_attempts": 16384,
@@ -15,5 +16,5 @@
   "room_set": "room_definitions/zebes.json",
   "num_environments": 64,
   "pipeline_groups": 1,
-  "num_threads": 16
+  "num_threads": 32
 }
