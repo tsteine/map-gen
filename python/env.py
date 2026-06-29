@@ -454,6 +454,7 @@ class GlobalFeatures:
     lookahead_door_match: torch.Tensor
     lookahead_connection_invalid: torch.Tensor
     lookahead_toilet_invalid: torch.Tensor
+    lookahead_phantoon_invalid: torch.Tensor
     connection_reachability: torch.Tensor
     toilet_crossed_room_idx: torch.Tensor
 
@@ -513,6 +514,9 @@ class GlobalFeatures:
             lookahead_toilet_invalid=self.lookahead_toilet_invalid.to(
                 device, non_blocking=non_blocking
             ),
+            lookahead_phantoon_invalid=self.lookahead_phantoon_invalid.to(
+                device, non_blocking=non_blocking
+            ),
             connection_reachability=self.connection_reachability.to(
                 device, non_blocking=non_blocking
             ),
@@ -551,6 +555,7 @@ class GlobalFeatures:
             lookahead_door_match=self.lookahead_door_match.flatten(0, 1),
             lookahead_connection_invalid=self.lookahead_connection_invalid.flatten(0, 1),
             lookahead_toilet_invalid=self.lookahead_toilet_invalid.flatten(0, 1),
+            lookahead_phantoon_invalid=self.lookahead_phantoon_invalid.flatten(0, 1),
             connection_reachability=self.connection_reachability.flatten(0, 1),
             toilet_crossed_room_idx=self.toilet_crossed_room_idx.flatten(0, 1),
         )
@@ -1538,6 +1543,7 @@ class FeatureSlot:
         lookahead_door_match = lookahead_outcomes.door_match
         lookahead_connection_invalid = lookahead_outcomes.connection_invalid
         lookahead_toilet_invalid = lookahead_outcomes.toilet_invalid
+        lookahead_phantoon_invalid = lookahead_outcomes.phantoon_invalid
         if not include_lookahead_outcomes:
             lookahead_door_invalid = lookahead_door_invalid.new_empty(
                 [
@@ -1560,6 +1566,12 @@ class FeatureSlot:
             lookahead_toilet_invalid = lookahead_toilet_invalid.new_empty(
                 [
                     *lookahead_toilet_invalid.shape,
+                    0,
+                ]
+            )
+            lookahead_phantoon_invalid = lookahead_phantoon_invalid.new_empty(
+                [
+                    *lookahead_phantoon_invalid.shape,
                     0,
                 ]
             )
@@ -1607,6 +1619,7 @@ class FeatureSlot:
                 lookahead_door_match=lookahead_door_match,
                 lookahead_connection_invalid=lookahead_connection_invalid,
                 lookahead_toilet_invalid=lookahead_toilet_invalid,
+                lookahead_phantoon_invalid=lookahead_phantoon_invalid,
                 connection_reachability=self.connection_reachability[:environment_count],
                 toilet_crossed_room_idx=self.toilet_crossed_room_idx[:environment_count],
             ),
@@ -1702,6 +1715,7 @@ class FeatureSlot:
         lookahead_door_match = lookahead_outcomes.door_match
         lookahead_connection_invalid = lookahead_outcomes.connection_invalid
         lookahead_toilet_invalid = lookahead_outcomes.toilet_invalid
+        lookahead_phantoon_invalid = lookahead_outcomes.phantoon_invalid
         if not include_lookahead_outcomes:
             lookahead_door_invalid = lookahead_door_invalid.new_empty(
                 [environment_count, candidate_count, 0]
@@ -1713,6 +1727,9 @@ class FeatureSlot:
                 [environment_count, candidate_count, 0]
             )
             lookahead_toilet_invalid = lookahead_toilet_invalid.new_empty(
+                [environment_count, candidate_count, 0]
+            )
+            lookahead_phantoon_invalid = lookahead_phantoon_invalid.new_empty(
                 [environment_count, candidate_count, 0]
             )
         return Features(
@@ -1771,6 +1788,7 @@ class FeatureSlot:
                 lookahead_door_match=lookahead_door_match,
                 lookahead_connection_invalid=lookahead_connection_invalid,
                 lookahead_toilet_invalid=lookahead_toilet_invalid,
+                lookahead_phantoon_invalid=lookahead_phantoon_invalid,
                 connection_reachability=self.connection_reachability[:snapshot_count].view(
                     environment_count, candidate_count, self.connection_reachability_width
                 ),

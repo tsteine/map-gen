@@ -188,7 +188,7 @@ class LookaheadFeature(GlobalFeature):
 
     @classmethod
     def tensor_width(cls, context: FeatureContext) -> int:
-        return context.features.lookahead_outcomes + 2 * context.num_connection_outputs + 2
+        return context.features.lookahead_outcomes + 2 * context.num_connection_outputs + 4
 
     @classmethod
     def build(cls, context: FeatureContext) -> LookaheadFeature:
@@ -227,8 +227,15 @@ class LookaheadFeature(GlobalFeature):
             ],
             dim=-1,
         ).flatten(1)
+        phantoon_features = torch.stack(
+            [
+                (features.global_features.lookahead_phantoon_invalid == 0).to(dtype),
+                (features.global_features.lookahead_phantoon_invalid == 1).to(dtype),
+            ],
+            dim=-1,
+        ).flatten(1)
         return torch.cat(
-            [door_match_features, connection_features, toilet_features],
+            [door_match_features, connection_features, toilet_features, phantoon_features],
             dim=-1,
         )
 
