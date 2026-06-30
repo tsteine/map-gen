@@ -662,9 +662,11 @@ def generate_response():
 
     profile_time = profile_start(state.profile)
     response = {
-        "num_generated": num_generated,
-        "num_pre_valid": num_pre_valid,
-        "num_valid": num_valid,
+        "stats": {
+            "num_generated": num_generated,
+            "num_pre_valid": num_pre_valid,
+            "num_valid": num_valid,            
+        },
         "rooms": {
             "id": final_room_id_list,
             "x": tensor_to_list(final_room_x),

@@ -2,7 +2,7 @@
 import json
 import urllib.error
 import urllib.request
-
+import sys
 
 URL = "http://127.0.0.1:5000/generate"
 AREA_COUNT = 6
@@ -48,7 +48,9 @@ def main() -> int:
         print(error.read().decode("utf-8"))
         return 1
     print(response_body)
-    # response_data = json.loads(response_body)
+
+    response_data = json.loads(response_body)
+    print(response_data["stats"], file=sys.stderr)
     # print(json.dumps(area_room_counts(response_data["area"])))
     # for key in ["num_generated", "num_pre_valid", "num_valid"]:
     #     print(key, response_data[key])
