@@ -27,12 +27,12 @@ _AREA_COLORS = {
     0: "#7b2cbf",  # Crateria
     1: "#2f9e44",  # Brinstar
     2: "#d00000",  # Norfair
-    3: "#ffd43b",  # Wrecked Ship
+    3: "#ffff00",  # Wrecked Ship
     4: "#228be6",  # Maridia
     5: "#f08c00",  # Tourian
 }
 _SUBAREA_LIGHTNESS = {
-    0: 0.55,
+    0: 0.75,
     1: 0.35,
 }
 _SUBSUBAREA_SATURATION_SCALE = {

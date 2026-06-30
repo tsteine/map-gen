@@ -450,8 +450,13 @@ def area_crossing_counts(area_by_attempt: torch.Tensor, adjacency: torch.Tensor)
     return torch.sum(crossing_edge.to(torch.int64), dim=(2, 3))
 
 
+def induced_distances(adjacency: torch.Tensor, member_positions: torch.Tensor) -> torch.Tensor:
+    parent_adjacency = adjacency[member_positions][:, member_positions]
+    return compute_room_distances(parent_adjacency[None, :, :])[0]
+
+
 def split_assignment_by_balanced_centers(
-    distances: torch.Tensor,
+    adjacency: torch.Tensor,
     parent_assignments: tuple[torch.Tensor, ...],
     parent_counts: tuple[int, ...],
 ) -> torch.Tensor:
@@ -466,7 +471,7 @@ def split_assignment_by_balanced_centers(
         dtype=torch.int64,
     )
     for environment_idx in range(environment_count):
-        environment_distances = distances[environment_idx]
+        environment_adjacency = adjacency[environment_idx]
         for parent_key in range(parent_key_count):
             remaining_key = parent_key
             member_mask = torch.ones(
@@ -484,12 +489,12 @@ def split_assignment_by_balanced_centers(
                 child_assignment[environment_idx, member_positions] = 0
                 continue
 
-            parent_distances = environment_distances[member_positions][:, member_positions]
+            parent_distances = induced_distances(environment_adjacency, member_positions)
             nearer_second = parent_distances[:, None, :] < parent_distances[:, :, None]
             second_count = torch.sum(nearer_second.to(torch.int64), dim=0)
             first_count = member_positions.shape[0] - second_count
             balance = torch.minimum(first_count, second_count)
-            diagonal = torch.arange(member_positions.shape[0], device=distances.device)
+            diagonal = torch.arange(member_positions.shape[0], device=adjacency.device)
             balance[diagonal, diagonal] = -1
             best_pair = torch.argmax(balance.reshape(-1))
             first_center = best_pair // member_positions.shape[0]
@@ -852,7 +857,7 @@ def assign_room_areas_from_centers(
 
     profile_time = profile_start(profiler.enabled)
     subarea = split_assignment_by_balanced_centers(
-        distances[assignment.valid_mask],
+        adjacency[assignment.valid_mask],
         (assignment.area,),
         (AREA_COUNT,),
     )
@@ -865,7 +870,7 @@ def assign_room_areas_from_centers(
 
     profile_time = profile_start(profiler.enabled)
     subsubarea = split_assignment_by_balanced_centers(
-        distances[assignment.valid_mask],
+        adjacency[assignment.valid_mask],
         (assignment.area, subarea),
         (AREA_COUNT, 2),
     )

@@ -2,7 +2,7 @@
   "host": "127.0.0.1",
   "port": 5000,
   "device": "cuda:0",
-  "compile_model": false,
+  "compile_model": true,
   "cuda_memory_fraction": 0.5,
   "model_dtype": "bfloat16",
   "autocast": true,

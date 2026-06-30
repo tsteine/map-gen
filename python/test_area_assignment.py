@@ -80,21 +80,44 @@ def main() -> None:
     device = torch.device("cpu")
     map_station_data = build_map_station_data(rooms, device)
 
-    line_positions = torch.arange(6, device=device)
-    line_distances = torch.abs(line_positions[:, None] - line_positions[None, :])[None, :, :]
+    line_adjacency = torch.eye(6, device=device, dtype=torch.bool)[None, :, :]
+    line_positions = torch.arange(5, device=device)
+    line_adjacency[:, line_positions, line_positions + 1] = True
+    line_adjacency[:, line_positions + 1, line_positions] = True
     parent_assignment = torch.tensor([[0, 0, 0, 0, 1, 1]], device=device)
     child_assignment = split_assignment_by_balanced_centers(
-        distances=line_distances,
+        adjacency=line_adjacency,
         parent_assignments=(parent_assignment,),
         parent_counts=(2,),
     )
     assert child_assignment.tolist() == [[0, 0, 1, 1, 0, 1]]
     grandchild_assignment = split_assignment_by_balanced_centers(
-        distances=line_distances,
+        adjacency=line_adjacency,
         parent_assignments=(parent_assignment, child_assignment),
         parent_counts=(2, 2),
     )
     assert grandchild_assignment.tolist() == [[0, 1, 0, 1, 0, 0]]
+
+    shortcut_adjacency = torch.eye(5, device=device, dtype=torch.bool)[None, :, :]
+    shortcut_edges = torch.tensor(
+        [
+            [0, 1],
+            [1, 3],
+            [2, 3],
+            [0, 4],
+            [2, 4],
+        ],
+        device=device,
+    )
+    shortcut_adjacency[:, shortcut_edges[:, 0], shortcut_edges[:, 1]] = True
+    shortcut_adjacency[:, shortcut_edges[:, 1], shortcut_edges[:, 0]] = True
+    shortcut_parent_assignment = torch.tensor([[0, 0, 0, 0, 1]], device=device)
+    shortcut_child_assignment = split_assignment_by_balanced_centers(
+        adjacency=shortcut_adjacency,
+        parent_assignments=(shortcut_parent_assignment,),
+        parent_counts=(2,),
+    )
+    assert shortcut_child_assignment.tolist() == [[0, 0, 1, 1, 0]]
 
     room_idx = torch.tensor([[0, 1, 2, 3, 4, 5, 6, 7]], device=device)
     valid_area = torch.tensor([[0, 1, 2, 5, 3, 5, 2, 4]], device=device)
