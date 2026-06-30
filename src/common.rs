@@ -53,6 +53,8 @@ enum SpecialType {
 
 #[derive(Clone, Debug, Deserialize)]
 struct Door {
+    #[serde(rename = "id")]
+    _id: u8,
     direction: Direction,
     x: Coord,
     y: Coord,
@@ -991,8 +993,8 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [[
-                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                        {"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
                     "missing_connections": []
@@ -1001,8 +1003,8 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [[
-                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                        {"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
                     "missing_connections": []
@@ -1011,8 +1013,8 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [[
-                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                        {"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [[0, 0]],
                     "missing_connections": []
@@ -1022,8 +1024,8 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [[
-                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                        {"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
                     "missing_connections": []
@@ -1033,8 +1035,8 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [[
-                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                        {"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
                     "missing_connections": []
@@ -1169,8 +1171,8 @@ mod tests {
                     "toilet_crossing_x": [],
                     "special_type": "toilet",
                     "doors": [[
-                        {"direction": "down", "x": 0, "y": 9, "kind": 0},
-                        {"direction": "up", "x": 0, "y": 0, "kind": 0}
+                        {"id": 0, "direction": "down", "x": 0, "y": 9, "kind": 0},
+                        {"id": 0, "direction": "up", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
                     "missing_connections": []
@@ -1240,7 +1242,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_boss",
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 },
@@ -1248,7 +1250,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_boss",
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 }
@@ -1265,7 +1267,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_map",
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 },
@@ -1273,7 +1275,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_map",
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 }
@@ -1293,7 +1295,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_boss",
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 },
@@ -1301,14 +1303,14 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_map",
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 },
                 {
                     "map": [[1]],
                     "toilet_crossing_x": [],
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 }
@@ -1333,14 +1335,14 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "map_station": true,
-                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 },
                 {
                     "map": [[1]],
                     "toilet_crossing_x": [],
-                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 }
@@ -1352,7 +1354,10 @@ mod tests {
 
         assert_eq!(common.geometry.len(), 1);
         assert_eq!(common.connection_variant_rooms.len(), 1);
-        assert_eq!(common.room[0].connection_variant_idx, common.room[1].connection_variant_idx);
+        assert_eq!(
+            common.room[0].connection_variant_idx,
+            common.room[1].connection_variant_idx
+        );
     }
 
     #[test]
@@ -1368,9 +1373,9 @@ mod tests {
                     ],
                     "toilet_crossing_x": [],
                     "doors": [[
-                        {"direction": "left", "x": 0, "y": 2, "kind": 0},
-                        {"direction": "right", "x": 7, "y": 2, "kind": 0},
-                        {"direction": "up", "x": 4, "y": 0, "kind": 1}
+                        {"id": 0, "direction": "left", "x": 0, "y": 2, "kind": 0},
+                        {"id": 0, "direction": "right", "x": 7, "y": 2, "kind": 0},
+                        {"id": 0, "direction": "up", "x": 4, "y": 0, "kind": 1}
                     ]],
                     "connections": [],
                     "missing_connections": []
@@ -1380,8 +1385,8 @@ mod tests {
                     "toilet_crossing_x": [],
                     "special_type": "toilet",
                     "doors": [[
-                        {"direction": "down", "x": 0, "y": 9, "kind": 0},
-                        {"direction": "up", "x": 0, "y": 0, "kind": 0}
+                        {"id": 0, "direction": "down", "x": 0, "y": 9, "kind": 0},
+                        {"id": 0, "direction": "up", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
                     "missing_connections": []

@@ -24,7 +24,7 @@ def room(
     room_data = {
         "name": name,
         "map": [[1]],
-        "doors": [[{"direction": direction, "x": 0, "y": 0, "kind": 0}]],
+        "doors": [[{"id": 0, "direction": direction, "x": 0, "y": 0, "kind": 0}]],
         "connections": [],
         "missing_connections": [],
         "toilet_crossing_x": [],
@@ -44,7 +44,7 @@ def nonslot_room(name: str) -> dict:
     return {
         "name": name,
         "map": [[1, 1]],
-        "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+        "doors": [[{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]],
         "connections": [],
         "missing_connections": [],
         "toilet_crossing_x": [],

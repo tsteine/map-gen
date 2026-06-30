@@ -5458,7 +5458,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -5467,7 +5467,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -5589,8 +5589,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1], [1, 0]],
                 "missing_connections": []
@@ -5599,8 +5599,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1], [1, 0]],
                 "missing_connections": []
@@ -5646,8 +5646,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1], [1, 0]],
                 "missing_connections": []
@@ -5724,8 +5724,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1], [1, 0]],
                 "missing_connections": []
@@ -5734,8 +5734,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1], [1, 0]],
                 "missing_connections": []
@@ -6008,8 +6008,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -6018,7 +6018,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -6081,7 +6081,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [
-                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                        [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                     ],
                     "connections": [],
                     "missing_connections": []
@@ -6091,7 +6091,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [
-                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                        [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                     ],
                     "connections": [],
                     "missing_connections": []
@@ -6155,7 +6155,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -6210,8 +6210,8 @@ mod tests {
                 "map": [[1, 0, 1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "left", "x": 2, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "left", "x": 2, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": [[0, 1], [1, 0]]
@@ -6265,8 +6265,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -6275,8 +6275,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -6285,7 +6285,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -6358,7 +6358,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -6369,8 +6369,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -6417,7 +6417,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -6426,7 +6426,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -6435,8 +6435,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -6494,8 +6494,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -6504,8 +6504,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -6514,7 +6514,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -6565,7 +6565,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [
-                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                        [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                     ],
                     "connections": [],
                     "missing_connections": []
@@ -6574,8 +6574,8 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [
-                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                        [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                        [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                     ],
                     "connections": [[0, 1], [1, 0]],
                     "missing_connections": []
@@ -6585,7 +6585,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [
-                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                        [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                     ],
                     "connections": [],
                     "missing_connections": []
@@ -6637,7 +6637,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [
-                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                        [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                     ],
                     "connections": [],
                     "missing_connections": []
@@ -6646,8 +6646,8 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [
-                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-                        [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                        [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+                        [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                     ],
                     "connections": [[0, 1]],
                     "missing_connections": [[1, 0]]
@@ -6657,7 +6657,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [
-                        [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                        [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                     ],
                     "connections": [],
                     "missing_connections": []
@@ -6759,9 +6759,9 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": [[0, 1], [1, 2], [2, 0]]
@@ -6794,9 +6794,9 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": [[0, 1], [1, 2], [2, 0]]
@@ -7391,7 +7391,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7400,7 +7400,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7409,7 +7409,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7418,7 +7418,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7489,8 +7489,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1], [1, 0]],
                 "missing_connections": []
@@ -7522,8 +7522,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -7577,9 +7577,9 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": [[0, 1], [1, 2], [2, 0]]
@@ -7608,8 +7608,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -7618,7 +7618,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7666,8 +7666,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -7676,7 +7676,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7685,7 +7685,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "up", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "up", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7720,8 +7720,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -7730,7 +7730,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7789,9 +7789,9 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": [[0, 1], [1, 2], [2, 0]]
@@ -7800,7 +7800,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7898,14 +7898,14 @@ mod tests {
                 {
                     "map": [[1]],
                     "toilet_crossing_x": [],
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 },
                 {
                     "map": [[1]],
                     "toilet_crossing_x": [],
-                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 }
@@ -7965,7 +7965,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -7974,7 +7974,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -8045,9 +8045,9 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": [[0, 1], [1, 2], [2, 0]]
@@ -8056,7 +8056,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -8099,9 +8099,9 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": [[0, 1], [1, 2], [2, 0]]
@@ -8110,7 +8110,7 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [],
                 "missing_connections": []
@@ -8213,8 +8213,8 @@ mod tests {
                 "map": [[1]],
                 "toilet_crossing_x": [],
                 "doors": [
-                    [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-                    [{"direction": "down", "x": 0, "y": 0, "kind": 0}]
+                    [{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+                    [{"id": 0, "direction": "down", "x": 0, "y": 0, "kind": 0}]
                 ],
                 "connections": [[0, 1]],
                 "missing_connections": [[1, 0]]
@@ -8454,8 +8454,8 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [[
-                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                        {"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
                     "missing_connections": []
@@ -8464,8 +8464,8 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "doors": [[
-                        {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                        {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                        {"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                        {"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}
                     ]],
                     "connections": [],
                     "missing_connections": []
@@ -8474,7 +8474,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_boss",
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 },
@@ -8482,7 +8482,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_map",
-                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 }
@@ -8500,7 +8500,7 @@ mod tests {
                 {
                     "map": [[1]],
                     "toilet_crossing_x": [],
-                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 },
@@ -8508,7 +8508,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_boss",
-                    "doors": [[{"direction": "right", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "right", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 },
@@ -8516,7 +8516,7 @@ mod tests {
                     "map": [[1]],
                     "toilet_crossing_x": [],
                     "special_type": "phantoon_map",
-                    "doors": [[{"direction": "left", "x": 0, "y": 0, "kind": 0}]],
+                    "doors": [[{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]],
                     "connections": [],
                     "missing_connections": []
                 }

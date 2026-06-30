@@ -99,7 +99,7 @@ class ModelExport:
 
 class DoorLookup(NamedTuple):
     room_idx: list[int]
-    door_idx: list[int]
+    door_id: list[int]
 
 
 @dataclass
@@ -368,17 +368,17 @@ def flat_doors(room: dict) -> list[dict]:
 
 def build_door_lookups(rooms: list[dict]) -> DoorLookups:
     door_rooms = {direction: [] for direction in DIRECTIONS}
-    door_indices = {direction: [] for direction in DIRECTIONS}
+    door_ids = {direction: [] for direction in DIRECTIONS}
     for room_idx, room in enumerate(rooms):
-        for door_idx, door in enumerate(flat_doors(room)):
+        for door in flat_doors(room):
             direction = door["direction"]
             door_rooms[direction].append(room_idx)
-            door_indices[direction].append(door_idx)
+            door_ids[direction].append(int(door["id"]))
     return DoorLookups(
-        left=DoorLookup(room_idx=door_rooms["left"], door_idx=door_indices["left"]),
-        right=DoorLookup(room_idx=door_rooms["right"], door_idx=door_indices["right"]),
-        up=DoorLookup(room_idx=door_rooms["up"], door_idx=door_indices["up"]),
-        down=DoorLookup(room_idx=door_rooms["down"], door_idx=door_indices["down"]),
+        left=DoorLookup(room_idx=door_rooms["left"], door_id=door_ids["left"]),
+        right=DoorLookup(room_idx=door_rooms["right"], door_id=door_ids["right"]),
+        up=DoorLookup(room_idx=door_rooms["up"], door_id=door_ids["up"]),
+        down=DoorLookup(room_idx=door_rooms["down"], door_id=door_ids["down"]),
     )
 
 
@@ -436,9 +436,9 @@ def append_edge(
         return
     seen_edges.add(edge)
     edges["from_room_placement_idx"].append(from_endpoint[0])
-    edges["from_door_idx"].append(from_endpoint[1])
+    edges["from_door_id"].append(from_endpoint[1])
     edges["to_room_placement_idx"].append(to_endpoint[0])
-    edges["to_door_idx"].append(to_endpoint[1])
+    edges["to_door_id"].append(to_endpoint[1])
 
 
 def collect_response_direction_edges(
@@ -461,8 +461,8 @@ def collect_response_direction_edges(
         append_edge(
             edges,
             seen_edges,
-            (source_room_position, source_lookup.door_idx[source_direction_door_idx]),
-            (target_room_position, target_lookup.door_idx[target_direction_door_idx]),
+            (source_room_position, source_lookup.door_id[source_direction_door_idx]),
+            (target_room_position, target_lookup.door_id[target_direction_door_idx]),
         )
 
 
@@ -473,9 +473,9 @@ def response_edges(
 ) -> dict[str, list[list[int]]]:
     edge_lists = {
         "from_room_placement_idx": [],
-        "from_door_idx": [],
+        "from_door_id": [],
         "to_room_placement_idx": [],
-        "to_door_idx": [],
+        "to_door_id": [],
     }
     direction_matches = {
         "left": tensor_to_list(door_matches.left),

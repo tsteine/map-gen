@@ -25,14 +25,14 @@
   "optimizer": {
     "type": "muon",
     "muon": {
-      "lr": {"log": [0.0005, 0.0005, 0.0002, 0.00005, 0.00002]},
+      "lr": {"log": [0.0005, 0.0005, 0.0002, 0.00005, 0.00005]},
       "momentum": 0.95,
       "nesterov": true,
       "backend": "newtonschulz5",
       "backend_steps": 5
     },
     "adam": {
-      "lr": {"log": [0.001, 0.001, 0.0005, 0.0001, 0.00005]},
+      "lr": {"log": [0.001, 0.001, 0.0005, 0.0001, 0.0001]},
       "beta1": 0.95,
       "beta2": 0.99
     }
@@ -43,7 +43,7 @@
   },
   "balance_optimizer": {
     "type": "adam",
-    "lr": {"log": [0.001, 0.001, 0.0005, 0.0001, 0.00005]},
+    "lr": {"log": [0.001, 0.001, 0.0005, 0.0001, 0.0001]},
     "beta1": 0.95,
     "beta2": 0.99
   },
@@ -56,7 +56,7 @@
     "recommended_candidates": 4,
     "shortlist_candidates": 16,
     "temperature": {"log": [10.0, 2.0, 0.03, 0.03, 0.03]},
-    "proposal_temperature": 0.3,
+    "proposal_temperature": 0.4,
     "reward_door": 1.0,
     "reward_connection": 1.0,
     "reward_toilet": 1.0,

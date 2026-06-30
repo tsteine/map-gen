@@ -8,11 +8,11 @@ from serve import (
 )
 
 
-def room(name: str, direction: str) -> dict:
+def room(name: str, direction: str, door_id: int) -> dict:
     return {
         "name": name,
         "map": [[1]],
-        "doors": [[{"direction": direction, "x": 0, "y": 0, "kind": 0}]],
+        "doors": [[{"id": door_id, "direction": direction, "x": 0, "y": 0, "kind": 0}]],
         "connections": [],
         "missing_connections": [],
         "toilet_crossing_x": [],
@@ -21,8 +21,8 @@ def room(name: str, direction: str) -> dict:
 
 def main() -> None:
     rooms = [
-        room("Right Door", "right"),
-        room("Left Door", "left"),
+        room("Right Door", "right", 7),
+        room("Left Door", "left", 3),
     ]
     door_lookups = build_door_lookups(rooms)
     door_matches = DoorMatches(
@@ -35,9 +35,9 @@ def main() -> None:
 
     assert edges == {
         "from_room_placement_idx": [[0]],
-        "from_door_idx": [[0]],
+        "from_door_id": [[7]],
         "to_room_placement_idx": [[1]],
-        "to_door_idx": [[0]],
+        "to_door_id": [[3]],
     }
 
     toilet_crossing_room_placement_idx = response_toilet_crossing_room_placement_idx(
