@@ -8,8 +8,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -30,10 +30,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 4, "kind": 0},
-                {"direction": "right", "x": 8, "y": 1, "kind": 0},
-                {"direction": "right", "x": 8, "y": 4, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 4, "kind": 0},
+                {"id": 3, "direction": "right", "x": 8, "y": 1, "kind": 0},
+                {"id": 4, "direction": "right", "x": 8, "y": 4, "kind": 0}
             ]
         ],
         "connections": [],
@@ -48,8 +48,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -68,13 +68,13 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 1, "y": 2, "kind": 0},
-                {"direction": "left",  "x": 1, "y": 3, "kind": 0},
-                {"direction": "right", "x": 4, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 2, "kind": 0},
-                {"direction": "right", "x": 1, "y": 3, "kind": 0},
-                {"direction": "down",  "x": 1, "y": 4, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 1, "y": 2, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 1, "y": 3, "kind": 0},
+                {"id": 4, "direction": "right", "x": 4, "y": 0, "kind": 0},
+                {"id": 5, "direction": "right", "x": 3, "y": 2, "kind": 0},
+                {"id": 6, "direction": "right", "x": 1, "y": 3, "kind": 0},
+                {"id": 7, "direction": "down",  "x": 1, "y": 4, "kind": 0}
             ]
         ],
         "connections": [],
@@ -97,11 +97,11 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 8, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 7, "kind": 0},
-                {"direction": "right", "x": 1, "y": 8, "kind": 0},
-                {"direction": "up",    "x": 1, "y": 0, "kind": 0}
+                {"id": 2, "direction": "left",  "x": 0, "y": 8, "kind": 0},
+                {"id": 3, "direction": "right", "x": 2, "y": 0, "kind": 0},
+                {"id": 4, "direction": "right", "x": 2, "y": 7, "kind": 0},
+                {"id": 5, "direction": "right", "x": 1, "y": 8, "kind": 0},
+                {"id": 1, "direction": "up",    "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -117,8 +117,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -133,8 +133,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -149,8 +149,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -165,7 +165,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -179,7 +179,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -192,7 +192,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -206,8 +206,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -221,7 +221,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -237,8 +237,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 5, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 2, "direction": "right", "x": 5, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -259,12 +259,12 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ],
             [
-                {"direction": "left",  "x": 0, "y": 6, "kind": 0},
-                {"direction": "right", "x": 0, "y": 4, "kind": 0},
-                {"direction": "right", "x": 0, "y": 6, "kind": 0}
+                {"id": 3, "direction": "left",  "x": 0, "y": 6, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 4, "kind": 0},
+                {"id": 4, "direction": "right", "x": 0, "y": 6, "kind": 0}
             ]
         ],
         "connections": [
@@ -281,8 +281,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -300,8 +300,8 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 3, "kind": 1}
+                {"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down",  "x": 0, "y": 3, "kind": 1}
             ]
         ],
         "connections": [],
@@ -318,9 +318,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 1, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0},
+                {"id": 3, "direction": "down",  "x": 1, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -335,8 +335,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 4, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 4, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -354,8 +354,8 @@
         ],
         "doors": [
             [
-                {"direction": "up",   "x": 0, "y": 0, "kind": 0},
-                {"direction": "down", "x": 0, "y": 3, "kind": 1}
+                {"id": 1, "direction": "up",   "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down", "x": 0, "y": 3, "kind": 1}
             ]
         ],
         "connections": [],
@@ -373,8 +373,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "down", "x": 0, "y": 3, "kind": 1}
+                {"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down", "x": 0, "y": 3, "kind": 1}
             ]
         ],
         "connections": [],
@@ -393,8 +393,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "down", "x": 0, "y": 4, "kind": 1}
+                {"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down", "x": 0, "y": 4, "kind": 1}
             ]
         ],
         "connections": [],
@@ -408,7 +408,7 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -428,8 +428,8 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "left", "x": 0, "y": 7, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "left", "x": 0, "y": 7, "kind": 0}]
         ],
         "connections": [
             [1, 0]
@@ -445,8 +445,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 4, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 4, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -461,8 +461,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 5, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 5, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -482,18 +482,18 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 4, "kind": 0},
-                {"direction": "right", "x": 5, "y": 3, "kind": 0},
-                {"direction": "right", "x": 7, "y": 4, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 4, "kind": 0},
+                {"id": 4, "direction": "right", "x": 5, "y": 3, "kind": 0},
+                {"id": 5, "direction": "right", "x": 7, "y": 4, "kind": 0}
             ],
             [
-                {"direction": "right", "x": 7, "y": 0, "kind": 0},
-                {"direction": "right", "x": 7, "y": 1, "kind": 0},
-                {"direction": "right", "x": 2, "y": 2, "kind": 0}
+                {"id": 2, "direction": "right", "x": 7, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 7, "y": 1, "kind": 0},
+                {"id": 6, "direction": "right", "x": 2, "y": 2, "kind": 0}
             ],
             [
-                {"direction": "left",  "x": 5, "y": 2, "kind": 0},
-                {"direction": "right", "x": 5, "y": 2, "kind": 0}
+                {"id": 7, "direction": "left",  "x": 5, "y": 2, "kind": 0},
+                {"id": 8, "direction": "right", "x": 5, "y": 2, "kind": 0}
             ]
         ],
         "connections": [
@@ -510,8 +510,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -531,8 +531,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 4, "kind": 0},
-                {"direction": "right", "x": 6, "y": 4, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 4, "kind": 0},
+                {"id": 2, "direction": "right", "x": 6, "y": 4, "kind": 0}
             ]
         ],
         "connections": [],
@@ -550,8 +550,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "down", "x": 0, "y": 3, "kind": 0}
+                {"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down", "x": 0, "y": 3, "kind": 0}
             ]
         ],
         "connections": [],
@@ -567,8 +567,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 1, "kind": 0},
-                {"direction": "up",   "x": 3, "y": 0, "kind": 0}
+                {"id": 2, "direction": "left", "x": 0, "y": 1, "kind": 0},
+                {"id": 1, "direction": "up",   "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -586,8 +586,8 @@
         ],
         "doors": [
             [
-                {"direction": "up",   "x": 0, "y": 0, "kind": 0},
-                {"direction": "down", "x": 0, "y": 3, "kind": 1}
+                {"id": 1, "direction": "up",   "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down", "x": 0, "y": 3, "kind": 1}
             ]
         ],
         "connections": [],
@@ -602,8 +602,8 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down",  "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -627,11 +627,11 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 4, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 6, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 9, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 9, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 4, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 6, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 0, "y": 9, "kind": 0},
+                {"id": 5, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 4, "direction": "right", "x": 0, "y": 9, "kind": 0}
             ]
         ],
         "connections": [],
@@ -647,8 +647,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 7, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 7, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -662,7 +662,7 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "right", "x": 1, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 1, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -676,8 +676,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -693,9 +693,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "right", "x": 1, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -709,7 +709,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -723,8 +723,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -746,14 +746,14 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 5, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 7, "kind": 0},
-                {"direction": "right", "x": 0, "y": 4, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 1}
+                {"id": 1, "direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 5, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 0, "y": 7, "kind": 0},
+                {"id": 4, "direction": "right", "x": 0, "y": 4, "kind": 0},
+                {"id": 6, "direction": "up",    "x": 0, "y": 0, "kind": 1}
             ],
             [
-                {"direction": "right", "x": 2, "y": 3, "kind": 0}
+                {"id": 5, "direction": "right", "x": 2, "y": 3, "kind": 0}
             ]
         ],
         "connections": [
@@ -769,7 +769,7 @@
             [1, 1, 1]
         ],
         "doors": [
-            [{"direction": "right", "x": 2, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 2, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -783,7 +783,7 @@
             [1, 0]
         ],
         "doors": [
-            [{"direction": "right", "x": 1, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 1, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -797,7 +797,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -811,7 +811,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -827,9 +827,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 7, "y": 2, "kind": 0},
-                {"direction": "up",    "x": 5, "y": 0, "kind": 1}
+                {"id": 1, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 3, "direction": "right", "x": 7, "y": 2, "kind": 0},
+                {"id": 2, "direction": "up",    "x": 5, "y": 0, "kind": 1}
             ]
         ],
         "connections": [],
@@ -845,9 +845,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -861,7 +861,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -877,8 +877,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 2, "y": 0, "kind": 0},
-                {"direction": "left", "x": 0, "y": 2, "kind": 0}
+                {"id": 2, "direction": "left", "x": 2, "y": 0, "kind": 0},
+                {"id": 1, "direction": "left", "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -893,8 +893,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -908,7 +908,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -933,16 +933,14 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y":  4, "kind": 0},
-                {"direction": "left",  "x": 0, "y":  5, "kind": 0},
-                {"direction": "left",  "x": 0, "y":  6, "kind": 0},
-                {"direction": "left",  "x": 1, "y":  7, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 10, "kind": 0},
-                {"direction": "left",  "x": 2, "y": 11, "kind": 0},
-                {"direction": "right", "x": 0, "y":  4, "kind": 0},
-                {"direction": "right", "x": 0, "y":  6, "kind": 0},
-                {"direction": "right", "x": 0, "y":  7, "kind": 0},
-                {"direction": "up",    "x": 0, "y":  0, "kind": 1}
+                {"id": 2, "direction": "left",  "x": 0, "y":  4, "kind": 0},
+                {"id": 4, "direction": "left",  "x": 0, "y":  5, "kind": 0},
+                {"id": 5, "direction": "left",  "x": 0, "y":  6, "kind": 0},
+                {"id": 8, "direction": "left",  "x": 0, "y": 10, "kind": 0},
+                {"id": 10, "direction": "left",  "x": 2, "y": 11, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y":  4, "kind": 0},
+                {"id": 6, "direction": "right", "x": 0, "y":  6, "kind": 0},
+                {"id": 1, "direction": "up",    "x": 0, "y":  0, "kind": 1}
             ]
         ],
         "connections": [],
@@ -958,8 +956,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 2, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -973,7 +971,7 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -987,8 +985,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1003,7 +1001,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1018,8 +1016,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1034,7 +1032,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1048,7 +1046,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1062,7 +1060,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1076,8 +1074,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1093,12 +1091,12 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ],
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 4, "y": 1, "kind": 0}
+                {"id": 3, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 4, "direction": "right", "x": 4, "y": 1, "kind": 0}
             ]
         ],
         "connections": [
@@ -1114,7 +1112,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1131,9 +1129,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0},
-                {"direction": "right", "x": 7, "y": 3, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 7, "y": 3, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1148,8 +1146,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 5, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 5, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1164,8 +1162,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "up",   "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "up",   "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1181,8 +1179,8 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "down",  "x": 0, "y": 2, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "down",  "x": 0, "y": 2, "kind": 0}]
         ],
         "connections": [
             [1, 0]
@@ -1204,9 +1202,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 6, "kind": 0},
-                {"direction": "right", "x": 6, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 6, "kind": 0},
+                {"id": 3, "direction": "right", "x": 6, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1221,7 +1219,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1244,19 +1242,19 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 1, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 2, "y": 2, "kind": 0},
-                {"direction": "left",  "x": 2, "y": 3, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 9, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 4, "kind": 0},
-                {"direction": "right", "x": 3, "y": 6, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 1, "y": 0, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 2, "y": 2, "kind": 0},
+                {"id": 4, "direction": "left",  "x": 2, "y": 3, "kind": 0},
+                {"id": 9, "direction": "left",  "x": 0, "y": 9, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0},
+                {"id": 6, "direction": "right", "x": 3, "y": 4, "kind": 0},
+                {"id": 8, "direction": "right", "x": 3, "y": 6, "kind": 0}
             ],
             [
-                {"direction": "left", "x": 2, "y": 4, "kind": 0}
+                {"id": 5, "direction": "left", "x": 2, "y": 4, "kind": 0}
             ],
             [
-                {"direction": "right", "x": 4, "y": 5, "kind": 0}
+                {"id": 7, "direction": "right", "x": 4, "y": 5, "kind": 0}
             ]
         ],
         "connections": [
@@ -1274,7 +1272,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1288,8 +1286,8 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "right", "x": 1, "y": 0, "kind": 0}],
-            [{"direction": "right", "x": 1, "y": 1, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 1, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 1, "y": 1, "kind": 0}]
         ],
         "connections": [
             [0, 1]
@@ -1306,8 +1304,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 1, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1321,7 +1319,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1342,8 +1340,8 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "left", "x": 0, "y": 8, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "left", "x": 0, "y": 8, "kind": 0}]
         ],
         "connections": [
             [0, 1]
@@ -1359,8 +1357,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1374,7 +1372,7 @@
             [1, 1, 1, 1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "right", "x": 6, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 6, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1389,9 +1387,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 1, "kind": 1}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 2, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down",  "x": 0, "y": 1, "kind": 1}
             ]
         ],
         "connections": [],
@@ -1407,9 +1405,9 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "left", "x": 0, "y": 1, "kind": 0},
-                {"direction": "up",   "x": 1, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left", "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "up",   "x": 1, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1423,7 +1421,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1438,9 +1436,9 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 3, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 1, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 0, "kind": 0}
+                {"id": 3, "direction": "right", "x": 3, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 1, "kind": 0},
+                {"id": 1, "direction": "down",  "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1455,7 +1453,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1469,8 +1467,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 5, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 5, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1486,9 +1484,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 1, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1503,7 +1501,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1518,8 +1516,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 1, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1533,7 +1531,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1547,8 +1545,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1564,11 +1562,11 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 1, "kind": 0}
             ],
             [
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 3, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [
@@ -1587,10 +1585,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 2, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 2, "kind": 0},
+                {"id": 4, "direction": "up",    "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1605,7 +1603,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1626,13 +1624,13 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 1, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 6, "kind": 0},
-                {"direction": "right", "x": 1, "y": 7, "kind": 0},
-                {"direction": "down",  "x": 1, "y": 7, "kind": 0}
+                {"id": 4, "direction": "right", "x": 1, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 2, "y": 6, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 7, "kind": 0},
+                {"id": 1, "direction": "down",  "x": 1, "y": 7, "kind": 0}
             ],
             [
-                {"direction": "right", "x": 2, "y": 2, "kind": 0}
+                {"id": 5, "direction": "right", "x": 2, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1649,10 +1647,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 3, "y": 2, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 0},
-                {"direction": "up",    "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 2, "kind": 0},
+                {"id": 4, "direction": "up",    "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "up",    "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1670,12 +1668,12 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 1, "y": 2, "kind": 0},
-                {"direction": "right", "x": 5, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 1, "y": 3, "kind": 0},
-                {"direction": "down",  "x": 4, "y": 3, "kind": 0},
-                {"direction": "up",    "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 6, "direction": "left",  "x": 1, "y": 2, "kind": 0},
+                {"id": 4, "direction": "right", "x": 5, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down",  "x": 1, "y": 3, "kind": 0},
+                {"id": 3, "direction": "down",  "x": 4, "y": 3, "kind": 0},
+                {"id": 5, "direction": "up",    "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1693,9 +1691,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 1, "y": 3, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 3, "kind": 0},
+                {"id": 3, "direction": "up",    "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1709,8 +1707,8 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "right", "x": 3, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}]
         ],
         "connections": [
             [0, 1]
@@ -1727,8 +1725,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "down", "x": 2, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down", "x": 2, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1745,7 +1743,7 @@
             [1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 3, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 3, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1761,8 +1759,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 1, "kind": 0},
-                {"direction": "down", "x": 0, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left", "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "down", "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1778,8 +1776,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1795,7 +1793,7 @@
             [1, 0]
         ],
         "doors": [
-            [{"direction": "right", "x": 1, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 1, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1809,7 +1807,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1825,16 +1823,16 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 5, "y": 1, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 5, "direction": "right", "x": 5, "y": 1, "kind": 0},
+                {"id": 6, "direction": "up",    "x": 0, "y": 0, "kind": 0}
             ],
             [
-                {"direction": "down", "x": 1, "y": 2, "kind": 2}
+                {"id": 3, "direction": "down", "x": 1, "y": 2, "kind": 2}
             ],
             [
-                {"direction": "down", "x": 3, "y": 2, "kind": 2}
+                {"id": 4, "direction": "down", "x": 3, "y": 2, "kind": 2}
             ]
         ],
         "connections": [
@@ -1861,8 +1859,8 @@
         ],
         "doors": [
             [
-                {"direction": "down", "x": 0, "y": 9, "kind": 0},
-                {"direction": "up",   "x": 0, "y": 0, "kind": 0}
+                {"id": 2, "direction": "down", "x": 0, "y": 9, "kind": 0},
+                {"id": 1, "direction": "up",   "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1878,8 +1876,8 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 3, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 0, "kind": 0}
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0},
+                {"id": 1, "direction": "down",  "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1893,8 +1891,8 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "right", "x": 1, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}]
         ],
         "connections": [
             [0, 1]
@@ -1910,14 +1908,14 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 6, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 4, "direction": "right", "x": 6, "y": 0, "kind": 0}
             ],
             [
-                {"direction": "down", "x": 2, "y": 0, "kind": 2}
+                {"id": 2, "direction": "down", "x": 2, "y": 0, "kind": 2}
             ],
             [
-                {"direction": "down", "x": 3, "y": 0, "kind": 2}
+                {"id": 3, "direction": "down", "x": 3, "y": 0, "kind": 2}
             ]
         ],
         "connections": [
@@ -1937,10 +1935,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 4, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 4, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 4, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1955,7 +1953,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -1970,9 +1968,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 6, "y": 0, "kind": 0},
-                {"direction": "right", "x": 6, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 6, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 6, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -1988,8 +1986,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2004,7 +2002,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -2020,8 +2018,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "left", "x": 0, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left", "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2037,8 +2035,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2052,7 +2050,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -2067,8 +2065,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2084,8 +2082,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 4, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 4, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2105,10 +2103,10 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 2, "y": 1, "kind": 0},
-                {"direction": "right", "x": 3, "y": 3, "kind": 0},
-                {"direction": "right", "x": 3, "y": 5, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 2, "kind": 0}
+                {"id": 4, "direction": "right", "x": 2, "y": 1, "kind": 0},
+                {"id": 3, "direction": "right", "x": 3, "y": 3, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 5, "kind": 0},
+                {"id": 1, "direction": "down",  "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2124,9 +2122,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "up",    "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2141,11 +2139,11 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ],
             [
-                {"direction": "up", "x": 2, "y": 0, "kind": 2}
+                {"id": 3, "direction": "up", "x": 2, "y": 0, "kind": 2}
             ]
         ],
         "connections": [
@@ -2162,8 +2160,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2178,7 +2176,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -2191,10 +2189,10 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "down", "x": 0, "y": 0, "kind": 2}],
-            [{"direction": "down", "x": 1, "y": 0, "kind": 2}],
-            [{"direction": "up",   "x": 0, "y": 0, "kind": 2}],
-            [{"direction": "up",   "x": 1, "y": 0, "kind": 2}]
+            [{"id": 2, "direction": "down", "x": 0, "y": 0, "kind": 2}],
+            [{"id": 4, "direction": "down", "x": 1, "y": 0, "kind": 2}],
+            [{"id": 1, "direction": "up",   "x": 0, "y": 0, "kind": 2}],
+            [{"id": 3, "direction": "up",   "x": 1, "y": 0, "kind": 2}]
         ],
         "connections": [
             [2, 0],
@@ -2210,9 +2208,9 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "up",   "x": 2, "y": 0, "kind": 2}],
-            [{"direction": "up",   "x": 3, "y": 0, "kind": 2}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "up",   "x": 2, "y": 0, "kind": 2}],
+            [{"id": 3, "direction": "up",   "x": 3, "y": 0, "kind": 2}]
         ],
         "connections": [
             [1, 0],
@@ -2229,8 +2227,8 @@
             [1]
         ],
         "doors": [
-            [{"direction": "down", "x": 0, "y": 1, "kind": 2}],
-            [{"direction": "up",   "x": 0, "y": 0, "kind": 2}]
+            [{"id": 2, "direction": "down", "x": 0, "y": 1, "kind": 2}],
+            [{"id": 1, "direction": "up",   "x": 0, "y": 0, "kind": 2}]
         ],
         "connections": [
             [1, 0]
@@ -2246,8 +2244,8 @@
             [1]
         ],
         "doors": [
-            [{"direction": "down", "x": 0, "y": 1, "kind": 2}],
-            [{"direction": "up",   "x": 0, "y": 0, "kind": 2}]
+            [{"id": 2, "direction": "down", "x": 0, "y": 1, "kind": 2}],
+            [{"id": 1, "direction": "up",   "x": 0, "y": 0, "kind": 2}]
         ],
         "connections": [
             [1, 0]
@@ -2263,8 +2261,8 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "down", "x": 1, "y": 1, "kind": 2}],
-            [{"direction": "up",   "x": 0, "y": 0, "kind": 2}]
+            [{"id": 2, "direction": "down", "x": 1, "y": 1, "kind": 2}],
+            [{"id": 1, "direction": "up",   "x": 0, "y": 0, "kind": 2}]
         ],
         "connections": [
             [1, 0]
@@ -2280,8 +2278,8 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "down", "x": 0, "y": 1, "kind": 2}],
-            [{"direction": "up",   "x": 1, "y": 0, "kind": 2}]
+            [{"id": 2, "direction": "down", "x": 0, "y": 1, "kind": 2}],
+            [{"id": 1, "direction": "up",   "x": 1, "y": 0, "kind": 2}]
         ],
         "connections": [
             [1, 0]
@@ -2297,11 +2295,11 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ],
             [
-                {"direction": "up", "x": 1, "y": 0, "kind": 2}
+                {"id": 3, "direction": "up", "x": 1, "y": 0, "kind": 2}
             ]
         ],
         "connections": [
@@ -2318,11 +2316,11 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ],
             [
-                {"direction": "down", "x": 0, "y": 0, "kind": 2}
+                {"id": 2, "direction": "down", "x": 0, "y": 0, "kind": 2}
             ]
         ],
         "connections": [
@@ -2338,8 +2336,8 @@
             [1]
         ],
         "doors": [
-            [{"direction": "down", "x": 0, "y": 0, "kind": 2}],
-            [{"direction": "up",   "x": 0, "y": 0, "kind": 2}]
+            [{"id": 2, "direction": "down", "x": 0, "y": 0, "kind": 2}],
+            [{"id": 1, "direction": "up",   "x": 0, "y": 0, "kind": 2}]
         ],
         "connections": [
             [1, 0]
@@ -2355,11 +2353,11 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ],
             [
-                {"direction": "up", "x": 0, "y": 0, "kind": 2}
+                {"id": 3, "direction": "up", "x": 0, "y": 0, "kind": 2}
             ]
         ],
         "connections": [
@@ -2376,8 +2374,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 6, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 6, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2397,9 +2395,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 5, "kind": 0},
-                {"direction": "right", "x": 0, "y": 4, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 1}
+                {"id": 1, "direction": "left",  "x": 0, "y": 5, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 4, "kind": 0},
+                {"id": 3, "direction": "up",    "x": 0, "y": 0, "kind": 1}
             ]
         ],
         "connections": [],
@@ -2414,7 +2412,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -2431,8 +2429,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2447,8 +2445,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2464,7 +2462,7 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -2481,10 +2479,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
-                {"direction": "left",  "x": 1, "y": 3, "kind": 0},
-                {"direction": "right", "x": 0, "y": 3, "kind": 0},
-                {"direction": "right", "x": 1, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2499,8 +2495,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2515,7 +2511,7 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -2530,10 +2526,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 4, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2550,9 +2546,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 7, "y": 2, "kind": 0},
-                {"direction": "up",    "x": 4, "y": 0, "kind": 1}
+                {"id": 1, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 2, "direction": "right", "x": 7, "y": 2, "kind": 0},
+                {"id": 4, "direction": "up",    "x": 4, "y": 0, "kind": 1}
             ]
         ],
         "connections": [],
@@ -2569,10 +2565,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 4, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2587,8 +2583,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2608,9 +2604,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 5, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 5, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2628,8 +2624,8 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left",  "x": 0, "y": 1, "kind": 0}],
-            [{"direction": "right", "x": 3, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}]
         ],
         "connections": [
             [0, 1]
@@ -2649,10 +2645,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 3, "kind": 0},
-                {"direction": "down",  "x": 2, "y": 4, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 4, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 3, "kind": 0},
+                {"id": 2, "direction": "down",  "x": 2, "y": 4, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2667,7 +2663,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -2683,8 +2679,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 1, "y": 2, "kind": 0},
-                {"direction": "up",   "x": 5, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left", "x": 1, "y": 2, "kind": 0},
+                {"id": 2, "direction": "up",   "x": 5, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2699,8 +2695,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2715,8 +2711,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2731,8 +2727,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2748,8 +2744,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2763,7 +2759,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -2779,8 +2775,8 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left",  "x": 0, "y": 3, "kind": 0}],
-            [{"direction": "right", "x": 3, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left",  "x": 0, "y": 3, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}]
         ],
         "connections": [
             [1, 0]
@@ -2801,9 +2797,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 1, "y": 3, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 1, "y": 3, "kind": 0},
+                {"id": 3, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2819,11 +2815,11 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 1, "y": 1, "kind": 0}
             ],
             [
-                {"direction": "down", "x": 4, "y": 0, "kind": 0}
+                {"id": 2, "direction": "down", "x": 4, "y": 0, "kind": 0}
             ]
         ],
         "connections": [
@@ -2839,8 +2835,8 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "up",   "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "up",   "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [
             [1, 0]
@@ -2858,8 +2854,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 1, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 1, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2875,8 +2871,8 @@
             [1, 1, 1]
         ],
         "doors": [
-            [{"direction": "right", "x": 1, "y": 0, "kind": 0}],
-            [{"direction": "right", "x": 2, "y": 2, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 1, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 2, "y": 2, "kind": 0}]
         ],
         "connections": [
             [0, 1]
@@ -2892,8 +2888,8 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "right", "x": 1, "y": 1, "kind": 0}]
+            [{"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 1, "y": 1, "kind": 0}]
         ],
         "connections": [
             [0, 1]
@@ -2911,9 +2907,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -2928,7 +2924,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -2941,8 +2937,8 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "right", "x": 3, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}]
         ],
         "connections": [
             [0, 1]
@@ -2964,13 +2960,13 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 4, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 5, "kind": 0},
-                {"direction": "right", "x": 0, "y": 3, "kind": 0},
-                {"direction": "right", "x": 0, "y": 5, "kind": 0},
-                {"direction": "right", "x": 0, "y": 6, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 1}
+                {"id": 1, "direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 4, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 0, "y": 5, "kind": 0},
+                {"id": 6, "direction": "right", "x": 0, "y": 3, "kind": 0},
+                {"id": 5, "direction": "right", "x": 0, "y": 5, "kind": 0},
+                {"id": 4, "direction": "right", "x": 0, "y": 6, "kind": 0},
+                {"id": 7, "direction": "up",    "x": 0, "y": 0, "kind": 1}
             ]
         ],
         "connections": [],
@@ -2985,7 +2981,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3000,8 +2996,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3015,7 +3011,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3030,8 +3026,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3047,8 +3043,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3063,8 +3059,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 4, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 4, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3079,8 +3075,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 7, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 7, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3097,9 +3093,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3116,9 +3112,9 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 2, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 0}
+                {"id": 2, "direction": "right", "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 2, "kind": 0},
+                {"id": 1, "direction": "up",    "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3132,7 +3128,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3147,8 +3143,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3166,13 +3162,13 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 1, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 3, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 4, "direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"id": 7, "direction": "right", "x": 1, "y": 0, "kind": 0},
+                {"id": 6, "direction": "right", "x": 1, "y": 1, "kind": 0},
+                {"id": 5, "direction": "down",  "x": 0, "y": 3, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3187,7 +3183,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3201,8 +3197,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3216,7 +3212,7 @@
             [1, 1]
         ],
         "doors": [
-            [{"direction": "right", "x": 1, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 1, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3232,8 +3228,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3249,8 +3245,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x":  0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 11, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x":  0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 11, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3264,7 +3260,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3281,13 +3277,13 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 0, "y": 3, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 4, "direction": "right", "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 2, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 3, "kind": 0}
             ],
             [
-                {"direction": "right", "x": 5, "y": 0, "kind": 0}
+                {"id": 5, "direction": "right", "x": 5, "y": 0, "kind": 0}
             ]
         ],
         "connections": [
@@ -3305,9 +3301,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3321,7 +3317,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3338,12 +3334,12 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 3, "y": 2, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
-                {"direction": "right", "x": 6, "y": 2, "kind": 0}
+                {"id": 2, "direction": "left",  "x": 3, "y": 2, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"id": 4, "direction": "right", "x": 6, "y": 2, "kind": 0}
             ],
             [
-                {"direction": "left", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [
@@ -3360,8 +3356,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3378,9 +3374,9 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 2, "kind": 0}
+                {"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 1, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3394,7 +3390,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3408,8 +3404,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3427,8 +3423,8 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 3, "kind": 0}
+                {"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 3, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3444,8 +3440,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3460,8 +3456,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3478,10 +3474,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 1, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "left",  "x": 1, "y": 2, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 1, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 1, "y": 2, "kind": 0},
+                {"id": 4, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3496,8 +3492,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3514,8 +3510,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3532,8 +3528,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 2, "y": 0, "kind": 0},
-                {"direction": "left", "x": 0, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left", "x": 2, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left", "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3548,8 +3544,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3566,8 +3562,8 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 2, "kind": 0}
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 1, "direction": "down",  "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3583,9 +3579,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0},
-                {"direction": "up",    "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0},
+                {"id": 3, "direction": "up",    "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3602,13 +3598,13 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0}
+                {"id": 2, "direction": "left", "x": 0, "y": 0, "kind": 0}
             ],
             [
-                {"direction": "left",  "x": 12, "y": 0, "kind": 0},
-                {"direction": "right", "x": 12, "y": 1, "kind": 0},
-                {"direction": "right", "x": 12, "y": 2, "kind": 0},
-                {"direction": "down",  "x": 12, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 12, "y": 0, "kind": 0},
+                {"id": 5, "direction": "right", "x": 12, "y": 1, "kind": 0},
+                {"id": 4, "direction": "right", "x": 12, "y": 2, "kind": 0},
+                {"id": 3, "direction": "down",  "x": 12, "y": 2, "kind": 0}
             ]
         ],
         "connections": [
@@ -3625,8 +3621,8 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "right", "x": 3, "y": 1, "kind": 0}]
+            [{"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 3, "y": 1, "kind": 0}]
         ],
         "connections": [
             [1, 0]
@@ -3641,8 +3637,8 @@
             [1, 1, 1, 1, 1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "up",   "x": 3, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "up",   "x": 3, "y": 0, "kind": 0}]
         ],
         "connections": [
             [1, 0]
@@ -3660,10 +3656,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 1, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 4, "direction": "right", "x": 1, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 1, "y": 1, "kind": 0},
+                {"id": 2, "direction": "down",  "x": 0, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3677,7 +3673,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3695,10 +3691,10 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 3, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 4, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 3, "kind": 0},
+                {"id": 2, "direction": "down",  "x": 0, "y": 4, "kind": 0},
+                {"id": 4, "direction": "up",    "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3713,7 +3709,7 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3729,8 +3725,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 1, "kind": 0},
-                {"direction": "up",   "x": 6, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left", "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "up",   "x": 6, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3747,8 +3743,8 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 2, "kind": 0}
+                {"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3763,8 +3759,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3781,8 +3777,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3798,8 +3794,8 @@
             [1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "right", "x": 2, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 2, "y": 0, "kind": 0}]
         ],
         "connections": [
             [0, 1]
@@ -3815,7 +3811,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3829,7 +3825,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3843,9 +3839,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 0, "kind": 1}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 4, "direction": "down",  "x": 0, "y": 0, "kind": 1}
             ]
         ],
         "connections": [],
@@ -3860,7 +3856,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3874,8 +3870,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3897,13 +3893,13 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 4, "y": 3, "kind": 0},
-                {"direction": "left",  "x": 4, "y": 6, "kind": 0},
-                {"direction": "right", "x": 4, "y": 3, "kind": 0},
-                {"direction": "right", "x": 4, "y": 4, "kind": 0},
-                {"direction": "right", "x": 5, "y": 6, "kind": 0},
-                {"direction": "down",  "x": 4, "y": 7, "kind": 0},
-                {"direction": "up",    "x": 4, "y": 0, "kind": 0}
+                {"id": 2, "direction": "left",  "x": 4, "y": 3, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 4, "y": 6, "kind": 0},
+                {"id": 4, "direction": "right", "x": 4, "y": 3, "kind": 0},
+                {"id": 5, "direction": "right", "x": 4, "y": 4, "kind": 0},
+                {"id": 6, "direction": "right", "x": 5, "y": 6, "kind": 0},
+                {"id": 7, "direction": "down",  "x": 4, "y": 7, "kind": 0},
+                {"id": 1, "direction": "up",    "x": 4, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3918,9 +3914,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 6, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 4, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 6, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down",  "x": 4, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3935,9 +3931,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 4, "y": 0, "kind": 0},
-                {"direction": "up",    "x": 2, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 4, "y": 0, "kind": 0},
+                {"id": 2, "direction": "up",    "x": 2, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -3952,7 +3948,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3966,7 +3962,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3980,7 +3976,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -3995,9 +3991,9 @@
             [0, 1, 1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 2, "y": 0, "kind": 0}],
-            [{"direction": "left", "x": 0, "y": 1, "kind": 0}],
-            [{"direction": "left", "x": 1, "y": 2, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 2, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "left", "x": 0, "y": 1, "kind": 0}],
+            [{"id": 3, "direction": "left", "x": 1, "y": 2, "kind": 0}]
         ],
         "connections": [
             [1, 2]
@@ -4013,8 +4009,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4028,7 +4024,7 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -4042,8 +4038,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4058,8 +4054,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4076,9 +4072,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "left",  "x": 0, "y": 2, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "left",  "x": 0, "y": 2, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4093,7 +4089,7 @@
             [1, 1, 1]
         ],
         "doors": [
-            [{"direction": "right", "x": 2, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 2, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -4106,7 +4102,7 @@
             [1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -4120,7 +4116,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -4137,9 +4133,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
-                {"direction": "right", "x": 0, "y": 3, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 1}
+                {"id": 2, "direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 3, "kind": 0},
+                {"id": 1, "direction": "up",    "x": 0, "y": 0, "kind": 1}
             ]
         ],
         "connections": [],
@@ -4154,7 +4150,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "left", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -4168,8 +4164,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 5, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 5, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4185,8 +4181,8 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0}
+                {"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 0, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4201,8 +4197,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 5, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 5, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4218,8 +4214,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "down", "x": 0, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down", "x": 0, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4234,8 +4230,8 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "up",   "x": 1, "y": 0, "kind": 0}
+                {"id": 2, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 1, "direction": "up",   "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4250,8 +4246,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 1, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 1, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4266,8 +4262,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4283,9 +4279,9 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 0, "y": 1, "kind": 0}
+                {"id": 2, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0},
+                {"id": 3, "direction": "right", "x": 0, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4300,7 +4296,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -4314,8 +4310,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 0, "kind": 0},
-                {"direction": "right", "x": 3, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4332,9 +4328,9 @@
         ],
         "doors": [
             [
-                {"direction": "left", "x": 0, "y": 0, "kind": 0},
-                {"direction": "left", "x": 0, "y": 1, "kind": 0},
-                {"direction": "left", "x": 0, "y": 2, "kind": 0}
+                {"id": 1, "direction": "left", "x": 0, "y": 0, "kind": 0},
+                {"id": 2, "direction": "left", "x": 0, "y": 1, "kind": 0},
+                {"id": 3, "direction": "left", "x": 0, "y": 2, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4349,7 +4345,7 @@
             [1]
         ],
         "doors": [
-            [{"direction": "right", "x": 0, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "right", "x": 0, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [],
@@ -4362,8 +4358,8 @@
             [1, 1, 1, 1]
         ],
         "doors": [
-            [{"direction": "left",  "x": 0, "y": 0, "kind": 0}],
-            [{"direction": "right", "x": 3, "y": 0, "kind": 0}]
+            [{"id": 1, "direction": "left",  "x": 0, "y": 0, "kind": 0}],
+            [{"id": 2, "direction": "right", "x": 3, "y": 0, "kind": 0}]
         ],
         "connections": [],
         "missing_connections": [[0, 1], [1, 0]],
@@ -4377,8 +4373,8 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 1, "y": 0, "kind": 0},
-                {"direction": "down",  "x": 0, "y": 0, "kind": 0}
+                {"id": 1, "direction": "right", "x": 1, "y": 0, "kind": 0},
+                {"id": 2, "direction": "down",  "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4394,8 +4390,8 @@
         ],
         "doors": [
             [
-                {"direction": "right", "x": 0, "y": 1, "kind": 0},
-                {"direction": "up",    "x": 0, "y": 0, "kind": 0}
+                {"id": 2, "direction": "right", "x": 0, "y": 1, "kind": 0},
+                {"id": 1, "direction": "up",    "x": 0, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4411,8 +4407,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 1, "kind": 0},
-                {"direction": "right", "x": 5, "y": 0, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 1, "kind": 0},
+                {"id": 2, "direction": "right", "x": 5, "y": 0, "kind": 0}
             ]
         ],
         "connections": [],
@@ -4432,8 +4428,8 @@
         ],
         "doors": [
             [
-                {"direction": "left",  "x": 0, "y": 3, "kind": 0},
-                {"direction": "right", "x": 2, "y": 1, "kind": 0}
+                {"id": 1, "direction": "left",  "x": 0, "y": 3, "kind": 0},
+                {"id": 2, "direction": "right", "x": 2, "y": 1, "kind": 0}
             ]
         ],
         "connections": [],
