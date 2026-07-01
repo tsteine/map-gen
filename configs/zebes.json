@@ -56,7 +56,7 @@
     "recommended_candidates": 4,
     "shortlist_candidates": 16,
     "temperature": {"log": [10.0, 2.0, 0.03, 0.03, 0.03]},
-    "proposal_temperature": 0.4,
+    "proposal_temperature": 0.3,
     "reward_door": 1.0,
     "reward_connection": 1.0,
     "reward_toilet": 1.0,
