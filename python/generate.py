@@ -166,6 +166,11 @@ def compute_expected_reward(
     config: GenerateConfig,
     profile,
 ):
+    def batch_weight(value: float | torch.Tensor) -> float | torch.Tensor:
+        if isinstance(value, torch.Tensor):
+            return value.to(preds.door_invalid.device).view(-1, 1)
+        return value
+
     door_logprobs = torch.nn.functional.logsigmoid(-preds.door_invalid)
     connection_logprobs = torch.nn.functional.logsigmoid(-preds.connection_invalid)
     toilet_logprobs = torch.nn.functional.logsigmoid(-preds.toilet_invalid)
@@ -185,23 +190,23 @@ def compute_expected_reward(
         outcomes.toilet_invalid,
     )
     return (
-        config.reward_door * torch.sum(door_logprobs, dim=2)
-        + config.reward_connection * torch.sum(connection_logprobs, dim=2)
-        + config.reward_toilet * toilet_logprobs
-        + config.reward_phantoon * phantoon_logprobs
-        + config.reward_balance * torch.sum(balance_scores, dim=2)
-        + config.reward_toilet_balance * toilet_balance_scores
-        - config.reward_frontier * preds.avg_frontiers.to(torch.float32)
-        - config.reward_graph_diameter * preds.graph_diameter.to(torch.float32)
+        batch_weight(config.reward_door) * torch.sum(door_logprobs, dim=2)
+        + batch_weight(config.reward_connection) * torch.sum(connection_logprobs, dim=2)
+        + batch_weight(config.reward_toilet) * toilet_logprobs
+        + batch_weight(config.reward_phantoon) * phantoon_logprobs
+        + batch_weight(config.reward_balance) * torch.sum(balance_scores, dim=2)
+        + batch_weight(config.reward_toilet_balance) * toilet_balance_scores
+        - batch_weight(config.reward_frontier) * preds.avg_frontiers.to(torch.float32)
+        - batch_weight(config.reward_graph_diameter) * preds.graph_diameter.to(torch.float32)
         + profile(
             "python.reward.save_refill_utility_sum",
             lambda: (
-                config.reward_save_distance
+                batch_weight(config.reward_save_distance)
                 * (
                     total_proximity_utility(preds.save_to_room_utility)
                     + total_proximity_utility(preds.save_from_room_utility)
                 )
-                + config.reward_refill_distance
+                + batch_weight(config.reward_refill_distance)
                 * (
                     total_proximity_utility(preds.refill_to_room_utility)
                     + total_proximity_utility(preds.refill_from_room_utility)
@@ -209,7 +214,7 @@ def compute_expected_reward(
             ),
         )
         + (
-            config.reward_missing_connect_utility
+            batch_weight(config.reward_missing_connect_utility)
             * total_proximity_utility(preds.missing_connect_utility)
         )
     )

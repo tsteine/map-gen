@@ -15,8 +15,22 @@ class Schedule(StrictBaseModel):
     log: list[float] | None = None
 
 
+type VariableEndpoint = float | list[float]
+
+
+class VariableRange(StrictBaseModel):
+    min: VariableEndpoint
+    max: VariableEndpoint
+
+
+class VariableSchedule(StrictBaseModel):
+    linear: list[float] | VariableRange | None = None
+    log: list[float] | VariableRange | None = None
+
+
 type ScheduleableFloat = float | Schedule
 type ScheduleableInt = int | Schedule
+type VariableFloat = float | VariableSchedule
 
 
 class ModelConfig(StrictBaseModel):
@@ -79,19 +93,19 @@ class GenerationConfig(StrictBaseModel):
     gpu_prefetch_batches: int
     recommended_candidates: ScheduleableInt
     shortlist_candidates: ScheduleableInt
-    temperature: ScheduleableFloat
-    proposal_temperature: ScheduleableFloat
-    reward_door: ScheduleableFloat
-    reward_connection: ScheduleableFloat
-    reward_toilet: ScheduleableFloat
-    reward_phantoon: ScheduleableFloat
-    reward_balance: ScheduleableFloat
-    reward_toilet_balance: ScheduleableFloat
-    reward_frontier: ScheduleableFloat
-    reward_graph_diameter: ScheduleableFloat
-    reward_save_distance: ScheduleableFloat
-    reward_refill_distance: ScheduleableFloat
-    reward_missing_connect_utility: ScheduleableFloat
+    temperature: VariableFloat
+    proposal_temperature: VariableFloat
+    reward_door: VariableFloat
+    reward_connection: VariableFloat
+    reward_toilet: VariableFloat
+    reward_phantoon: VariableFloat
+    reward_balance: VariableFloat
+    reward_toilet_balance: VariableFloat
+    reward_frontier: VariableFloat
+    reward_graph_diameter: VariableFloat
+    reward_save_distance: VariableFloat
+    reward_refill_distance: VariableFloat
+    reward_missing_connect_utility: VariableFloat
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
     frontier_neighbor_count: int
     frontier_window_size: int
@@ -237,6 +251,8 @@ def instantiate_scheduleable_config(config: Config, num_episodes: int) -> Config
             field_path = f"{path}.{field_name}"
             if field_info.annotation is ScheduleableFloat:
                 updates[field_name] = instantiate_float(value, field_path)
+            elif field_info.annotation is VariableFloat:
+                updates[field_name] = instantiate_variable_float(value, field_path)
             elif field_info.annotation is ScheduleableInt:
                 updates[field_name] = instantiate_int(value, field_path)
             elif isinstance(value, BaseModel):
@@ -267,6 +283,61 @@ def instantiate_scheduleable_config(config: Config, num_episodes: int) -> Config
             if value.linear is not None:
                 return float(np.interp(num_episodes, knot_episodes, x))
             return float(np.exp(np.interp(num_episodes, knot_episodes, np.log(x))))
+        return float(value)
+
+    def instantiate_endpoint(value: VariableEndpoint, path: str, log_scale: bool) -> float:
+        if isinstance(value, list):
+            if len(value) != len(knot_episodes):
+                raise ValueError(
+                    f"{path} has {len(value)} schedule value(s), but knot_episodes has {len(knot_episodes)} knot(s)"
+                )
+            if log_scale:
+                for index, item in enumerate(value):
+                    if item <= 0.0:
+                        raise ValueError(
+                            f"{path}[{index}] must be greater than zero for a log schedule"
+                        )
+                return float(np.exp(np.interp(num_episodes, knot_episodes, np.log(value))))
+            return float(np.interp(num_episodes, knot_episodes, value))
+        if log_scale and value <= 0.0:
+            raise ValueError(f"{path} must be greater than zero for a log schedule")
+        return float(value)
+
+    def instantiate_variable_float(value: VariableFloat, path: str) -> VariableFloat:
+        if isinstance(value, VariableSchedule):
+            if (value.linear is None) == (value.log is None):
+                raise ValueError(f"{path} must have exactly one schedule value: 'linear' or 'log'")
+            schedule_value = value.linear if value.linear is not None else value.log
+            log_scale = value.log is not None
+            if isinstance(schedule_value, VariableRange):
+                min_value = instantiate_endpoint(
+                    schedule_value.min,
+                    f"{path}.min",
+                    log_scale,
+                )
+                max_value = instantiate_endpoint(
+                    schedule_value.max,
+                    f"{path}.max",
+                    log_scale,
+                )
+                if min_value > max_value:
+                    raise ValueError(f"{path}.min must be less than or equal to {path}.max")
+                range_value = VariableRange(min=min_value, max=max_value)
+                if value.linear is not None:
+                    return VariableSchedule(linear=range_value)
+                return VariableSchedule(log=range_value)
+            if len(schedule_value) != len(knot_episodes):
+                raise ValueError(
+                    f"{path} has {len(schedule_value)} schedule value(s), but knot_episodes has {len(knot_episodes)} knot(s)"
+                )
+            if value.linear is not None:
+                return float(np.interp(num_episodes, knot_episodes, schedule_value))
+            for index, item in enumerate(schedule_value):
+                if item <= 0.0:
+                    raise ValueError(
+                        f"{path}[{index}] must be greater than zero for a log schedule"
+                    )
+            return float(np.exp(np.interp(num_episodes, knot_episodes, np.log(schedule_value))))
         return float(value)
 
     return instantiate_model(config, "config")
@@ -365,27 +436,35 @@ def validate_config(config: Config) -> None:
         raise ValueError("generation.frontier_window_size must be greater than or equal to zero")
     if config.generation.candidate_spatial_cell_size <= 0:
         raise ValueError("generation.candidate_spatial_cell_size must be greater than zero")
-    validate_nonnegative_scheduleable_float(
+    validate_positive_variable_float(
+        config.generation.temperature,
+        "generation.temperature",
+    )
+    validate_positive_variable_float(
+        config.generation.proposal_temperature,
+        "generation.proposal_temperature",
+    )
+    validate_nonnegative_variable_float(
         config.generation.reward_phantoon,
         "generation.reward_phantoon",
     )
-    validate_nonnegative_scheduleable_float(
+    validate_nonnegative_variable_float(
         config.generation.reward_toilet_balance,
         "generation.reward_toilet_balance",
     )
-    validate_nonnegative_scheduleable_float(
+    validate_nonnegative_variable_float(
         config.generation.reward_graph_diameter,
         "generation.reward_graph_diameter",
     )
-    validate_nonnegative_scheduleable_float(
+    validate_nonnegative_variable_float(
         config.generation.reward_save_distance,
         "generation.reward_save_distance",
     )
-    validate_nonnegative_scheduleable_float(
+    validate_nonnegative_variable_float(
         config.generation.reward_refill_distance,
         "generation.reward_refill_distance",
     )
-    validate_nonnegative_scheduleable_float(
+    validate_nonnegative_variable_float(
         config.generation.reward_missing_connect_utility,
         "generation.reward_missing_connect_utility",
     )
@@ -504,6 +583,60 @@ def validate_nonnegative_scheduleable_float(value: ScheduleableFloat, path: str)
         return
     if value < 0:
         raise ValueError(f"{path} must be greater than or equal to zero")
+
+
+def validate_nonnegative_variable_float(value: VariableFloat, path: str) -> None:
+    def validate_endpoint(endpoint: VariableEndpoint, endpoint_path: str) -> None:
+        if isinstance(endpoint, list):
+            for index, item in enumerate(endpoint):
+                if item < 0:
+                    raise ValueError(
+                        f"{endpoint_path}[{index}] must be greater than or equal to zero"
+                    )
+            return
+        if endpoint < 0:
+            raise ValueError(f"{endpoint_path} must be greater than or equal to zero")
+
+    if isinstance(value, VariableSchedule):
+        values = value.linear if value.linear is not None else value.log
+        if values is None:
+            return
+        if isinstance(values, VariableRange):
+            validate_endpoint(values.min, f"{path}.min")
+            validate_endpoint(values.max, f"{path}.max")
+            return
+        for index, item in enumerate(values):
+            if item < 0:
+                raise ValueError(f"{path}[{index}] must be greater than or equal to zero")
+        return
+    if value < 0:
+        raise ValueError(f"{path} must be greater than or equal to zero")
+
+
+def validate_positive_variable_float(value: VariableFloat, path: str) -> None:
+    def validate_endpoint(endpoint: VariableEndpoint, endpoint_path: str) -> None:
+        if isinstance(endpoint, list):
+            for index, item in enumerate(endpoint):
+                if item <= 0.0:
+                    raise ValueError(f"{endpoint_path}[{index}] must be greater than zero")
+            return
+        if endpoint <= 0.0:
+            raise ValueError(f"{endpoint_path} must be greater than zero")
+
+    if isinstance(value, VariableSchedule):
+        values = value.linear if value.linear is not None else value.log
+        if values is None:
+            return
+        if isinstance(values, VariableRange):
+            validate_endpoint(values.min, f"{path}.min")
+            validate_endpoint(values.max, f"{path}.max")
+            return
+        for index, item in enumerate(values):
+            if item <= 0.0:
+                raise ValueError(f"{path}[{index}] must be greater than zero")
+        return
+    if value <= 0.0:
+        raise ValueError(f"{path} must be greater than zero")
 
 
 def validate_ema_decay(value: float, path: str) -> None:

@@ -22,17 +22,17 @@ class GenerateConfig:
     gpu_prefetch_batches: int
     temperature: torch.Tensor
     proposal_temperature: torch.Tensor
-    reward_door: float
-    reward_connection: float
-    reward_toilet: float
-    reward_phantoon: float
-    reward_balance: float
-    reward_toilet_balance: float
-    reward_frontier: float
-    reward_graph_diameter: float
-    reward_save_distance: float
-    reward_refill_distance: float
-    reward_missing_connect_utility: float
+    reward_door: float | torch.Tensor
+    reward_connection: float | torch.Tensor
+    reward_toilet: float | torch.Tensor
+    reward_phantoon: float | torch.Tensor
+    reward_balance: float | torch.Tensor
+    reward_toilet_balance: float | torch.Tensor
+    reward_frontier: float | torch.Tensor
+    reward_graph_diameter: float | torch.Tensor
+    reward_save_distance: float | torch.Tensor
+    reward_refill_distance: float | torch.Tensor
+    reward_missing_connect_utility: float | torch.Tensor
     distance_proximity_scale: float
     autocast: bool
 

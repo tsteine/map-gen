@@ -690,6 +690,7 @@ def generate_response():
     add_serving_profile(serving_profiler, state.device, "python.serve.total", request_start)
     if state.profile:
         response["profile"] = profile_report + serving_profiler.report()
+    print(response)
     return jsonify(response)
 
 

@@ -3,6 +3,7 @@ from collections import deque
 import copy
 import json
 import logging
+import math
 import multiprocessing
 import os
 import signal
@@ -53,6 +54,9 @@ from train_config import (
     Config,
     MuonOptimizerConfig,
     OptimizerConfig,
+    VariableFloat,
+    VariableRange,
+    VariableSchedule,
     episodes_per_round,
     instantiate_scheduleable_config,
     validate_config,
@@ -422,6 +426,23 @@ def optimizer_metric_values(config: OptimizerConfig) -> dict[str, float]:
     return {"lr": config.lr}
 
 
+def variable_float_metric_value(value: VariableFloat, path: str) -> float:
+    if isinstance(value, VariableSchedule):
+        if (value.linear is None) == (value.log is None):
+            raise ValueError(f"{path} must have exactly one value: 'linear' or 'log'")
+        range_value = value.linear if value.linear is not None else value.log
+        if not isinstance(range_value, VariableRange):
+            raise ValueError(f"{path} must be instantiated before metric logging")
+        min_value = float(range_value.min)
+        max_value = float(range_value.max)
+        if value.linear is not None:
+            return 0.5 * (min_value + max_value)
+        if min_value <= 0.0:
+            raise ValueError(f"{path}.min must be greater than zero for a log range")
+        return math.exp(0.5 * (math.log(min_value) + math.log(max_value)))
+    return float(value)
+
+
 def topk_or_zeros(values: torch.Tensor, k0: int) -> torch.Tensor:
     if values.numel() == 0:
         return torch.zeros([k0], dtype=torch.float32)
@@ -479,38 +500,88 @@ def create_generate_config(
     device: torch.device,
     ignore_scores: bool,
 ) -> GenerateConfig:
-    temperature = IGNORE_SCORES_TEMPERATURE if ignore_scores else config.generation.temperature
+    def variable_float_tensor(value: VariableFloat, path: str) -> torch.Tensor:
+        if isinstance(value, VariableSchedule):
+            if (value.linear is None) == (value.log is None):
+                raise ValueError(f"{path} must have exactly one value: 'linear' or 'log'")
+            range_value = value.linear if value.linear is not None else value.log
+            if not isinstance(range_value, VariableRange):
+                raise ValueError(f"{path} must be instantiated before creating a generate config")
+            min_value = float(range_value.min)
+            max_value = float(range_value.max)
+            if min_value > max_value:
+                raise ValueError(f"{path}.min must be less than or equal to {path}.max")
+            sample = torch.rand([num_envs], dtype=torch.float32, device=device)
+            if value.linear is not None:
+                return min_value + sample * (max_value - min_value)
+            if min_value <= 0.0:
+                raise ValueError(f"{path}.min must be greater than zero for a log range")
+            log_min = math.log(min_value)
+            log_max = math.log(max_value)
+            return torch.exp(log_min + sample * (log_max - log_min))
+        return torch.full([num_envs], float(value), dtype=torch.float32, device=device)
+
+    temperature = (
+        torch.full([num_envs], IGNORE_SCORES_TEMPERATURE, dtype=torch.float32, device=device)
+        if ignore_scores
+        else variable_float_tensor(config.generation.temperature, "generation.temperature")
+    )
     proposal_temperature = (
-        IGNORE_SCORES_TEMPERATURE if ignore_scores else config.generation.proposal_temperature
+        torch.full([num_envs], IGNORE_SCORES_TEMPERATURE, dtype=torch.float32, device=device)
+        if ignore_scores
+        else variable_float_tensor(
+            config.generation.proposal_temperature,
+            "generation.proposal_temperature",
+        )
     )
     return GenerateConfig(
         episode_length=episode_length,
         recommended_candidates=config.generation.recommended_candidates,
         shortlist_candidates=config.generation.shortlist_candidates,
         gpu_prefetch_batches=config.generation.gpu_prefetch_batches,
-        temperature=torch.full(
-            [num_envs],
-            temperature,
-            dtype=torch.float32,
-            device=device,
+        temperature=temperature,
+        proposal_temperature=proposal_temperature,
+        reward_door=variable_float_tensor(config.generation.reward_door, "generation.reward_door"),
+        reward_connection=variable_float_tensor(
+            config.generation.reward_connection,
+            "generation.reward_connection",
         ),
-        proposal_temperature=torch.full(
-            [num_envs],
-            proposal_temperature,
-            dtype=torch.float32,
-            device=device,
+        reward_toilet=variable_float_tensor(
+            config.generation.reward_toilet,
+            "generation.reward_toilet",
         ),
-        reward_door=config.generation.reward_door,
-        reward_connection=config.generation.reward_connection,
-        reward_toilet=config.generation.reward_toilet,
-        reward_phantoon=config.generation.reward_phantoon,
-        reward_balance=config.generation.reward_balance,
-        reward_toilet_balance=config.generation.reward_toilet_balance,
-        reward_frontier=config.generation.reward_frontier,
-        reward_graph_diameter=config.generation.reward_graph_diameter,
-        reward_save_distance=config.generation.reward_save_distance,
-        reward_refill_distance=config.generation.reward_refill_distance,
-        reward_missing_connect_utility=config.generation.reward_missing_connect_utility,
+        reward_phantoon=variable_float_tensor(
+            config.generation.reward_phantoon,
+            "generation.reward_phantoon",
+        ),
+        reward_balance=variable_float_tensor(
+            config.generation.reward_balance,
+            "generation.reward_balance",
+        ),
+        reward_toilet_balance=variable_float_tensor(
+            config.generation.reward_toilet_balance,
+            "generation.reward_toilet_balance",
+        ),
+        reward_frontier=variable_float_tensor(
+            config.generation.reward_frontier,
+            "generation.reward_frontier",
+        ),
+        reward_graph_diameter=variable_float_tensor(
+            config.generation.reward_graph_diameter,
+            "generation.reward_graph_diameter",
+        ),
+        reward_save_distance=variable_float_tensor(
+            config.generation.reward_save_distance,
+            "generation.reward_save_distance",
+        ),
+        reward_refill_distance=variable_float_tensor(
+            config.generation.reward_refill_distance,
+            "generation.reward_refill_distance",
+        ),
+        reward_missing_connect_utility=variable_float_tensor(
+            config.generation.reward_missing_connect_utility,
+            "generation.reward_missing_connect_utility",
+        ),
         distance_proximity_scale=config.distance_proximity_scale,
         autocast=config.model.generation_autocast,
     )
@@ -1330,22 +1401,61 @@ class TrainingSession:
             "min_conn": min_conn,
             "num_episodes": self.num_episodes,
             **optimizer_metric_values(step_config.optimizer),
-            "temperature": step_config.generation.temperature,
+            "temperature": variable_float_metric_value(
+                step_config.generation.temperature,
+                "generation.temperature",
+            ),
             "recommended_candidates": step_config.generation.recommended_candidates,
             "shortlist_candidates": step_config.generation.shortlist_candidates,
-            "proposal_temperature": step_config.generation.proposal_temperature,
-            "reward_door": step_config.generation.reward_door,
-            "reward_connection": step_config.generation.reward_connection,
-            "reward_toilet": step_config.generation.reward_toilet,
-            "reward_phantoon": step_config.generation.reward_phantoon,
-            "reward_balance": step_config.generation.reward_balance,
-            "reward_toilet_balance": step_config.generation.reward_toilet_balance,
-            "reward_frontier": step_config.generation.reward_frontier,
-            "reward_graph_diameter": step_config.generation.reward_graph_diameter,
-            "reward_save_distance": step_config.generation.reward_save_distance,
-            "reward_refill_distance": step_config.generation.reward_refill_distance,
+            "proposal_temperature": variable_float_metric_value(
+                step_config.generation.proposal_temperature,
+                "generation.proposal_temperature",
+            ),
+            "reward_door": variable_float_metric_value(
+                step_config.generation.reward_door,
+                "generation.reward_door",
+            ),
+            "reward_connection": variable_float_metric_value(
+                step_config.generation.reward_connection,
+                "generation.reward_connection",
+            ),
+            "reward_toilet": variable_float_metric_value(
+                step_config.generation.reward_toilet,
+                "generation.reward_toilet",
+            ),
+            "reward_phantoon": variable_float_metric_value(
+                step_config.generation.reward_phantoon,
+                "generation.reward_phantoon",
+            ),
+            "reward_balance": variable_float_metric_value(
+                step_config.generation.reward_balance,
+                "generation.reward_balance",
+            ),
+            "reward_toilet_balance": variable_float_metric_value(
+                step_config.generation.reward_toilet_balance,
+                "generation.reward_toilet_balance",
+            ),
+            "reward_frontier": variable_float_metric_value(
+                step_config.generation.reward_frontier,
+                "generation.reward_frontier",
+            ),
+            "reward_graph_diameter": variable_float_metric_value(
+                step_config.generation.reward_graph_diameter,
+                "generation.reward_graph_diameter",
+            ),
+            "reward_save_distance": variable_float_metric_value(
+                step_config.generation.reward_save_distance,
+                "generation.reward_save_distance",
+            ),
+            "reward_refill_distance": variable_float_metric_value(
+                step_config.generation.reward_refill_distance,
+                "generation.reward_refill_distance",
+            ),
             "reward_missing_connect_utility": (
-                step_config.generation.reward_missing_connect_utility
+                variable_float_metric_value(
+                    step_config.generation.reward_missing_connect_utility,
+                    "generation.reward_missing_connect_utility",
+                )
             ),
             "distance_proximity_scale": step_config.distance_proximity_scale,
             "ema_decay": step_config.train.ema_decay,
