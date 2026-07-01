@@ -143,6 +143,14 @@ fn graph_distance_sum(distances: &[GraphDistance]) -> Option<GraphDistance> {
     Some(total)
 }
 
+fn room_min_x(geometry: &GeometryData) -> Coord {
+    (-geometry.min_x).max(0)
+}
+
+fn room_min_y(geometry: &GeometryData) -> Coord {
+    (-geometry.min_y).max(0)
+}
+
 fn check_outcome_transition_consistency(
     before: &[DoorValidOutcome],
     after: &[DoorValidOutcome],
@@ -1767,9 +1775,9 @@ impl Environment {
         let room_idx = self.rng.random_range(0..common.room.len() as RoomIdx);
         let geometry_idx = common.room[room_idx as usize].geometry_idx;
         let geometry = &common.geometry[geometry_idx as usize];
-        let min_x = -geometry.min_x;
+        let min_x = room_min_x(geometry);
         let max_x = self.map_size.0 - 1 - geometry.max_x;
-        let min_y = -geometry.min_y;
+        let min_y = room_min_y(geometry);
         let max_y = self.map_size.1 - 1 - geometry.max_y;
         let x = self.rng.random_range(min_x..=max_x);
         let y = self.rng.random_range(min_y..=max_y);
@@ -2476,9 +2484,9 @@ impl Environment {
                         let room_x = x1 - opp_door.x;
                         let room_y = y1 - opp_door.y;
                         let geometry = &common.geometry[opp_door.geometry_idx as usize];
-                        if room_x < -geometry.min_x
+                        if room_x < room_min_x(geometry)
                             || room_x > self.map_size.0 - 1 - geometry.max_x
-                            || room_y < -geometry.min_y
+                            || room_y < room_min_y(geometry)
                             || room_y > self.map_size.1 - 1 - geometry.max_y
                         {
                             // The room cannot be placed at this position due to map boundaries.
@@ -5532,6 +5540,78 @@ mod tests {
 
         env.clear(&common);
         assert!(!env.candidate_intersects_placed_room(&common, 0, 0, 0));
+    }
+
+    #[test]
+    fn room_origin_lower_bounds_do_not_go_negative_for_inset_geometry() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[0, 1]],
+                "toilet_crossing_x": [],
+                "doors": [[]],
+                "connections": [],
+                "missing_connections": []
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let geometry = &common.geometry[common.room[0].geometry_idx as usize];
+
+        assert_eq!(geometry.min_x, 1);
+        assert_eq!(room_min_x(geometry), 0);
+        assert_eq!(room_min_y(geometry), 0);
+    }
+
+    #[test]
+    fn frontier_candidates_reject_negative_room_origins() {
+        let rooms_json = r#"
+        [
+            {
+                "map": [[1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"id": 0, "direction": "left", "x": 0, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            },
+            {
+                "map": [[0, 1]],
+                "toilet_crossing_x": [],
+                "doors": [
+                    [{"id": 0, "direction": "right", "x": 1, "y": 0, "kind": 0}]
+                ],
+                "connections": [],
+                "missing_connections": []
+            }
+        ]
+        "#;
+        let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
+        let common = CommonData::new(rooms).unwrap();
+        let mut env = Environment::new(&common, (4, 4), 8, 0);
+
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 1,
+                y: 0,
+            },
+            &common,
+        );
+
+        assert!(env.frontier.values().all(|frontier| {
+            frontier
+                .candidates
+                .iter()
+                .all(|candidate| candidate.x >= 0 && candidate.y >= 0)
+        }));
+        assert!(
+            env.frontier
+                .values()
+                .all(|frontier| frontier.candidates.is_empty())
+        );
     }
 
     #[test]
