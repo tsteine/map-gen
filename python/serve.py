@@ -28,6 +28,14 @@ from area_assignment import (
 from env import DoorMatches, Engine, GenerateConfig
 from generate import GenerationProfiler, profile_start, run_generation_groups, sync_profile_device
 from model import FrontierModel
+from small_map import (
+    DoorData,
+    RoomPartData,
+    SmallMapConfig,
+    build_door_data,
+    build_room_part_data,
+    prune_small_maps,
+)
 from train import create_balance_model, frontier_model_kwargs, without_prefix
 from train_config import Config, validate_config
 
@@ -90,6 +98,10 @@ class GenerateRequest(StrictBaseModel):
     reward_save_distance: float
     reward_refill_distance: float
     reward_missing_connect_utility: float
+    small_map: bool
+    min_rooms: int | None = None
+    max_rooms: int | None = None
+    target_rooms: int | None = None
 
 
 @dataclass
@@ -125,6 +137,8 @@ class ServingState:
     map_station_data: MapStationData
     toilet_data: ToiletData
     door_lookups: DoorLookups
+    door_data: DoorData
+    room_part_data: RoomPartData
     profile: bool
     lock: threading.Lock
 
@@ -284,6 +298,8 @@ def create_serving_state(
     map_station_data = build_map_station_data(rooms, device)
     toilet_data = build_toilet_data(rooms, device)
     door_lookups = build_door_lookups(rooms)
+    door_data = build_door_data(rooms)
+    room_part_data = build_room_part_data(rooms)
     return ServingState(
         serving_config=serving_config,
         training_config=model_export.training_config,
@@ -297,6 +313,8 @@ def create_serving_state(
         map_station_data=map_station_data,
         toilet_data=toilet_data,
         door_lookups=door_lookups,
+        door_data=door_data,
+        room_part_data=room_part_data,
         profile=profile,
         lock=threading.Lock(),
     )
@@ -315,6 +333,25 @@ def validate_generate_request(generate_request: GenerateRequest, rooms: list[dic
         raise ValueError("temperature must be greater than zero")
     if generate_request.proposal_temperature <= 0:
         raise ValueError("proposal_temperature must be greater than zero")
+    if generate_request.small_map:
+        missing_fields = [
+            field
+            for field in ("min_rooms", "max_rooms", "target_rooms")
+            if getattr(generate_request, field) is None
+        ]
+        if missing_fields:
+            raise ValueError(
+                f"small_map requires {', '.join(missing_fields)}"
+            )
+        assert generate_request.min_rooms is not None
+        assert generate_request.max_rooms is not None
+        assert generate_request.target_rooms is not None
+        if generate_request.min_rooms <= 0:
+            raise ValueError("min_rooms must be greater than zero")
+        if generate_request.max_rooms < generate_request.min_rooms:
+            raise ValueError("max_rooms must be at least min_rooms")
+        if generate_request.target_rooms <= 0:
+            raise ValueError("target_rooms must be greater than zero")
 
 
 def create_generate_configs(
@@ -417,6 +454,15 @@ def filter_door_matches(door_matches: DoorMatches, mask: torch.Tensor) -> DoorMa
         right=door_matches.right[mask],
         up=door_matches.up[mask],
         down=door_matches.down[mask],
+    )
+
+
+def select_door_matches(door_matches: DoorMatches, index: torch.Tensor) -> DoorMatches:
+    return DoorMatches(
+        left=door_matches.left[index],
+        right=door_matches.right[index],
+        up=door_matches.up[index],
+        down=door_matches.down[index],
     )
 
 
@@ -650,11 +696,50 @@ def generate_response():
     final_toilet_crossed_room_idx = valid_toilet_crossed_room_idx[area_valid_mask]
     final_door_matches = filter_door_matches(valid_door_matches, area_valid_mask)
     final_room_idx_list = tensor_to_list(final_room_idx)
+    final_room_x_list = tensor_to_list(final_room_x)
+    final_room_y_list = tensor_to_list(final_room_y)
+    final_area_list = tensor_to_list(area_assignment.area)
+    final_subarea_list = tensor_to_list(area_assignment.subarea)
+    final_subsubarea_list = tensor_to_list(area_assignment.subsubarea)
     final_toilet_crossed_room_idx_list = tensor_to_list(final_toilet_crossed_room_idx)
+    if generate_request.small_map:
+        assert generate_request.min_rooms is not None
+        assert generate_request.max_rooms is not None
+        assert generate_request.target_rooms is not None
+        small_map_result = prune_small_maps(
+            room_idx=final_room_idx_list,
+            room_x=final_room_x_list,
+            room_y=final_room_y_list,
+            area=final_area_list,
+            subarea=final_subarea_list,
+            subsubarea=final_subsubarea_list,
+            toilet_crossed_room_idx=final_toilet_crossed_room_idx_list,
+            door_matches=final_door_matches,
+            door_data=state.door_data,
+            room_part_data=state.room_part_data,
+            config=SmallMapConfig(
+                min_rooms=generate_request.min_rooms,
+                max_rooms=generate_request.max_rooms,
+                target_rooms=generate_request.target_rooms,
+            ),
+        )
+        final_room_idx_list = small_map_result.room_idx
+        final_room_x_list = small_map_result.room_x
+        final_room_y_list = small_map_result.room_y
+        final_area_list = small_map_result.area
+        final_subarea_list = small_map_result.subarea
+        final_subsubarea_list = small_map_result.subsubarea
+        final_toilet_crossed_room_idx_list = small_map_result.toilet_crossed_room_idx
+        small_map_index = torch.tensor(
+            small_map_result.source_map_idx,
+            device=state.device,
+            dtype=torch.int64,
+        )
+        final_door_matches = select_door_matches(final_door_matches, small_map_index)
     final_room_id_list = response_room_ids(final_room_idx_list, state.rooms)
     num_generated = int(episode_data.actions.room_idx.shape[0])
     num_pre_valid = int(torch.sum(valid_mask).item())
-    num_valid = int(torch.sum(area_valid_mask).item())
+    num_valid = len(final_room_idx_list)
     add_serving_profile(
         serving_profiler,
         state.device,
@@ -671,11 +756,11 @@ def generate_response():
         },
         "rooms": {
             "id": final_room_id_list,
-            "x": tensor_to_list(final_room_x),
-            "y": tensor_to_list(final_room_y),
-            "area": tensor_to_list(area_assignment.area),
-            "subarea": tensor_to_list(area_assignment.subarea),
-            "subsubarea": tensor_to_list(area_assignment.subsubarea),
+            "x": final_room_x_list,
+            "y": final_room_y_list,
+            "area": final_area_list,
+            "subarea": final_subarea_list,
+            "subsubarea": final_subsubarea_list,
         },
         "edges": response_edges(final_room_idx_list, final_door_matches, state.door_lookups),
         "toilet_crossing_room_placement_idx": response_toilet_crossing_room_placement_idx(
@@ -717,7 +802,9 @@ def bad_request_response(error: BadRequest):
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        format="%(asctime)s %(message)s",
+        level=logging.INFO)
     args = parse_args()
     serving_config = load_serving_config(args.serving_config)
     model_export = load_model_input(args.model_export)
