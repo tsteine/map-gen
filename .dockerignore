@@ -1,0 +1,12 @@
+.git
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+python/__pycache__
+target
+logs
+runs
+*.pyc
+*.pyo
+*.so

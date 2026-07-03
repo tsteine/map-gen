@@ -38,7 +38,7 @@ from small_map import (
     build_room_part_data,
     prune_small_maps,
 )
-from train import create_balance_model, frontier_model_kwargs, without_prefix
+from model_loading import create_balance_model, frontier_model_kwargs, without_prefix
 from train_config import Config, GENERATION_VARIABLE_FLOAT_FIELDS, validate_config
 
 
