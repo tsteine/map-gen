@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 import torch
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from pydantic import BaseModel, ConfigDict, ValidationError
 from safetensors import safe_open
 from werkzeug.exceptions import BadRequest
@@ -143,7 +143,7 @@ class GenerationRunResult:
 @dataclass
 class PrefetchQueueState:
     request: GenerateRequest
-    responses: deque[dict]
+    responses: deque[str]
     refill_debt: int
 
 
@@ -728,6 +728,10 @@ def prefetch_request_key(generate_request: GenerateRequest) -> str:
     return generate_request.model_dump_json()
 
 
+def serialize_generate_response(response: dict) -> str:
+    return f"{app.json.dumps(response)}\n"
+
+
 def touch_prefetch_queue(
     state: ServingState,
     key: str,
@@ -772,7 +776,7 @@ def pop_prefetch_response(
     state: ServingState,
     key: str,
     generate_request: GenerateRequest,
-) -> dict | None:
+) -> str | None:
     if state.prefetch is None:
         return None
     prefetch = state.prefetch
@@ -1101,7 +1105,7 @@ def append_prefetch_response(
         if len(queue_state.responses) >= state.serving_config.prefetch_queue_max_size:
             queue_state.refill_debt = 0
             return False
-        queue_state.responses.append(response)
+        queue_state.responses.append(serialize_generate_response(response))
         queue_state.refill_debt -= 1
         if len(queue_state.responses) >= state.serving_config.prefetch_queue_max_size:
             queue_state.refill_debt = 0
@@ -1169,13 +1173,16 @@ def generate_response():
     body = request.get_json(silent=False)
     logging.info("Request body: %s", body)
     generate_request = GenerateRequest.model_validate(body)
-    return jsonify(generate_response_data(state, generate_request))
+    response_data = generate_response_data(state, generate_request)
+    if isinstance(response_data, str):
+        return Response(response_data, mimetype="application/json")
+    return jsonify(response_data)
 
 
 def generate_response_data(
     state: ServingState,
     generate_request: GenerateRequest,
-) -> dict:
+) -> dict | str:
     serving_profiler = GenerationProfiler(state.profile)
     profile_time = profile_start(state.profile)
     validate_generate_request(generate_request, state.rooms)

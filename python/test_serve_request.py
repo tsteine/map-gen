@@ -169,14 +169,40 @@ def assert_prefetch_hit_and_miss_behavior() -> None:
         with state.prefetch.condition:
             queue_state = state.prefetch.queues[key]
             assert queue_state.refill_debt == 2
-            queue_state.responses.append({"response": "cached"})
-        assert serve.generate_response_data(state, request) == {"response": "cached"}
+            queue_state.responses.append(serve.serialize_generate_response({"response": "cached"}))
+        cached_response = serve.generate_response_data(state, request)
+        assert isinstance(cached_response, str)
+        assert serve.app.json.loads(cached_response) == {"response": "cached"}
         with state.prefetch.condition:
             assert state.prefetch.queues[key].refill_debt == 4
     finally:
         serve.generate_response_data_uncached_validated = original_generate
 
     assert calls == [request]
+
+
+def assert_generate_route_returns_serialized_prefetch_response() -> None:
+    original_generate = serve.generate_response_data
+    original_state = serve.SERVING_STATE
+    state = prefetch_test_state()
+
+    def generate_response_data(_state, _generate_request):
+        return serve.serialize_generate_response({"response": "cached"})
+
+    try:
+        serve.SERVING_STATE = state
+        serve.generate_response_data = generate_response_data
+        response = serve.app.test_client().post(
+            "/generate",
+            json=base_payload() | {"small_map": False},
+        )
+    finally:
+        serve.generate_response_data = original_generate
+        serve.SERVING_STATE = original_state
+
+    assert response.status_code == 200
+    assert response.mimetype == "application/json"
+    assert response.get_json() == {"response": "cached"}
 
 
 def assert_prefetch_refill_drains_until_full() -> None:
@@ -205,7 +231,10 @@ def assert_prefetch_refill_drains_until_full() -> None:
 
     with state.prefetch.condition:
         queue_state = state.prefetch.queues[key]
-        assert list(queue_state.responses) == [{"response": 1}, {"response": 2}]
+        assert [
+            serve.app.json.loads(response)
+            for response in queue_state.responses
+        ] == [{"response": 1}, {"response": 2}]
         assert queue_state.refill_debt == 0
         assert not state.prefetch.refill_scheduled
     assert calls == [request, request]
@@ -228,7 +257,12 @@ def assert_prefetch_refill_skips_full_queue() -> None:
         )
         with state.prefetch.condition:
             queue_state = serve.touch_prefetch_queue(state, key, request)
-            queue_state.responses.extend([{"response": 1}, {"response": 2}])
+            queue_state.responses.extend(
+                [
+                    serve.serialize_generate_response({"response": 1}),
+                    serve.serialize_generate_response({"response": 2}),
+                ]
+            )
             queue_state.refill_debt = 2
             state.prefetch.refill_scheduled = True
             state.prefetch.schedule_version = 1
@@ -442,6 +476,7 @@ def main() -> None:
     assert_warmup_request_failure_propagates()
     assert_prefetch_disabled_uses_uncached_generation()
     assert_prefetch_hit_and_miss_behavior()
+    assert_generate_route_returns_serialized_prefetch_response()
     assert_prefetch_refill_drains_until_full()
     assert_prefetch_refill_skips_full_queue()
     assert_prefetch_lru_eviction()
