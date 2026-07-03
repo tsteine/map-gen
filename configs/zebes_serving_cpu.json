@@ -8,6 +8,7 @@
   "autocast": false,
   "verify_outcome_consistency": false,
   "gpu_prefetch_batches": 1,
+  "num_warmup_requests": 4,
   "area_assignment_attempts": 16384,
   "area_bounding_box_width": 61,
   "area_bounding_box_height": 30,

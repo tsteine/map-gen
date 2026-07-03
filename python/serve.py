@@ -72,6 +72,7 @@ class ServingConfig(StrictBaseModel):
     autocast: bool
     verify_outcome_consistency: bool
     gpu_prefetch_batches: int
+    num_warmup_requests: int
     area_assignment_attempts: int
     area_bounding_box_width: int
     area_bounding_box_height: int
@@ -214,33 +215,10 @@ def create_environment_groups(
     engine: Engine,
     seed: int | None,
 ) -> list:
+    validate_serving_config(serving_config)
     generation_config = training_config.generation
-    if serving_config.num_environments <= 0:
-        raise ValueError("num_environments must be greater than zero")
-    if serving_config.pipeline_groups <= 0:
-        raise ValueError("pipeline_groups must be greater than zero")
-    if serving_config.num_environments % serving_config.pipeline_groups != 0:
-        raise ValueError(
-            "num_environments must be divisible by pipeline_groups"
-        )
-    if serving_config.num_threads <= 0:
-        raise ValueError("num_threads must be greater than zero")
-    if serving_config.gpu_prefetch_batches < 0:
-        raise ValueError("gpu_prefetch_batches must be greater than or equal to zero")
-    if serving_config.area_assignment_attempts <= 0:
-        raise ValueError("area_assignment_attempts must be greater than zero")
-    if serving_config.area_bounding_box_width <= 0:
-        raise ValueError("area_bounding_box_width must be greater than zero")
-    if serving_config.area_bounding_box_height <= 0:
-        raise ValueError("area_bounding_box_height must be greater than zero")
-    if serving_config.area_min_rooms <= 0:
-        raise ValueError("area_min_rooms must be greater than zero")
-    if serving_config.area_max_rooms < serving_config.area_min_rooms:
-        raise ValueError("area_max_rooms must be at least area_min_rooms")
     group_environments = serving_config.num_environments // serving_config.pipeline_groups
     group_threads = serving_config.num_threads // serving_config.pipeline_groups
-    if group_threads <= 0:
-        raise ValueError("num_threads must be at least pipeline_groups")
     return [
         engine.create_environment_group(
             training_config.map_size,
@@ -254,6 +232,35 @@ def create_environment_groups(
         )
         for group_index in range(serving_config.pipeline_groups)
     ]
+
+
+def validate_serving_config(serving_config: ServingConfig) -> None:
+    if serving_config.num_environments <= 0:
+        raise ValueError("num_environments must be greater than zero")
+    if serving_config.pipeline_groups <= 0:
+        raise ValueError("pipeline_groups must be greater than zero")
+    if serving_config.num_environments % serving_config.pipeline_groups != 0:
+        raise ValueError(
+            "num_environments must be divisible by pipeline_groups"
+        )
+    if serving_config.num_threads <= 0:
+        raise ValueError("num_threads must be greater than zero")
+    if serving_config.num_threads // serving_config.pipeline_groups <= 0:
+        raise ValueError("num_threads must be at least pipeline_groups")
+    if serving_config.gpu_prefetch_batches < 0:
+        raise ValueError("gpu_prefetch_batches must be greater than or equal to zero")
+    if serving_config.num_warmup_requests < 0:
+        raise ValueError("num_warmup_requests must be greater than or equal to zero")
+    if serving_config.area_assignment_attempts <= 0:
+        raise ValueError("area_assignment_attempts must be greater than zero")
+    if serving_config.area_bounding_box_width <= 0:
+        raise ValueError("area_bounding_box_width must be greater than zero")
+    if serving_config.area_bounding_box_height <= 0:
+        raise ValueError("area_bounding_box_height must be greater than zero")
+    if serving_config.area_min_rooms <= 0:
+        raise ValueError("area_min_rooms must be greater than zero")
+    if serving_config.area_max_rooms < serving_config.area_min_rooms:
+        raise ValueError("area_max_rooms must be at least area_min_rooms")
 
 
 def serving_model_dtype(serving_config: ServingConfig) -> torch.dtype:
@@ -603,6 +610,39 @@ def initialize_serving_state(state: ServingState) -> None:
     SERVING_STATE = state
 
 
+def warmup_generate_request() -> GenerateRequest:
+    return GenerateRequest(
+        episode_length=253,
+        recommended_candidates=4,
+        shortlist_candidates=16,
+        temperature=0.03,
+        proposal_temperature=0.3,
+        reward_door=1.0,
+        reward_connection=1.0,
+        reward_toilet=1.0,
+        reward_phantoon=1.0,
+        reward_balance=0.1,
+        reward_toilet_balance=0.1,
+        reward_frontier=0.0,
+        reward_graph_diameter=0.1,
+        reward_save_distance=0.1,
+        reward_refill_distance=0.1,
+        reward_missing_connect_utility=0.5,
+        area_assignment_base_order="random",
+        small_map=False,
+    )
+
+
+def run_warmup_requests(state: ServingState) -> None:
+    for request_idx in range(state.serving_config.num_warmup_requests):
+        logging.info(
+            "Running warmup request %s/%s",
+            request_idx + 1,
+            state.serving_config.num_warmup_requests,
+        )
+        _ = generate_response_data(state, warmup_generate_request())
+
+
 def serving_state() -> ServingState:
     if SERVING_STATE is None:
         raise RuntimeError("serving state has not been initialized")
@@ -622,18 +662,25 @@ def add_serving_profile(
 @app.post("/generate")
 def generate_response():
     state = serving_state()
+    body = request.get_json(silent=False)
+    logging.info("Request body: %s", body)
+    generate_request = GenerateRequest.model_validate(body)
+    return jsonify(generate_response_data(state, generate_request))
+
+
+def generate_response_data(
+    state: ServingState,
+    generate_request: GenerateRequest,
+) -> dict:
     serving_profiler = GenerationProfiler(state.profile)
     request_start = profile_start(state.profile)
 
     profile_time = profile_start(state.profile)
-    body = request.get_json(silent=False)
-    logging.info("Request body: %s", body)
-    generate_request = GenerateRequest.model_validate(body)
     validate_generate_request(generate_request, state.rooms)
     add_serving_profile(
         serving_profiler,
         state.device,
-        "python.serve.parse_validate_request",
+        "python.serve.validate_request",
         profile_time,
     )
 
@@ -811,7 +858,7 @@ def generate_response():
     if state.profile:
         response["profile"] = profile_report + serving_profiler.report()
     logging.info("Response stats: %s", response["stats"])
-    return jsonify(response)
+    return response
 
 
 @app.get("/health")
@@ -848,6 +895,7 @@ def main() -> None:
         args.profile,
     )
     initialize_serving_state(state)
+    run_warmup_requests(state)
     app.run(
         host=serving_config.host,
         port=serving_config.port,
