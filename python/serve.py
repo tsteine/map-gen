@@ -705,7 +705,7 @@ def run_warmup_requests(state: ServingState) -> None:
             request_idx + 1,
             state.serving_config.num_warmup_requests,
         )
-        _ = generate_response_data(state, warmup_generate_request())
+        _ = generate_response_data_uncached_validated(state, warmup_generate_request())
 
 
 def serving_state() -> ServingState:

@@ -148,7 +148,6 @@ def compute_expected_reward(
     preds,
     outcomes,
     config: GenerateConfig,
-    profile,
 ):
     def batch_weight(value: float | torch.Tensor) -> float | torch.Tensor:
         if isinstance(value, torch.Tensor):
@@ -182,20 +181,15 @@ def compute_expected_reward(
         + batch_weight(config.reward_toilet_balance) * toilet_balance_scores
         - batch_weight(config.reward_frontier) * preds.avg_frontiers.to(torch.float32)
         - batch_weight(config.reward_graph_diameter) * preds.graph_diameter.to(torch.float32)
-        + profile(
-            "python.reward.save_refill_utility_sum",
-            lambda: (
-                batch_weight(config.reward_save_distance)
-                * (
-                    total_proximity_utility(preds.save_to_room_utility)
-                    + total_proximity_utility(preds.save_from_room_utility)
-                )
-                + batch_weight(config.reward_refill_distance)
-                * (
-                    total_proximity_utility(preds.refill_to_room_utility)
-                    + total_proximity_utility(preds.refill_from_room_utility)
-                )
-            ),
+        + batch_weight(config.reward_save_distance)
+        * (
+            total_proximity_utility(preds.save_to_room_utility)
+            + total_proximity_utility(preds.save_from_room_utility)
+        )
+        + batch_weight(config.reward_refill_distance)
+        * (
+            total_proximity_utility(preds.refill_to_room_utility)
+            + total_proximity_utility(preds.refill_from_room_utility)
         )
         + (
             batch_weight(config.reward_missing_connect_utility)
@@ -744,7 +738,6 @@ def select_candidate_actions(
         ),
         outcomes,
         group.config,
-        model_profile,
     )
     sync_profile_device(device, profile)
     profiler.add("python.score.reward", profile_time)

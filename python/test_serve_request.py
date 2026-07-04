@@ -85,32 +85,48 @@ def assert_invalid_serving_config(payload: dict, expected_message: str) -> None:
 
 def assert_warmup_requests_run() -> None:
     original_generate_response_data = serve.generate_response_data
+    original_generate_response_data_uncached_validated = (
+        serve.generate_response_data_uncached_validated
+    )
     calls = []
     state = SimpleNamespace(serving_config=SimpleNamespace(num_warmup_requests=3))
 
     def generate_response_data(_state, generate_request):
+        raise AssertionError("warmup should not use prefetch-aware generation")
+
+    def generate_response_data_uncached_validated(_state, generate_request):
         calls.append(generate_request)
         return {"stats": {"num_valid": 0}}
 
     try:
         serve.generate_response_data = generate_response_data
+        serve.generate_response_data_uncached_validated = (
+            generate_response_data_uncached_validated
+        )
         run_warmup_requests(state)
     finally:
         serve.generate_response_data = original_generate_response_data
+        serve.generate_response_data_uncached_validated = (
+            original_generate_response_data_uncached_validated
+        )
 
     assert len(calls) == 3
     assert all(isinstance(call, GenerateRequest) for call in calls)
 
 
 def assert_warmup_request_failure_propagates() -> None:
-    original_generate_response_data = serve.generate_response_data
+    original_generate_response_data_uncached_validated = (
+        serve.generate_response_data_uncached_validated
+    )
     state = SimpleNamespace(serving_config=SimpleNamespace(num_warmup_requests=1))
 
-    def generate_response_data(_state, _generate_request):
+    def generate_response_data_uncached_validated(_state, _generate_request):
         raise RuntimeError("warmup failed")
 
     try:
-        serve.generate_response_data = generate_response_data
+        serve.generate_response_data_uncached_validated = (
+            generate_response_data_uncached_validated
+        )
         try:
             run_warmup_requests(state)
         except RuntimeError as error:
@@ -118,7 +134,9 @@ def assert_warmup_request_failure_propagates() -> None:
         else:
             raise AssertionError("expected RuntimeError")
     finally:
-        serve.generate_response_data = original_generate_response_data
+        serve.generate_response_data_uncached_validated = (
+            original_generate_response_data_uncached_validated
+        )
 
 
 def prefetch_test_state() -> SimpleNamespace:
