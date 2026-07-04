@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import threading
 import time
 from collections import OrderedDict, deque
@@ -453,50 +454,91 @@ def create_generate_configs(
         "reward_refill_distance": generate_request.reward_refill_distance,
         "reward_missing_connect_utility": generate_request.reward_missing_connect_utility,
     }
-    return [
-        GenerateConfig(
-            episode_length=generate_request.episode_length,
-            recommended_candidates=generate_request.recommended_candidates,
-            shortlist_candidates=generate_request.shortlist_candidates,
-            gpu_prefetch_batches=state.serving_config.gpu_prefetch_batches,
-            temperature=torch.full(
-                [env.num_envs],
-                generate_request.temperature,
-                dtype=torch.float32,
-                device=device,
-            ),
-            proposal_temperature=torch.full(
-                [env.num_envs],
-                generate_request.proposal_temperature,
-                dtype=torch.float32,
-                device=device,
-            ),
-            reward_door=generate_request.reward_door,
-            reward_connection=generate_request.reward_connection,
-            reward_toilet=generate_request.reward_toilet,
-            reward_phantoon=generate_request.reward_phantoon,
-            reward_balance=generate_request.reward_balance,
-            reward_toilet_balance=generate_request.reward_toilet_balance,
-            reward_frontier=generate_request.reward_frontier,
-            reward_graph_diameter=generate_request.reward_graph_diameter,
-            reward_save_distance=generate_request.reward_save_distance,
-            reward_refill_distance=generate_request.reward_refill_distance,
-            reward_missing_connect_utility=generate_request.reward_missing_connect_utility,
-            generation_variable_floats=torch.tensor(
-                [
-                    [
-                        generation_variable_float_values[name]
-                        for name in GENERATION_VARIABLE_FLOAT_FIELDS
-                    ]
-                ],
-                dtype=torch.float32,
-                device=device,
-            ).expand(env.num_envs, len(GENERATION_VARIABLE_FLOAT_FIELDS)),
-            distance_proximity_scale=state.training_config.distance_proximity_scale,
-            autocast=state.serving_config.autocast,
+    configs = []
+    for env in envs:
+        temperature = torch.full(
+            [env.num_envs],
+            generate_request.temperature,
+            dtype=torch.float32,
+            device=device,
         )
-        for env in envs
-    ]
+        proposal_temperature = torch.full(
+            [env.num_envs],
+            generate_request.proposal_temperature,
+            dtype=torch.float32,
+            device=device,
+        )
+        generation_variable_floats_cpu = torch.tensor(
+            [
+                [
+                    generation_variable_float_values[name]
+                    for name in GENERATION_VARIABLE_FLOAT_FIELDS
+                ]
+            ],
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+        ).expand(env.num_envs, len(GENERATION_VARIABLE_FLOAT_FIELDS)).contiguous()
+        log_temperature_cpu = temperature.detach().to(torch.device("cpu")).log()
+        log_recommended_candidates_cpu = torch.full(
+            [env.num_envs],
+            math.log(generate_request.recommended_candidates + 1),
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+        candidate_shape = torch.Size([env.num_envs, generate_request.recommended_candidates])
+        candidate_log_temperature_cpu = (
+            log_temperature_cpu.unsqueeze(1).expand(candidate_shape).contiguous()
+        )
+        candidate_log_recommended_candidates_cpu = torch.full(
+            candidate_shape,
+            math.log(generate_request.recommended_candidates + 1),
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+        candidate_generation_variable_floats_cpu = (
+            generation_variable_floats_cpu.unsqueeze(1)
+            .expand(
+                env.num_envs,
+                generate_request.recommended_candidates,
+                len(GENERATION_VARIABLE_FLOAT_FIELDS),
+            )
+            .contiguous()
+        )
+        configs.append(
+            GenerateConfig(
+                episode_length=generate_request.episode_length,
+                recommended_candidates=generate_request.recommended_candidates,
+                shortlist_candidates=generate_request.shortlist_candidates,
+                gpu_prefetch_batches=state.serving_config.gpu_prefetch_batches,
+                temperature=temperature,
+                proposal_temperature=proposal_temperature,
+                reward_door=generate_request.reward_door,
+                reward_connection=generate_request.reward_connection,
+                reward_toilet=generate_request.reward_toilet,
+                reward_phantoon=generate_request.reward_phantoon,
+                reward_balance=generate_request.reward_balance,
+                reward_toilet_balance=generate_request.reward_toilet_balance,
+                reward_frontier=generate_request.reward_frontier,
+                reward_graph_diameter=generate_request.reward_graph_diameter,
+                reward_save_distance=generate_request.reward_save_distance,
+                reward_refill_distance=generate_request.reward_refill_distance,
+                reward_missing_connect_utility=generate_request.reward_missing_connect_utility,
+                generation_variable_floats=generation_variable_floats_cpu.to(device),
+                log_temperature_cpu=log_temperature_cpu,
+                log_recommended_candidates_cpu=log_recommended_candidates_cpu,
+                generation_variable_floats_cpu=generation_variable_floats_cpu,
+                candidate_log_temperature_cpu=candidate_log_temperature_cpu,
+                candidate_log_recommended_candidates_cpu=(
+                    candidate_log_recommended_candidates_cpu
+                ),
+                candidate_generation_variable_floats_cpu=(
+                    candidate_generation_variable_floats_cpu
+                ),
+                distance_proximity_scale=state.training_config.distance_proximity_scale,
+                autocast=state.serving_config.autocast,
+            )
+        )
+    return configs
 
 
 def tensor_to_list(tensor: torch.Tensor) -> list:

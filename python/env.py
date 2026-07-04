@@ -34,6 +34,12 @@ class GenerateConfig:
     reward_refill_distance: float | torch.Tensor
     reward_missing_connect_utility: float | torch.Tensor
     generation_variable_floats: torch.Tensor
+    log_temperature_cpu: torch.Tensor
+    log_recommended_candidates_cpu: torch.Tensor
+    generation_variable_floats_cpu: torch.Tensor
+    candidate_log_temperature_cpu: torch.Tensor
+    candidate_log_recommended_candidates_cpu: torch.Tensor
+    candidate_generation_variable_floats_cpu: torch.Tensor
     distance_proximity_scale: float
     autocast: bool
 

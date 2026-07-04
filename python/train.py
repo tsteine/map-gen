@@ -517,6 +517,35 @@ def create_generate_config(
         ],
         dim=1,
     )
+    log_temperature_cpu = temperature.detach().to(torch.device("cpu")).log()
+    log_recommended_candidates_cpu = torch.full(
+        [num_envs],
+        math.log(config.generation.recommended_candidates + 1),
+        dtype=torch.float32,
+        device=torch.device("cpu"),
+    )
+    generation_variable_floats_cpu = generation_variable_floats.detach().to(
+        torch.device("cpu")
+    ).contiguous()
+    candidate_shape = torch.Size([num_envs, config.generation.recommended_candidates])
+    candidate_log_temperature_cpu = (
+        log_temperature_cpu.unsqueeze(1).expand(candidate_shape).contiguous()
+    )
+    candidate_log_recommended_candidates_cpu = torch.full(
+        candidate_shape,
+        math.log(config.generation.recommended_candidates + 1),
+        dtype=torch.float32,
+        device=torch.device("cpu"),
+    )
+    candidate_generation_variable_floats_cpu = (
+        generation_variable_floats_cpu.unsqueeze(1)
+        .expand(
+            num_envs,
+            config.generation.recommended_candidates,
+            len(GENERATION_VARIABLE_FLOAT_FIELDS),
+        )
+        .contiguous()
+    )
     return GenerateConfig(
         episode_length=episode_length,
         recommended_candidates=config.generation.recommended_candidates,
@@ -538,6 +567,12 @@ def create_generate_config(
             generation_variable_floats_by_name["reward_missing_connect_utility"]
         ),
         generation_variable_floats=generation_variable_floats,
+        log_temperature_cpu=log_temperature_cpu,
+        log_recommended_candidates_cpu=log_recommended_candidates_cpu,
+        generation_variable_floats_cpu=generation_variable_floats_cpu,
+        candidate_log_temperature_cpu=candidate_log_temperature_cpu,
+        candidate_log_recommended_candidates_cpu=candidate_log_recommended_candidates_cpu,
+        candidate_generation_variable_floats_cpu=candidate_generation_variable_floats_cpu,
         distance_proximity_scale=config.distance_proximity_scale,
         autocast=config.model.generation_autocast,
     )

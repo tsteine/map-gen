@@ -511,24 +511,14 @@ def candidate_log_inputs(
     config: GenerateConfig,
     candidate_shape: torch.Size,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    candidate_log_temperature = config.temperature.to(torch.device("cpu")).log().unsqueeze(1)
-    candidate_log_temperature = candidate_log_temperature.expand(candidate_shape).contiguous()
-    candidate_log_recommended_candidates = torch.full(
-        candidate_shape,
-        math.log(config.recommended_candidates + 1),
-        dtype=torch.float32,
-        device=torch.device("cpu"),
-    )
-    candidate_generation_variable_floats = (
-        config.generation_variable_floats.to(torch.device("cpu"))
-        .unsqueeze(1)
-        .expand(*candidate_shape, config.generation_variable_floats.shape[1])
-        .contiguous()
-    )
+    environment_count, candidate_count = candidate_shape
     return (
-        candidate_log_temperature,
-        candidate_log_recommended_candidates,
-        candidate_generation_variable_floats,
+        config.candidate_log_temperature_cpu[:environment_count, :candidate_count],
+        config.candidate_log_recommended_candidates_cpu[:environment_count, :candidate_count],
+        config.candidate_generation_variable_floats_cpu[
+            :environment_count,
+            :candidate_count,
+        ],
     )
 
 
@@ -536,15 +526,11 @@ def state_log_inputs(
     config: GenerateConfig,
     environment_count: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    log_temperature = config.temperature.to(torch.device("cpu")).log()
-    log_recommended_candidates = torch.full(
-        [environment_count],
-        math.log(config.recommended_candidates + 1),
-        dtype=torch.float32,
-        device=torch.device("cpu"),
+    return (
+        config.log_temperature_cpu[:environment_count],
+        config.log_recommended_candidates_cpu[:environment_count],
+        config.generation_variable_floats_cpu[:environment_count],
     )
-    generation_variable_floats = config.generation_variable_floats.to(torch.device("cpu"))
-    return log_temperature, log_recommended_candidates, generation_variable_floats
 
 
 def select_outcomes(outcomes: StepOutcomes, index: torch.Tensor) -> StepOutcomes:
