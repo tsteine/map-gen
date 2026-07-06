@@ -21,7 +21,6 @@ def base_payload() -> dict:
         "shortlist_candidates": 1,
         "temperature": 1.0,
         "proposal_temperature": 1.0,
-        "shortlist_temperature": 1.0,
         "reward_door": 1.0,
         "reward_connection": 1.0,
         "reward_toilet": 1.0,
@@ -485,7 +484,6 @@ def main() -> None:
     assert warmup_request.shortlist_candidates == 16
     assert warmup_request.temperature == 0.03
     assert warmup_request.proposal_temperature == 0.3
-    assert warmup_request.shortlist_temperature == 0.3
     assert warmup_request.reward_balance == 0.1
     assert warmup_request.reward_toilet_balance == 0.1
     assert warmup_request.reward_missing_connect_utility == 0.5

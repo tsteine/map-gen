@@ -76,7 +76,6 @@ class MainLossBreakdown:
     refill_distance: float
     missing_connect_utility: float
     proposal: float
-    shortlist: float
     door_contribution: float
     connection_contribution: float
     toilet_contribution: float
@@ -89,7 +88,6 @@ class MainLossBreakdown:
     refill_distance_contribution: float
     missing_connect_utility_contribution: float
     proposal_contribution: float
-    shortlist_contribution: float
 
 
 @dataclass
@@ -132,7 +130,6 @@ def empty_main_loss_breakdown() -> MainLossBreakdown:
         refill_distance=0.0,
         missing_connect_utility=0.0,
         proposal=0.0,
-        shortlist=0.0,
         door_contribution=0.0,
         connection_contribution=0.0,
         toilet_contribution=0.0,
@@ -145,7 +142,6 @@ def empty_main_loss_breakdown() -> MainLossBreakdown:
         refill_distance_contribution=0.0,
         missing_connect_utility_contribution=0.0,
         proposal_contribution=0.0,
-        shortlist_contribution=0.0,
     )
 
 
@@ -163,7 +159,6 @@ def accumulate_main_loss(target: MainLossBreakdown, source: MainLossBreakdown) -
     target.refill_distance += source.refill_distance
     target.missing_connect_utility += source.missing_connect_utility
     target.proposal += source.proposal
-    target.shortlist += source.shortlist
     target.door_contribution += source.door_contribution
     target.connection_contribution += source.connection_contribution
     target.toilet_contribution += source.toilet_contribution
@@ -176,7 +171,6 @@ def accumulate_main_loss(target: MainLossBreakdown, source: MainLossBreakdown) -
     target.refill_distance_contribution += source.refill_distance_contribution
     target.missing_connect_utility_contribution += source.missing_connect_utility_contribution
     target.proposal_contribution += source.proposal_contribution
-    target.shortlist_contribution += source.shortlist_contribution
 
 
 def average_main_loss(total_loss: MainLossBreakdown, count: int) -> MainLossBreakdown:
@@ -194,7 +188,6 @@ def average_main_loss(total_loss: MainLossBreakdown, count: int) -> MainLossBrea
         refill_distance=total_loss.refill_distance / count,
         missing_connect_utility=total_loss.missing_connect_utility / count,
         proposal=total_loss.proposal / count,
-        shortlist=total_loss.shortlist / count,
         door_contribution=total_loss.door_contribution / count,
         connection_contribution=total_loss.connection_contribution / count,
         toilet_contribution=total_loss.toilet_contribution / count,
@@ -209,7 +202,6 @@ def average_main_loss(total_loss: MainLossBreakdown, count: int) -> MainLossBrea
             total_loss.missing_connect_utility_contribution / count
         ),
         proposal_contribution=total_loss.proposal_contribution / count,
-        shortlist_contribution=total_loss.shortlist_contribution / count,
     )
 
 
@@ -583,100 +575,6 @@ def proposal_scores_for_frontier(
     return result
 
 
-def shortlist_scores_for_frontier(
-    shortlist_output: torch.nn.Module,
-    proposal_state: torch.Tensor,
-    row_snapshot_idx: torch.Tensor,
-    row_frontier_idx: torch.Tensor,
-    frontier_idx: torch.Tensor,
-    door_variant_idx: torch.Tensor,
-    device: torch.device,
-) -> torch.Tensor:
-    frontier_idx = frontier_idx.to(device)
-    door_variant_idx = door_variant_idx.to(device, dtype=torch.int64)
-    result = torch.full(
-        door_variant_idx.shape,
-        float("-inf"),
-        dtype=shortlist_output.output_dtype,
-        device=device,
-    )
-    if proposal_state.shape[0] == 0:
-        return result
-    row_snapshot_idx = row_snapshot_idx.to(device)
-    row_frontier_idx = row_frontier_idx.to(device)
-    row_valid = (
-        (row_snapshot_idx >= 0)
-        & (row_snapshot_idx < frontier_idx.shape[0])
-        & (row_frontier_idx == frontier_idx[row_snapshot_idx])
-    )
-    if torch.any(row_valid):
-        snapshot_idx = row_snapshot_idx[row_valid]
-        result[snapshot_idx] = shortlist_output(
-            proposal_state[row_valid].to(shortlist_output.output_dtype),
-            door_variant_idx[snapshot_idx],
-        )
-    return result
-
-
-def shortlist_batch_loss(
-    shortlist_score: torch.Tensor,
-    frontier_idx: torch.Tensor,
-    door_variant_idx: torch.Tensor,
-    target_logits: torch.Tensor,
-    device: torch.device,
-) -> torch.Tensor:
-    frontier_idx = frontier_idx.to(device, dtype=torch.int64)
-    door_variant_idx = door_variant_idx.to(device, dtype=torch.int64)
-    target_logits = target_logits.to(device, dtype=torch.float32)
-    frontier_valid = frontier_idx >= 0
-    if frontier_valid.ndim == 1:
-        frontier_valid = frontier_valid.unsqueeze(1)
-    valid = frontier_valid & (door_variant_idx >= 0) & torch.isfinite(target_logits)
-    row_valid = torch.any(valid, dim=1)
-    if not torch.any(row_valid):
-        return torch.sum(shortlist_score) * 0.0
-    candidate_logits = torch.where(
-        valid,
-        shortlist_score.to(torch.float32),
-        torch.full_like(shortlist_score.to(torch.float32), float("-inf")),
-    )
-    target_logits = torch.where(
-        valid,
-        target_logits,
-        torch.full_like(target_logits, float("-inf")),
-    )
-    row_candidate_logits = candidate_logits[row_valid]
-    row_target_logits = target_logits[row_valid]
-    row_mask = valid[row_valid]
-    shortlist_log_probs = torch.nn.functional.log_softmax(
-        row_candidate_logits,
-        dim=1,
-    )
-    target_log_probs = torch.nn.functional.log_softmax(
-        row_target_logits,
-        dim=1,
-    )
-    safe_target_log_probs = torch.where(
-        row_mask,
-        target_log_probs,
-        torch.zeros_like(target_log_probs),
-    )
-    safe_shortlist_log_probs = torch.where(
-        row_mask,
-        shortlist_log_probs,
-        torch.zeros_like(shortlist_log_probs),
-    )
-    target_probs = torch.where(
-        row_mask,
-        torch.exp(target_log_probs),
-        torch.zeros_like(target_log_probs),
-    )
-    kl_terms = target_probs * (safe_target_log_probs - safe_shortlist_log_probs)
-    return torch.sum(torch.where(row_mask, kl_terms, torch.zeros_like(kl_terms))) / row_mask.shape[
-        0
-    ]
-
-
 def train_feature_batch_backward(
     context: TrainRoundContext,
     prepared_batch: PreparedTrainBatch,
@@ -875,29 +773,6 @@ def train_feature_batch_backward(
             total_loss.total += weighted_proposal_loss.item()
             total_loss.proposal += batch_proposal_loss.item() * prefix_weight
             total_loss.proposal_contribution += weighted_proposal_loss.item()
-            shortlist_score = shortlist_scores_for_frontier(
-                context.main_model.shortlist_output,
-                preds.proposal_state,
-                preds.proposal_row_snapshot_idx,
-                preds.proposal_row_frontier_idx,
-                feature_batch.proposal_frontier_idx,
-                feature_batch.proposal_door_variant_idx,
-                context.device,
-            )
-            batch_shortlist_loss = shortlist_batch_loss(
-                shortlist_score,
-                feature_batch.proposal_frontier_idx,
-                feature_batch.proposal_door_variant_idx,
-                feature_batch.proposal_target_logits,
-                context.device,
-            )
-            weighted_shortlist_loss = (
-                context.config.train.shortlist_weight * batch_shortlist_loss * prefix_weight
-            )
-            backward_loss = backward_loss + weighted_shortlist_loss
-            total_loss.total += weighted_shortlist_loss.item()
-            total_loss.shortlist += batch_shortlist_loss.item() * prefix_weight
-            total_loss.shortlist_contribution += weighted_shortlist_loss.item()
         (backward_loss * loss_scale).backward()
     return total_loss
 

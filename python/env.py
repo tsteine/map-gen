@@ -22,7 +22,6 @@ class GenerateConfig:
     gpu_prefetch_batches: int
     temperature: torch.Tensor
     proposal_temperature: torch.Tensor
-    shortlist_temperature: torch.Tensor
     reward_door: float | torch.Tensor
     reward_connection: float | torch.Tensor
     reward_toilet: float | torch.Tensor

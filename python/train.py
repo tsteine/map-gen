@@ -462,18 +462,9 @@ def create_generate_config(
             "generation.proposal_temperature",
         )
     )
-    shortlist_temperature = (
-        torch.full([num_envs], IGNORE_SCORES_TEMPERATURE, dtype=torch.float32, device=device)
-        if ignore_scores
-        else variable_float_tensor(
-            config.generation.shortlist_temperature,
-            "generation.shortlist_temperature",
-        )
-    )
     generation_variable_floats_by_name = {
         "temperature": temperature,
         "proposal_temperature": proposal_temperature,
-        "shortlist_temperature": shortlist_temperature,
         "reward_door": variable_float_tensor(
             config.generation.reward_door,
             "generation.reward_door",
@@ -560,7 +551,6 @@ def create_generate_config(
         gpu_prefetch_batches=config.generation.gpu_prefetch_batches,
         temperature=temperature,
         proposal_temperature=proposal_temperature,
-        shortlist_temperature=shortlist_temperature,
         reward_door=generation_variable_floats_by_name["reward_door"],
         reward_connection=generation_variable_floats_by_name["reward_connection"],
         reward_toilet=generation_variable_floats_by_name["reward_toilet"],
@@ -1347,7 +1337,6 @@ class TrainingSession:
             100.0 * loss.missing_connect_utility_contribution / loss_denominator
         )
         proposal_loss_pct = 100.0 * loss.proposal_contribution / loss_denominator
-        shortlist_loss_pct = 100.0 * loss.shortlist_contribution / loss_denominator
 
         metrics = {
             "loss": loss.total,
@@ -1375,8 +1364,6 @@ class TrainingSession:
             "missing_connect_utility_loss_pct": missing_connect_utility_loss_pct,
             "proposal_loss": loss.proposal,
             "proposal_loss_pct": proposal_loss_pct,
-            "shortlist_loss": loss.shortlist,
-            "shortlist_loss_pct": shortlist_loss_pct,
             "candidate_target_entropy": candidate_diagnostics.target_entropy,
             "candidate_uniform_kl": candidate_diagnostics.uniform_kl,
             "candidate_selected_probability": candidate_diagnostics.selected_probability,
@@ -1418,10 +1405,6 @@ class TrainingSession:
             "proposal_temperature": variable_float_metric_value(
                 step_config.generation.proposal_temperature,
                 "generation.proposal_temperature",
-            ),
-            "shortlist_temperature": variable_float_metric_value(
-                step_config.generation.shortlist_temperature,
-                "generation.shortlist_temperature",
             ),
             "reward_door": variable_float_metric_value(
                 step_config.generation.reward_door,
@@ -1515,7 +1498,7 @@ class TrainingSession:
         logging.info(
             "round %s, loss %.4f (d %.1f%%, c %.1f%%, t %.1f%%, ph %.1f%%, "
             "b %.1f%%, tb %.1f%%, d %.1f%%, "
-            "s %.1f%%, r %.1f%%, p %.1f%%, sl %.1f%%), "
+            "s %.1f%%, r %.1f%%, p %.1f%%), "
             "succ %.4f, total %.2f (min %s), door %.2f (min %s), "
             "conn %.2f (min %s), tube %.2f, diam %.2f, ss %.3f, "
             "p %.4f, "
@@ -1532,7 +1515,6 @@ class TrainingSession:
             save_distance_loss_pct,
             refill_distance_loss_pct,
             proposal_loss_pct,
-            shortlist_loss_pct,
             scalar(success_rate),
             scalar(avg_invalid),
             scalar(min_invalid),
@@ -1685,7 +1667,7 @@ def parse_args() -> Args:
     parser.add_argument(
         "--ignore-scores",
         action="store_true",
-        help="set generation temperature, proposal_temperature, and shortlist_temperature to a large finite value",
+        help="set generation temperature and proposal_temperature to a large finite value",
     )
     namespace = parser.parse_args()
     return Args(

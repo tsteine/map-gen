@@ -14,7 +14,6 @@
     "global_embedding_width": 256,
     "hidden_width": 256,
     "proposal_hidden_width": 64,
-    "shortlist_hidden_width": 64,
     "missing_connect_query_hidden_width": 256,
     "missing_connect_query_frontier_width": 64,
     "missing_connect_query_distance_width": 16,
@@ -49,7 +48,6 @@
     "shortlist_candidates": 16,
     "temperature": 1.0,
     "proposal_temperature": 1.0,
-    "shortlist_temperature": 1.0,
     "reward_door": 1.0,
     "reward_connection": 1.0,
     "reward_toilet": 1.0,
@@ -116,7 +114,6 @@
     "refill_distance_weight": 0.0,
     "missing_connect_utility_weight": 0.0,
     "proposal_weight": 0.1,
-    "shortlist_weight": 0.1,
     "pipeline_groups": 4,
     "gradient_accumulation_steps": 1,
     "shuffle_buffer_batches": 16

@@ -96,7 +96,6 @@ class GenerateRequest(StrictBaseModel):
     shortlist_candidates: int
     temperature: float
     proposal_temperature: float
-    shortlist_temperature: float
     reward_door: float
     reward_connection: float
     reward_toilet: float
@@ -413,8 +412,6 @@ def validate_generate_request(generate_request: GenerateRequest, rooms: list[dic
         raise ValueError("temperature must be greater than zero")
     if generate_request.proposal_temperature <= 0:
         raise ValueError("proposal_temperature must be greater than zero")
-    if generate_request.shortlist_temperature <= 0:
-        raise ValueError("shortlist_temperature must be greater than zero")
     if generate_request.small_map:
         missing_fields = [
             field
@@ -445,7 +442,6 @@ def create_generate_configs(
     generation_variable_float_values = {
         "temperature": generate_request.temperature,
         "proposal_temperature": generate_request.proposal_temperature,
-        "shortlist_temperature": generate_request.shortlist_temperature,
         "reward_door": generate_request.reward_door,
         "reward_connection": generate_request.reward_connection,
         "reward_toilet": generate_request.reward_toilet,
@@ -469,12 +465,6 @@ def create_generate_configs(
         proposal_temperature = torch.full(
             [env.num_envs],
             generate_request.proposal_temperature,
-            dtype=torch.float32,
-            device=device,
-        )
-        shortlist_temperature = torch.full(
-            [env.num_envs],
-            generate_request.shortlist_temperature,
             dtype=torch.float32,
             device=device,
         )
@@ -522,7 +512,6 @@ def create_generate_configs(
                 gpu_prefetch_batches=state.serving_config.gpu_prefetch_batches,
                 temperature=temperature,
                 proposal_temperature=proposal_temperature,
-                shortlist_temperature=shortlist_temperature,
                 reward_door=generate_request.reward_door,
                 reward_connection=generate_request.reward_connection,
                 reward_toilet=generate_request.reward_toilet,
@@ -735,7 +724,6 @@ def warmup_generate_request() -> GenerateRequest:
         shortlist_candidates=16,
         temperature=0.03,
         proposal_temperature=0.3,
-        shortlist_temperature=0.3,
         reward_door=1.0,
         reward_connection=1.0,
         reward_toilet=1.0,

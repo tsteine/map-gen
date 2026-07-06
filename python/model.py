@@ -210,45 +210,6 @@ class ProposalOutput(torch.nn.Module):
         return self.layers(x)
 
 
-class ShortlistOutput(torch.nn.Module):
-    def __init__(
-        self,
-        input_width: int,
-        hidden_width: int,
-        door_variant_count: int,
-    ):
-        super().__init__()
-        if hidden_width <= 0:
-            raise ValueError("shortlist_hidden_width must be greater than zero")
-        self.door_variant_embedding = torch.nn.Embedding(door_variant_count, input_width)
-        self.layers = torch.nn.Sequential(
-            torch.nn.Linear(input_width, hidden_width, bias=False),
-            torch.nn.GELU(),
-            torch.nn.Linear(hidden_width, 1, bias=False),
-        )
-        self.layers[-1].weight.data.zero_()
-
-    @property
-    def output_dtype(self) -> torch.dtype:
-        return self.layers[-1].weight.dtype
-
-    def forward(
-        self,
-        proposal_state: torch.Tensor,
-        door_variant_idx: torch.Tensor,
-    ) -> torch.Tensor:
-        safe_door_variant_idx = door_variant_idx.to(torch.int64).clamp(
-            0,
-            self.door_variant_embedding.num_embeddings - 1,
-        )
-        variant_state = self.door_variant_embedding(safe_door_variant_idx).to(
-            proposal_state.dtype
-        )
-        while proposal_state.ndim < variant_state.ndim:
-            proposal_state = proposal_state.unsqueeze(1)
-        return self.layers(proposal_state + variant_state).squeeze(-1)
-
-
 class MissingConnectQueryHead(torch.nn.Module):
     max_distance_index = 510
     unreachable_distance = 255
@@ -544,7 +505,6 @@ class FrontierModel(torch.nn.Module):
         global_embedding_width,
         hidden_width,
         proposal_hidden_width,
-        shortlist_hidden_width,
         missing_connect_query_hidden_width,
         missing_connect_query_frontier_width,
         missing_connect_query_distance_width,
@@ -766,11 +726,6 @@ class FrontierModel(torch.nn.Module):
         self.proposal_output = ProposalOutput(
             embedding_width,
             proposal_hidden_width,
-            output_metadata.num_door_variants,
-        )
-        self.shortlist_output = ShortlistOutput(
-            embedding_width,
-            shortlist_hidden_width,
             output_metadata.num_door_variants,
         )
 
