@@ -56,7 +56,7 @@ class ModelConfig(StrictBaseModel):
     embedding_width: int
     global_embedding_width: int
     hidden_width: int
-    proposal_hidden_width: int
+    proposal_hidden_widths: list[int]
     missing_connect_query_hidden_width: int
     missing_connect_query_frontier_width: int
     missing_connect_query_distance_width: int
@@ -379,8 +379,11 @@ def validate_config(config: Config) -> None:
         raise ValueError("distance_proximity_scale must be greater than zero")
     if config.model.global_embedding_width <= 0:
         raise ValueError("model.global_embedding_width must be greater than zero")
-    if config.model.proposal_hidden_width <= 0:
-        raise ValueError("model.proposal_hidden_width must be greater than zero")
+    for index, width in enumerate(config.model.proposal_hidden_widths):
+        if width <= 0:
+            raise ValueError(
+                f"model.proposal_hidden_widths[{index}] must be greater than zero"
+            )
     if config.model.missing_connect_query_hidden_width <= 0:
         raise ValueError("model.missing_connect_query_hidden_width must be greater than zero")
     if config.model.missing_connect_query_frontier_width <= 0:

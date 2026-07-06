@@ -188,18 +188,22 @@ class ProposalOutput(torch.nn.Module):
     def __init__(
         self,
         input_width: int,
-        hidden_width: int,
+        hidden_widths: list[int],
         output_width: int,
     ):
         super().__init__()
-        if hidden_width <= 0:
-            raise ValueError("proposal_hidden_width must be greater than zero")
+        for index, width in enumerate(hidden_widths):
+            if width <= 0:
+                raise ValueError(f"proposal_hidden_widths[{index}] must be greater than zero")
         self.out_features = output_width
-        self.layers = torch.nn.Sequential(
-            torch.nn.Linear(input_width, hidden_width, bias=False),
-            torch.nn.GELU(),
-            torch.nn.Linear(hidden_width, output_width, bias=False),
-        )
+        layers = []
+        prev_width = input_width
+        for hidden_width in hidden_widths:
+            layers.append(torch.nn.Linear(prev_width, hidden_width, bias=False))
+            layers.append(torch.nn.GELU())
+            prev_width = hidden_width
+        layers.append(torch.nn.Linear(prev_width, output_width, bias=False))
+        self.layers = torch.nn.Sequential(*layers)
         self.layers[-1].weight.data.zero_()
 
     @property
@@ -504,7 +508,7 @@ class FrontierModel(torch.nn.Module):
         embedding_width,
         global_embedding_width,
         hidden_width,
-        proposal_hidden_width,
+        proposal_hidden_widths,
         missing_connect_query_hidden_width,
         missing_connect_query_frontier_width,
         missing_connect_query_distance_width,
@@ -725,7 +729,7 @@ class FrontierModel(torch.nn.Module):
         )
         self.proposal_output = ProposalOutput(
             embedding_width,
-            proposal_hidden_width,
+            proposal_hidden_widths,
             output_metadata.num_door_variants,
         )
 

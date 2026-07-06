@@ -13,7 +13,7 @@
     "embedding_width": 512,
     "global_embedding_width": 512,
     "hidden_width": 512,
-    "proposal_hidden_width": 1024,
+    "proposal_hidden_widths": [1024],
     "missing_connect_query_hidden_width": 512,
     "missing_connect_query_frontier_width": 64,
     "missing_connect_query_distance_width": 16,
