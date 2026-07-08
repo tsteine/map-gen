@@ -11,6 +11,7 @@ pub type GeometryIdx = u8; // flat index of unique room geometries (map + door l
 pub type ConnectionVariantIdx = u8; // flat index of unique room types (map + door layout + connections + room effects)
 pub type FrontierIdx = i16; // index into the sorted frontier feature rows
 pub type DoorVariantIdx = i16; // index into door variants keyed by room type and local door identity
+pub type ProposalActionIdx = i16; // flattened proposal action: door variant * area count + area
 pub type Coord = i8; // x or y position on the map
 pub type PartIdx = u8; // index of part within a room
 pub type RoomPartIdx = u16; // flat index of part across all rooms
@@ -29,6 +30,21 @@ pub enum DoorValidOutcome {
 pub const AREA_COUNT: usize = 6;
 pub const DUMMY_AREA: AreaIdx = AREA_COUNT as AreaIdx;
 pub const NUM_DIRS: usize = 4; // left, right, up, down
+
+pub fn proposal_action_idx(door_variant_idx: DoorVariantIdx, area: AreaIdx) -> ProposalActionIdx {
+    door_variant_idx * AREA_COUNT as ProposalActionIdx + ProposalActionIdx::from(area)
+}
+
+pub fn proposal_action_parts(
+    proposal_action_idx: ProposalActionIdx,
+) -> Option<(DoorVariantIdx, AreaIdx)> {
+    if proposal_action_idx < 0 {
+        return None;
+    }
+    let door_variant_idx = proposal_action_idx / AREA_COUNT as ProposalActionIdx;
+    let area = (proposal_action_idx % AREA_COUNT as ProposalActionIdx) as AreaIdx;
+    Some((door_variant_idx, area))
+}
 
 #[derive(Clone, Deserialize)]
 pub struct Room {

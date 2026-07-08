@@ -940,6 +940,9 @@ class TrainingSession:
                     room_y=torch.cat(
                         [episode_data.actions.room_y for episode_data in episode_data_iterations]
                     ),
+                    room_area=torch.cat(
+                        [episode_data.actions.room_area for episode_data in episode_data_iterations]
+                    ),
                 ),
                 temperature=torch.cat(
                     [episode_data.temperature for episode_data in episode_data_iterations]
@@ -1094,8 +1097,8 @@ class TrainingSession:
                 frontier_idx=torch.cat(
                     [proposal_data.frontier_idx for proposal_data in proposal_data_iterations]
                 ),
-                door_variant_idx=torch.cat(
-                    [proposal_data.door_variant_idx for proposal_data in proposal_data_iterations]
+                action_idx=torch.cat(
+                    [proposal_data.action_idx for proposal_data in proposal_data_iterations]
                 ),
                 selected_candidate=torch.cat(
                     [

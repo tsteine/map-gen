@@ -5,7 +5,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from env import OutputMetadata, Features
+from env import AREA_COUNT, OutputMetadata, Features
 from features import (
     FRONTIER_NODE_FEATURES,
     FRONTIER_PAIR_FEATURES,
@@ -730,7 +730,7 @@ class FrontierModel(torch.nn.Module):
         self.proposal_output = ProposalOutput(
             embedding_width,
             proposal_hidden_widths,
-            output_metadata.num_door_variants,
+            output_metadata.num_door_variants * AREA_COUNT,
         )
 
     def _pair_features(self, features, neighbor, dtype):

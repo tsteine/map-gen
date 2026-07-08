@@ -48,7 +48,7 @@ class TrainBatchTask:
 class FeatureTrainBatch:
     features: Features
     proposal_frontier_idx: torch.Tensor | None
-    proposal_door_variant_idx: torch.Tensor | None
+    proposal_action_idx: torch.Tensor | None
     proposal_target_logits: torch.Tensor | None
 
 
@@ -210,7 +210,7 @@ def compute_candidate_diagnostics(proposal_data: ProposalData) -> CandidateDiagn
     frontier_valid = proposal_data.frontier_idx >= 0
     while frontier_valid.ndim < target_logits.ndim:
         frontier_valid = frontier_valid.unsqueeze(-1)
-    valid = frontier_valid & (proposal_data.door_variant_idx >= 0) & torch.isfinite(target_logits)
+    valid = frontier_valid & (proposal_data.action_idx >= 0) & torch.isfinite(target_logits)
     candidate_count = target_logits.shape[-1]
     flat_logits = target_logits.reshape(-1, candidate_count)
     flat_valid = valid.reshape(-1, candidate_count)
@@ -328,6 +328,7 @@ def prepare_feature_batches(
             room_idx=train_actions_cpu.room_idx[:, step],
             room_x=train_actions_cpu.room_x[:, step],
             room_y=train_actions_cpu.room_y[:, step],
+            room_area=train_actions_cpu.room_area[:, step],
         )
         sample_step = step % config.train.sample_period == offset
         if config.features.lookahead_outcomes:
@@ -344,11 +345,11 @@ def prepare_feature_batches(
             else:
                 next_lookahead_outcomes = None
             proposal_frontier_idx = None
-            proposal_door_variant_idx = None
+            proposal_action_idx = None
             proposal_target_logits = None
             if proposal_data is not None and step + 1 < episode_length:
                 proposal_frontier_idx = proposal_data.frontier_idx[:, step]
-                proposal_door_variant_idx = proposal_data.door_variant_idx[:, step]
+                proposal_action_idx = proposal_data.action_idx[:, step]
                 proposal_target_logits = proposal_data.target_logits[:, step]
             feature_slot = FeatureSlot(env, pin_memory=pin_memory)
             feature_batches.append(
@@ -367,7 +368,7 @@ def prepare_feature_batches(
                         train_actions.room_idx.shape[0],
                     ),
                     proposal_frontier_idx=proposal_frontier_idx,
-                    proposal_door_variant_idx=proposal_door_variant_idx,
+                    proposal_action_idx=proposal_action_idx,
                     proposal_target_logits=proposal_target_logits,
                 )
             )
@@ -472,34 +473,34 @@ def train_balance_batch_backward(
 def proposal_batch_loss(
     proposal_score: torch.Tensor,
     frontier_idx: torch.Tensor,
-    door_variant_idx: torch.Tensor,
+    action_idx: torch.Tensor,
     target_logits: torch.Tensor,
     device: torch.device,
 ) -> torch.Tensor:
     frontier_idx = frontier_idx.to(device, dtype=torch.int64)
-    door_variant_idx = door_variant_idx.to(device, dtype=torch.int64)
+    action_idx = action_idx.to(device, dtype=torch.int64)
     target_logits = target_logits.to(device, dtype=torch.float32)
     frontier_valid = frontier_idx >= 0
     if frontier_valid.ndim == 1:
         frontier_valid = frontier_valid.unsqueeze(1)
     valid = (
         frontier_valid
-        & (door_variant_idx >= 0)
-        & (door_variant_idx < proposal_score.shape[1])
+        & (action_idx >= 0)
+        & (action_idx < proposal_score.shape[1])
         & torch.isfinite(target_logits)
     )
     row_valid = torch.any(valid, dim=1)
     if not torch.any(row_valid):
         return torch.sum(proposal_score) * 0.0
-    safe_door_variant_idx = door_variant_idx.clamp_min(0)
+    safe_action_idx = action_idx.clamp_min(0)
     batch_idx = torch.arange(
-        door_variant_idx.shape[0],
+        action_idx.shape[0],
         dtype=torch.int64,
         device=device,
     ).unsqueeze(1)
     candidate_logits = proposal_score[
         batch_idx,
-        safe_door_variant_idx,
+        safe_action_idx,
     ]
     candidate_logits = torch.where(
         valid,
@@ -669,7 +670,7 @@ def train_feature_batch_backward(
         return_proposal_state = (
             prepared_batch.kind == "fresh"
             and feature_batch.proposal_frontier_idx is not None
-            and feature_batch.proposal_door_variant_idx is not None
+            and feature_batch.proposal_action_idx is not None
             and feature_batch.proposal_target_logits is not None
         )
         with torch.amp.autocast(
@@ -762,7 +763,7 @@ def train_feature_batch_backward(
             batch_proposal_loss = proposal_batch_loss(
                 proposal_score,
                 feature_batch.proposal_frontier_idx,
-                feature_batch.proposal_door_variant_idx,
+                feature_batch.proposal_action_idx,
                 feature_batch.proposal_target_logits,
                 context.device,
             )

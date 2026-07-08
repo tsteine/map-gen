@@ -76,8 +76,8 @@ def _select_environment(values: Any, environment_index: int) -> List[Any]:
 
 def _normalize_actions(actions: Any, environment_index: int) -> List[Action]:
     """Convert engine.get_actions() or a sequence of placements into triples."""
-    if isinstance(actions, tuple) and len(actions) == 3:
-        room_idx, room_x, room_y = actions
+    if isinstance(actions, tuple) and len(actions) in (3, 4):
+        room_idx, room_x, room_y = actions[:3]
         room_idx = _select_environment(room_idx, environment_index)
         room_x = _select_environment(room_x, environment_index)
         room_y = _select_environment(room_y, environment_index)
@@ -94,7 +94,7 @@ def _normalize_actions(actions: Any, environment_index: int) -> List[Action]:
                 )
             )
         else:
-            room_idx, x, y = action
+            room_idx, x, y = action[:3]
             normalized.append((int(room_idx), int(x), int(y)))
     return normalized
 
@@ -528,7 +528,7 @@ def display_map(
     """Display room placements returned by ``engine.get_actions()``.
 
     ``rooms`` is the parsed room JSON. ``actions`` may be the raw
-    ``engine.get_actions()`` tuple of ``(room_idx, x, y)`` arrays, or any
+    ``engine.get_actions()`` tuple of ``(room_idx, x, y, area)`` arrays, or any
     iterable of ``(room_idx, x, y)`` placements.
     """
     placements = _normalize_actions(actions, environment_index)

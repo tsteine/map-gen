@@ -13,6 +13,21 @@ import map_gen
 if TYPE_CHECKING:
     from train_config import EngineFeatureConfig, FeatureConfig
 
+AREA_COUNT = 6
+DUMMY_AREA = AREA_COUNT
+
+
+def proposal_action_idx(door_variant_idx: torch.Tensor, room_area: torch.Tensor) -> torch.Tensor:
+    return door_variant_idx * AREA_COUNT + room_area
+
+
+def proposal_action_door_variant_idx(action_idx: torch.Tensor) -> torch.Tensor:
+    return torch.div(action_idx, AREA_COUNT, rounding_mode="floor")
+
+
+def proposal_action_room_area(action_idx: torch.Tensor) -> torch.Tensor:
+    return action_idx % AREA_COUNT
+
 
 @dataclass
 class GenerateConfig:
@@ -52,12 +67,14 @@ class Actions:
     room_idx: torch.Tensor
     room_x: torch.Tensor
     room_y: torch.Tensor
+    room_area: torch.Tensor
 
     def select(self, index: torch.Tensor) -> "Actions":
         return Actions(
             room_idx=torch.gather(self.room_idx, 1, index.unsqueeze(1)).squeeze(1),
             room_x=torch.gather(self.room_x, 1, index.unsqueeze(1)).squeeze(1),
             room_y=torch.gather(self.room_y, 1, index.unsqueeze(1)).squeeze(1),
+            room_area=torch.gather(self.room_area, 1, index.unsqueeze(1)).squeeze(1),
         )
 
     def to(self, device: torch.device, non_blocking: bool = False) -> "Actions":
@@ -65,6 +82,7 @@ class Actions:
             room_idx=self.room_idx.to(device, non_blocking=non_blocking),
             room_x=self.room_x.to(device, non_blocking=non_blocking),
             room_y=self.room_y.to(device, non_blocking=non_blocking),
+            room_area=self.room_area.to(device, non_blocking=non_blocking),
         )
 
     def slice(self, start: int, end: int) -> "Actions":
@@ -72,6 +90,7 @@ class Actions:
             room_idx=self.room_idx[start:end],
             room_x=self.room_x[start:end],
             room_y=self.room_y[start:end],
+            room_area=self.room_area[start:end],
         )
 
 
@@ -102,14 +121,14 @@ class EpisodeData:
 @dataclass
 class ProposalData:
     frontier_idx: torch.Tensor
-    door_variant_idx: torch.Tensor
+    action_idx: torch.Tensor
     selected_candidate: torch.Tensor
     target_logits: torch.Tensor
 
     def to(self, device: torch.device) -> "ProposalData":
         return ProposalData(
             frontier_idx=self.frontier_idx.to(device),
-            door_variant_idx=self.door_variant_idx.to(device),
+            action_idx=self.action_idx.to(device),
             selected_candidate=self.selected_candidate.to(device),
             target_logits=self.target_logits.to(device),
         )
@@ -117,7 +136,7 @@ class ProposalData:
     def slice(self, start: int, end: int) -> "ProposalData":
         return ProposalData(
             frontier_idx=self.frontier_idx[start:end],
-            door_variant_idx=self.door_variant_idx[start:end],
+            action_idx=self.action_idx[start:end],
             selected_candidate=self.selected_candidate[start:end],
             target_logits=self.target_logits[start:end],
         )
@@ -259,14 +278,14 @@ class ProposalCandidateMask:
     proposal_frontier_idx: torch.Tensor
     mask: torch.Tensor
     valid_counts: torch.Tensor
-    door_variant_count: int
+    proposal_action_count: int
 
     def to(self, device: torch.device) -> "ProposalCandidateMask":
         return ProposalCandidateMask(
             proposal_frontier_idx=self.proposal_frontier_idx.to(device),
             mask=self.mask.to(device),
             valid_counts=self.valid_counts.to(device),
-            door_variant_count=self.door_variant_count,
+            proposal_action_count=self.proposal_action_count,
         )
 
 
@@ -295,8 +314,9 @@ class CandidateSlot:
         self.room_idx = None
         self.room_x = None
         self.room_y = None
+        self.room_area = None
         self.proposal_frontier_idx = None
-        self.proposal_door_variant_idx = None
+        self.proposal_action_idx = None
         self.pre_door_invalid = None
         self.pre_connection_invalid = None
         self.pre_toilet_invalid = None
@@ -326,8 +346,9 @@ class CandidateSlot:
         self.room_idx = self._empty(candidate_shape, torch.uint8)
         self.room_x = self._empty(candidate_shape, torch.int8)
         self.room_y = self._empty(candidate_shape, torch.int8)
+        self.room_area = self._empty(candidate_shape, torch.uint8)
         self.proposal_frontier_idx = self._empty(candidate_shape, torch.int16)
-        self.proposal_door_variant_idx = self._empty(candidate_shape, torch.int16)
+        self.proposal_action_idx = self._empty(candidate_shape, torch.int16)
         self.pre_door_invalid = self._empty(
             (self.environment_capacity, self.door_count),
             torch.int8,
@@ -358,6 +379,7 @@ class CandidateSlot:
             room_idx=self.room_idx[:environment_count, :candidate_count],
             room_x=self.room_x[:environment_count, :candidate_count],
             room_y=self.room_y[:environment_count, :candidate_count],
+            room_area=self.room_area[:environment_count, :candidate_count],
         )
 
     def proposal_frontiers(
@@ -367,12 +389,12 @@ class CandidateSlot:
     ) -> torch.Tensor:
         return self.proposal_frontier_idx[:environment_count, :candidate_count]
 
-    def proposal_door_variants(
+    def proposal_actions(
         self,
         environment_count: int,
         candidate_count: int,
     ) -> torch.Tensor:
-        return self.proposal_door_variant_idx[:environment_count, :candidate_count]
+        return self.proposal_action_idx[:environment_count, :candidate_count]
 
     def reward_outcomes(self, environment_count: int) -> StepOutcomes:
         return StepOutcomes(
@@ -851,6 +873,7 @@ class EnvironmentGroup:
             actions.room_idx.contiguous().cpu().numpy(),
             actions.room_x.contiguous().cpu().numpy(),
             actions.room_y.contiguous().cpu().numpy(),
+            actions.room_area.contiguous().cpu().numpy(),
         )
 
     def step_initial(self):
@@ -861,14 +884,16 @@ class EnvironmentGroup:
             actions.room_idx.contiguous().cpu().numpy(),
             actions.room_x.contiguous().cpu().numpy(),
             actions.room_y.contiguous().cpu().numpy(),
+            actions.room_area.contiguous().cpu().numpy(),
         )
 
     def get_actions(self, device: torch.device) -> Actions:
-        room_idx, room_x, room_y = self.env.get_actions()
+        room_idx, room_x, room_y, room_area = self.env.get_actions()
         return Actions(
             room_idx=torch.from_numpy(room_idx).to(device),
             room_x=torch.from_numpy(room_x).to(device),
             room_y=torch.from_numpy(room_y).to(device),
+            room_area=torch.from_numpy(room_area).to(device),
         )
 
     def get_proposal_candidate_mask(
@@ -882,14 +907,14 @@ class EnvironmentGroup:
             valid_counts=torch.from_numpy(result.valid_counts).to(
                 device=device, dtype=torch.int64
             ),
-            door_variant_count=result.door_variant_count,
+            proposal_action_count=result.proposal_action_count,
         )
 
     def extract_candidates_from_proposals(
         self,
         candidate_slot: CandidateSlot,
         sampled_frontier_idx: torch.Tensor,
-        sampled_door_variant_idx: torch.Tensor,
+        sampled_proposal_action_idx: torch.Tensor,
         recommended_candidates: int,
     ) -> tuple[
         Actions,
@@ -906,17 +931,20 @@ class EnvironmentGroup:
             map_gen.ProposalCandidateBuffers(
                 {
                     "sampled_frontier_idx": sampled_frontier_idx.contiguous().cpu().numpy(),
-                    "sampled_door_variant_idx": sampled_door_variant_idx.contiguous()
+                    "sampled_proposal_action_idx": sampled_proposal_action_idx.contiguous()
                     .cpu()
                     .numpy(),
                     "recommended_candidates": recommended_candidates,
                     "room_idx": candidate_slot.room_idx[: self.num_envs, :candidate_count].numpy(),
                     "room_x": candidate_slot.room_x[: self.num_envs, :candidate_count].numpy(),
                     "room_y": candidate_slot.room_y[: self.num_envs, :candidate_count].numpy(),
+                    "room_area": candidate_slot.room_area[
+                        : self.num_envs, :candidate_count
+                    ].numpy(),
                     "proposal_frontier_idx": candidate_slot.proposal_frontier_idx[
                         : self.num_envs, :candidate_count
                     ].numpy(),
-                    "proposal_door_variant_idx": candidate_slot.proposal_door_variant_idx[
+                    "proposal_action_idx": candidate_slot.proposal_action_idx[
                         : self.num_envs, :candidate_count
                     ].numpy(),
                     "pre_door_valid": candidate_slot.pre_door_invalid[: self.num_envs].numpy(),
@@ -967,7 +995,7 @@ class EnvironmentGroup:
         return (
             candidate_slot.actions(self.num_envs, candidate_count),
             candidate_slot.proposal_frontiers(self.num_envs, candidate_count),
-            candidate_slot.proposal_door_variants(self.num_envs, candidate_count),
+            candidate_slot.proposal_actions(self.num_envs, candidate_count),
             candidate_slot.reward_outcomes(self.num_envs),
             candidate_slot.post_candidate_outcomes(self.num_envs, candidate_count),
             FeatureRequirements(

@@ -230,7 +230,7 @@ class ProposalCache:
 class CandidateBatch:
     candidates: Actions
     proposal_frontier_idx: torch.Tensor
-    proposal_door_variant_idx: torch.Tensor
+    proposal_action_idx: torch.Tensor
     reward_outcomes: StepOutcomes
     post_candidate_outcomes: StepOutcomes
     feature_requirements: FeatureRequirements
@@ -240,7 +240,7 @@ class CandidateBatch:
         return CandidateBatch(
             candidates=self.candidates.to(device, non_blocking=non_blocking),
             proposal_frontier_idx=self.proposal_frontier_idx.to(device, non_blocking=non_blocking),
-            proposal_door_variant_idx=self.proposal_door_variant_idx.to(
+            proposal_action_idx=self.proposal_action_idx.to(
                 device, non_blocking=non_blocking
             ),
             reward_outcomes=self.reward_outcomes.to(device, non_blocking=non_blocking),
@@ -259,7 +259,7 @@ class CandidateScoreSuccess:
     selected_outcomes: StepOutcomes
     selected_proposal_scores: ProposalCache | None
     proposal_frontier_idx: torch.Tensor
-    proposal_door_variant_idx: torch.Tensor
+    proposal_action_idx: torch.Tensor
     selected_candidate: torch.Tensor
     target_logits: torch.Tensor
 
@@ -318,7 +318,7 @@ type GpuReadyMessage = StagedCandidateScoreRequest | StopPipeline
 @dataclass
 class GroupPipelineOutput:
     proposal_frontier_idx: list[torch.Tensor]
-    proposal_door_variant_idx: list[torch.Tensor]
+    proposal_action_idx: list[torch.Tensor]
     selected_candidate: list[torch.Tensor]
     target_logits: list[torch.Tensor]
 
@@ -383,12 +383,12 @@ def create_generation_environment_groups(
 def get_shortlist_candidate_batch(
     group: GenerationGroup,
     sampled_frontier_idx: torch.Tensor,
-    sampled_door_variant_idx: torch.Tensor,
+    sampled_proposal_action_idx: torch.Tensor,
 ) -> CandidateBatch:
     (
         candidates,
         proposal_frontier_idx,
-        proposal_door_variant_idx,
+        proposal_action_idx,
         reward_outcomes,
         post_candidate_outcomes,
         feature_requirements,
@@ -396,13 +396,13 @@ def get_shortlist_candidate_batch(
     ) = group.env.extract_candidates_from_proposals(
         group.candidate_slot,
         sampled_frontier_idx,
-        sampled_door_variant_idx,
+        sampled_proposal_action_idx,
         group.config.recommended_candidates,
     )
     return CandidateBatch(
         candidates=candidates,
         proposal_frontier_idx=proposal_frontier_idx,
-        proposal_door_variant_idx=proposal_door_variant_idx,
+        proposal_action_idx=proposal_action_idx,
         reward_outcomes=reward_outcomes,
         post_candidate_outcomes=post_candidate_outcomes,
         feature_requirements=feature_requirements,
@@ -414,7 +414,7 @@ def unpack_proposal_mask(mask: ProposalCandidateMask, device: torch.device) -> t
     packed = mask.mask.to(device)
     shifts = torch.arange(8, device=device, dtype=packed.dtype)
     bits = ((packed.unsqueeze(-1) >> shifts) & 1).to(torch.bool).flatten(1)
-    return bits[:, : mask.door_variant_count]
+    return bits[:, : mask.proposal_action_count]
 
 
 def row_scores_for_mask(
@@ -454,9 +454,9 @@ def sample_proposal_shortlist(
     config: GenerateConfig,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    proposal_door_variant_count = proposal_scores.shape[1]
+    proposal_action_count = proposal_scores.shape[1]
     environment_count = proposal_mask.proposal_frontier_idx.shape[0]
-    if proposal_door_variant_count == 0:
+    if proposal_action_count == 0:
         empty_sampled = torch.full(
             (environment_count, config.shortlist_candidates),
             -1,
@@ -466,7 +466,7 @@ def sample_proposal_shortlist(
         return empty_sampled, empty_sampled
     frontier_idx = proposal_mask.proposal_frontier_idx.to(device)
     valid_frontier = frontier_idx >= 0
-    valid = unpack_proposal_mask(proposal_mask, device)[:, :proposal_door_variant_count]
+    valid = unpack_proposal_mask(proposal_mask, device)[:, :proposal_action_count]
     valid = valid & valid_frontier.unsqueeze(1)
     sample_keys = proposal_scores.to(dtype=torch.float32, copy=True)
     sample_keys.div_(config.proposal_temperature.to(device).view(-1, 1).clamp_min(1e-6))
@@ -481,11 +481,11 @@ def sample_proposal_shortlist(
         sorted=True,
     ).indices
     sampled_is_valid = valid.gather(1, sampled_flat)
-    sampled_door_variant_idx = sampled_flat
-    sampled_door_variant_idx = torch.where(
+    sampled_proposal_action_idx = sampled_flat
+    sampled_proposal_action_idx = torch.where(
         sampled_is_valid,
-        sampled_door_variant_idx,
-        torch.full_like(sampled_door_variant_idx, -1),
+        sampled_proposal_action_idx,
+        torch.full_like(sampled_proposal_action_idx, -1),
     )
     if shortlist_candidates < config.shortlist_candidates:
         padding = torch.full(
@@ -494,16 +494,16 @@ def sample_proposal_shortlist(
             dtype=sampled_flat.dtype,
             device=device,
         )
-        sampled_door_variant_idx = torch.cat([sampled_door_variant_idx, padding], dim=1)
+        sampled_proposal_action_idx = torch.cat([sampled_proposal_action_idx, padding], dim=1)
     sampled_frontier_idx = frontier_idx.unsqueeze(1).expand(-1, config.shortlist_candidates)
     sampled_frontier_idx = torch.where(
-        sampled_door_variant_idx >= 0,
+        sampled_proposal_action_idx >= 0,
         sampled_frontier_idx,
         torch.full_like(sampled_frontier_idx, -1),
     )
     return (
         sampled_frontier_idx.to(torch.int16),
-        sampled_door_variant_idx.to(torch.int16),
+        sampled_proposal_action_idx.to(torch.int16),
     )
 
 
@@ -619,12 +619,12 @@ def prepare_candidate_features(
 def prepare_shortlist_generation_step(
     group: GenerationGroup,
     sampled_frontier_idx: torch.Tensor,
-    sampled_door_variant_idx: torch.Tensor,
+    sampled_proposal_action_idx: torch.Tensor,
 ) -> PreparedGenerationStep:
     candidate_batch = get_shortlist_candidate_batch(
         group,
         sampled_frontier_idx,
-        sampled_door_variant_idx,
+        sampled_proposal_action_idx,
     )
     return prepare_candidate_features(
         group.env,
@@ -813,10 +813,10 @@ def compute_cached_proposal_scores(
         device=device,
         dtype=torch.int64,
     )
-    door_variant_count = model.proposal_output.out_features
+    proposal_action_count = model.proposal_output.out_features
     if cache.state.shape[0] == 0:
         return cache.state.new_zeros(
-            (proposal_frontier_idx.shape[0], door_variant_count),
+            (proposal_frontier_idx.shape[0], proposal_action_count),
         )
     row_start_idx = cache.row_start_idx.to(device)
     row_count = cache.row_count.to(device)
@@ -1000,17 +1000,17 @@ def score_staged_candidate_request(
             device=device,
         )
     )
-    if candidate_batch.proposal_door_variant_idx.shape[1] == max_candidates:
-        door_variant_idx = candidate_batch.proposal_door_variant_idx
+    if candidate_batch.proposal_action_idx.shape[1] == max_candidates:
+        proposal_action_idx = candidate_batch.proposal_action_idx
     else:
-        door_variant_idx = torch.full(
+        proposal_action_idx = torch.full(
             [candidates.room_idx.shape[0], max_candidates],
             -1,
-            dtype=candidate_batch.proposal_door_variant_idx.dtype,
+            dtype=candidate_batch.proposal_action_idx.dtype,
             device=device,
         )
-        door_variant_idx[:, : candidate_batch.proposal_door_variant_idx.shape[1]] = (
-            candidate_batch.proposal_door_variant_idx
+        proposal_action_idx[:, : candidate_batch.proposal_action_idx.shape[1]] = (
+            candidate_batch.proposal_action_idx
         )
     if candidate_logits.shape[1] == max_candidates:
         target_logits = candidate_logits.to(torch.float32)
@@ -1033,7 +1033,7 @@ def score_staged_candidate_request(
         selected_outcomes=selected_outcomes.to(torch.device("cpu")),
         selected_proposal_scores=selected_proposal_scores,
         proposal_frontier_idx=frontier_idx.to(device="cpu", copy=True),
-        proposal_door_variant_idx=door_variant_idx.to(device="cpu", copy=True),
+        proposal_action_idx=proposal_action_idx.to(device="cpu", copy=True),
         selected_candidate=action_index.to(device="cpu", copy=True),
         target_logits=target_logits.to(device="cpu", copy=True),
     )
@@ -1217,7 +1217,7 @@ def compute_group_proposal_shortlist(
         profile_time = profile_start(profile)
         (
             sampled_frontier_idx,
-            sampled_door_variant_idx,
+            sampled_proposal_action_idx,
         ) = sample_proposal_shortlist(
             proposal_scores,
             proposal_inputs.mask,
@@ -1228,7 +1228,7 @@ def compute_group_proposal_shortlist(
         shared.profiler.add("python.proposal.sample_shortlist", profile_time)
     return (
         sampled_frontier_idx.to(torch.device("cpu")),
-        sampled_door_variant_idx.to(torch.device("cpu")),
+        sampled_proposal_action_idx.to(torch.device("cpu")),
         shortlist_limited.to(torch.device("cpu")),
     )
 
@@ -1288,7 +1288,7 @@ def run_group_producer(
         while group.step < group.config.episode_length and not shared.cancellation_event.is_set():
             (
                 sampled_frontier_idx,
-                sampled_door_variant_idx,
+                sampled_proposal_action_idx,
                 shortlist_limited,
             ) = compute_group_proposal_shortlist(
                 group,
@@ -1300,7 +1300,7 @@ def run_group_producer(
             prepared_step = prepare_shortlist_generation_step(
                 group,
                 sampled_frontier_idx,
-                sampled_door_variant_idx,
+                sampled_proposal_action_idx,
             )
             shared.profiler.add("python.wait_candidate_features", profile_time)
             request = CandidateScoreRequest(
@@ -1321,7 +1321,7 @@ def run_group_producer(
                 raise result.error
             record_candidate_stats(request, shared)
             output.proposal_frontier_idx.append(result.proposal_frontier_idx)
-            output.proposal_door_variant_idx.append(result.proposal_door_variant_idx)
+            output.proposal_action_idx.append(result.proposal_action_idx)
             output.selected_candidate.append(result.selected_candidate)
             output.target_logits.append(result.target_logits)
             profile_time = profile_start(shared.profiler.enabled)
@@ -1357,6 +1357,9 @@ def merge_generation_results(
                 ),
                 room_y=torch.cat(
                     [episode_data.actions.room_y for episode_data, _, _, _ in results]
+                ),
+                room_area=torch.cat(
+                    [episode_data.actions.room_area for episode_data, _, _, _ in results]
                 ),
             ),
             temperature=torch.cat([episode_data.temperature for episode_data, _, _, _ in results]),
@@ -1523,9 +1526,7 @@ def merge_generation_results(
         ),
         ProposalData(
             frontier_idx=torch.cat([proposal.frontier_idx for _, _, _, proposal in results]),
-            door_variant_idx=torch.cat(
-                [proposal.door_variant_idx for _, _, _, proposal in results]
-            ),
+            action_idx=torch.cat([proposal.action_idx for _, _, _, proposal in results]),
             selected_candidate=torch.cat(
                 [proposal.selected_candidate for _, _, _, proposal in results]
             ),
@@ -1541,7 +1542,7 @@ def empty_proposal_data(
 ) -> ProposalData:
     return ProposalData(
         frontier_idx=torch.empty((environment_count, 0), dtype=torch.int16, device=device),
-        door_variant_idx=torch.empty(
+        action_idx=torch.empty(
             (environment_count, 0, max_candidates), dtype=torch.int16, device=device
         ),
         selected_candidate=torch.empty((environment_count, 0), dtype=torch.int64, device=device),
@@ -1597,7 +1598,7 @@ def run_generation_groups(
     group_outputs = [
         GroupPipelineOutput(
             proposal_frontier_idx=[],
-            proposal_door_variant_idx=[],
+            proposal_action_idx=[],
             selected_candidate=[],
             target_logits=[],
         )
@@ -1711,9 +1712,8 @@ def run_generation_groups(
                             frontier_idx=torch.stack(
                                 group_outputs[group_index].proposal_frontier_idx, dim=1
                             ),
-                            door_variant_idx=torch.stack(
-                                group_outputs[group_index].proposal_door_variant_idx,
-                                dim=1,
+                            action_idx=torch.stack(
+                                group_outputs[group_index].proposal_action_idx, dim=1
                             ),
                             selected_candidate=torch.stack(
                                 group_outputs[group_index].selected_candidate, dim=1
