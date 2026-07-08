@@ -500,6 +500,15 @@ class GlobalFeatures:
     known_save_to_room_distance: torch.Tensor
     known_refill_from_room_distance: torch.Tensor
     known_refill_to_room_distance: torch.Tensor
+    area_used: torch.Tensor
+    area_min_x: torch.Tensor
+    area_max_x: torch.Tensor
+    area_min_y: torch.Tensor
+    area_max_y: torch.Tensor
+    area_connected_components: torch.Tensor
+    area_crossings: torch.Tensor
+    area_size: torch.Tensor
+    area_map_station_count: torch.Tensor
     log_temperature: torch.Tensor
     log_recommended_candidates: torch.Tensor
     generation_variable_floats: torch.Tensor
@@ -551,6 +560,19 @@ class GlobalFeatures:
                 device, non_blocking=non_blocking
             ),
             known_refill_to_room_distance=self.known_refill_to_room_distance.to(
+                device, non_blocking=non_blocking
+            ),
+            area_used=self.area_used.to(device, non_blocking=non_blocking),
+            area_min_x=self.area_min_x.to(device, non_blocking=non_blocking),
+            area_max_x=self.area_max_x.to(device, non_blocking=non_blocking),
+            area_min_y=self.area_min_y.to(device, non_blocking=non_blocking),
+            area_max_y=self.area_max_y.to(device, non_blocking=non_blocking),
+            area_connected_components=self.area_connected_components.to(
+                device, non_blocking=non_blocking
+            ),
+            area_crossings=self.area_crossings.to(device, non_blocking=non_blocking),
+            area_size=self.area_size.to(device, non_blocking=non_blocking),
+            area_map_station_count=self.area_map_station_count.to(
                 device, non_blocking=non_blocking
             ),
             log_temperature=self.log_temperature.to(device, non_blocking=non_blocking),
@@ -605,6 +627,15 @@ class GlobalFeatures:
             known_save_to_room_distance=self.known_save_to_room_distance.flatten(0, 1),
             known_refill_from_room_distance=self.known_refill_from_room_distance.flatten(0, 1),
             known_refill_to_room_distance=self.known_refill_to_room_distance.flatten(0, 1),
+            area_used=self.area_used.flatten(0, 1),
+            area_min_x=self.area_min_x.flatten(0, 1),
+            area_max_x=self.area_max_x.flatten(0, 1),
+            area_min_y=self.area_min_y.flatten(0, 1),
+            area_max_y=self.area_max_y.flatten(0, 1),
+            area_connected_components=self.area_connected_components.flatten(0, 1),
+            area_crossings=self.area_crossings.flatten(0, 1),
+            area_size=self.area_size.flatten(0, 1),
+            area_map_station_count=self.area_map_station_count.flatten(0, 1),
             log_temperature=self.log_temperature.flatten(0, 1),
             log_recommended_candidates=self.log_recommended_candidates.flatten(0, 1),
             generation_variable_floats=self.generation_variable_floats.flatten(0, 1),
@@ -622,6 +653,7 @@ class GlobalFeatures:
 class FrontierFeatures:
     frontier: torch.Tensor
     frontier_door_variant: torch.Tensor
+    frontier_area: torch.Tensor
     frontier_occupancy: torch.Tensor
     frontier_neighbor: torch.Tensor
     frontier_neighbor_pair: torch.Tensor
@@ -634,6 +666,7 @@ class FrontierFeatures:
         return FrontierFeatures(
             frontier=self.frontier.to(device, non_blocking=non_blocking),
             frontier_door_variant=self.frontier_door_variant.to(device, non_blocking=non_blocking),
+            frontier_area=self.frontier_area.to(device, non_blocking=non_blocking),
             frontier_occupancy=self.frontier_occupancy.to(device, non_blocking=non_blocking),
             frontier_neighbor=self.frontier_neighbor.to(device, non_blocking=non_blocking),
             frontier_neighbor_pair=self.frontier_neighbor_pair.to(
@@ -650,6 +683,7 @@ class FrontierFeatures:
     def mark_dynamic(self) -> None:
         torch._dynamo.maybe_mark_dynamic(self.frontier, 0)
         torch._dynamo.maybe_mark_dynamic(self.frontier_door_variant, 0)
+        torch._dynamo.maybe_mark_dynamic(self.frontier_area, 0)
         torch._dynamo.maybe_mark_dynamic(self.frontier_occupancy, 0)
         torch._dynamo.maybe_mark_dynamic(self.frontier_neighbor, 0)
         torch._dynamo.maybe_mark_dynamic(self.frontier_neighbor_pair, 0)
@@ -1281,8 +1315,20 @@ class EnvironmentGroup:
                     "known_refill_to_room_distance": (
                         feature_slot.known_refill_to_room_distance.numpy()
                     ),
+                    "area_used": feature_slot.area_used.numpy(),
+                    "area_min_x": feature_slot.area_min_x.numpy(),
+                    "area_max_x": feature_slot.area_max_x.numpy(),
+                    "area_min_y": feature_slot.area_min_y.numpy(),
+                    "area_max_y": feature_slot.area_max_y.numpy(),
+                    "area_connected_components": (
+                        feature_slot.area_connected_components.numpy()
+                    ),
+                    "area_crossings": feature_slot.area_crossings.numpy(),
+                    "area_size": feature_slot.area_size.numpy(),
+                    "area_map_station_count": feature_slot.area_map_station_count.numpy(),
                     "frontier": feature_slot.frontier.numpy(),
                     "frontier_door_variant": feature_slot.frontier_door_variant.numpy(),
+                    "frontier_area": feature_slot.frontier_area.numpy(),
                     "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
                     "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),
                     "frontier_neighbor_pair": feature_slot.frontier_neighbor_pair.numpy(),
@@ -1383,6 +1429,8 @@ class FeatureSlot:
             features.room_part_frontier_distance
         )
         self.known_distance_width = room_part_count
+        self.area_width = AREA_COUNT * int(features.area_state)
+        self.area_crossings_width = int(features.area_state)
         self.frontier_occupancy_width = (
             (env.frontier_window_size * env.frontier_window_size + 7) // 8
         ) * int(features.frontier_occupancy)
@@ -1421,8 +1469,18 @@ class FeatureSlot:
         self.known_save_to_room_distance = None
         self.known_refill_from_room_distance = None
         self.known_refill_to_room_distance = None
+        self.area_used = None
+        self.area_min_x = None
+        self.area_max_x = None
+        self.area_min_y = None
+        self.area_max_y = None
+        self.area_connected_components = None
+        self.area_crossings = None
+        self.area_size = None
+        self.area_map_station_count = None
         self.frontier = None
         self.frontier_door_variant = None
+        self.frontier_area = None
         self.frontier_occupancy = None
         self.frontier_neighbor = None
         self.frontier_neighbor_pair = None
@@ -1517,8 +1575,27 @@ class FeatureSlot:
         self.known_refill_to_room_distance = self._empty(
             (self.snapshot_capacity, self.known_distance_width), torch.uint8
         )
+        self.area_used = self._empty((self.snapshot_capacity, self.area_width), torch.uint8)
+        self.area_min_x = self._empty((self.snapshot_capacity, self.area_width), torch.int8)
+        self.area_max_x = self._empty((self.snapshot_capacity, self.area_width), torch.int8)
+        self.area_min_y = self._empty((self.snapshot_capacity, self.area_width), torch.int8)
+        self.area_max_y = self._empty((self.snapshot_capacity, self.area_width), torch.int8)
+        self.area_connected_components = self._empty(
+            (self.snapshot_capacity, self.area_width),
+            torch.uint8,
+        )
+        self.area_crossings = self._empty(
+            (self.snapshot_capacity, self.area_crossings_width),
+            torch.uint16,
+        )
+        self.area_size = self._empty((self.snapshot_capacity, self.area_width), torch.uint16)
+        self.area_map_station_count = self._empty(
+            (self.snapshot_capacity, self.area_width),
+            torch.uint8,
+        )
         self.frontier = self._empty((self.frontier_row_capacity, 5), torch.int8)
         self.frontier_door_variant = self._empty((self.frontier_row_capacity,), torch.int16)
+        self.frontier_area = self._empty((self.frontier_row_capacity,), torch.uint8)
         self.frontier_occupancy = self._empty(
             (self.frontier_row_capacity, self.frontier_occupancy_width), torch.uint8
         )
@@ -1721,6 +1798,15 @@ class FeatureSlot:
                 known_refill_to_room_distance=self.known_refill_to_room_distance[
                     :environment_count
                 ],
+                area_used=self.area_used[:environment_count],
+                area_min_x=self.area_min_x[:environment_count],
+                area_max_x=self.area_max_x[:environment_count],
+                area_min_y=self.area_min_y[:environment_count],
+                area_max_y=self.area_max_y[:environment_count],
+                area_connected_components=self.area_connected_components[:environment_count],
+                area_crossings=self.area_crossings[:environment_count],
+                area_size=self.area_size[:environment_count],
+                area_map_station_count=self.area_map_station_count[:environment_count],
                 log_temperature=log_temperature,
                 log_recommended_candidates=log_recommended_candidates,
                 generation_variable_floats=generation_variable_floats,
@@ -1735,6 +1821,7 @@ class FeatureSlot:
             frontier_features=FrontierFeatures(
                 frontier=self.frontier[:frontier_row_count],
                 frontier_door_variant=self.frontier_door_variant[:frontier_row_count],
+                frontier_area=self.frontier_area[:frontier_row_count],
                 frontier_occupancy=self.frontier_occupancy[:frontier_row_count],
                 frontier_neighbor=self.frontier_neighbor[:frontier_row_count],
                 frontier_neighbor_pair=self.frontier_neighbor_pair[:frontier_row_count],
@@ -1897,6 +1984,33 @@ class FeatureSlot:
                 known_refill_to_room_distance=self.known_refill_to_room_distance[
                     :snapshot_count
                 ].view(environment_count, candidate_count, self.known_distance_width),
+                area_used=self.area_used[:snapshot_count].view(
+                    environment_count, candidate_count, self.area_width
+                ),
+                area_min_x=self.area_min_x[:snapshot_count].view(
+                    environment_count, candidate_count, self.area_width
+                ),
+                area_max_x=self.area_max_x[:snapshot_count].view(
+                    environment_count, candidate_count, self.area_width
+                ),
+                area_min_y=self.area_min_y[:snapshot_count].view(
+                    environment_count, candidate_count, self.area_width
+                ),
+                area_max_y=self.area_max_y[:snapshot_count].view(
+                    environment_count, candidate_count, self.area_width
+                ),
+                area_connected_components=self.area_connected_components[:snapshot_count].view(
+                    environment_count, candidate_count, self.area_width
+                ),
+                area_crossings=self.area_crossings[:snapshot_count].view(
+                    environment_count, candidate_count, self.area_crossings_width
+                ),
+                area_size=self.area_size[:snapshot_count].view(
+                    environment_count, candidate_count, self.area_width
+                ),
+                area_map_station_count=self.area_map_station_count[:snapshot_count].view(
+                    environment_count, candidate_count, self.area_width
+                ),
                 log_temperature=log_temperature,
                 log_recommended_candidates=log_recommended_candidates,
                 generation_variable_floats=generation_variable_floats,
@@ -1915,6 +2029,7 @@ class FeatureSlot:
             frontier_features=FrontierFeatures(
                 frontier=self.frontier[:frontier_row_count],
                 frontier_door_variant=self.frontier_door_variant[:frontier_row_count],
+                frontier_area=self.frontier_area[:frontier_row_count],
                 frontier_occupancy=self.frontier_occupancy[:frontier_row_count],
                 frontier_neighbor=self.frontier_neighbor[:frontier_row_count],
                 frontier_neighbor_pair=self.frontier_neighbor_pair[:frontier_row_count],
@@ -2060,8 +2175,20 @@ def extract_candidate_features(
                 "known_refill_to_room_distance": (
                     feature_slot.known_refill_to_room_distance.numpy()
                 ),
+                "area_used": feature_slot.area_used.numpy(),
+                "area_min_x": feature_slot.area_min_x.numpy(),
+                "area_max_x": feature_slot.area_max_x.numpy(),
+                "area_min_y": feature_slot.area_min_y.numpy(),
+                "area_max_y": feature_slot.area_max_y.numpy(),
+                "area_connected_components": (
+                    feature_slot.area_connected_components.numpy()
+                ),
+                "area_crossings": feature_slot.area_crossings.numpy(),
+                "area_size": feature_slot.area_size.numpy(),
+                "area_map_station_count": feature_slot.area_map_station_count.numpy(),
                 "frontier": feature_slot.frontier.numpy(),
                 "frontier_door_variant": feature_slot.frontier_door_variant.numpy(),
+                "frontier_area": feature_slot.frontier_area.numpy(),
                 "frontier_occupancy": feature_slot.frontier_occupancy.numpy(),
                 "frontier_neighbor": feature_slot.frontier_neighbor.numpy(),
                 "frontier_neighbor_pair": feature_slot.frontier_neighbor_pair.numpy(),

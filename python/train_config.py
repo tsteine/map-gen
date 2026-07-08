@@ -122,6 +122,8 @@ class GenerationConfig(StrictBaseModel):
     reward_save_distance: VariableFloat
     reward_refill_distance: VariableFloat
     reward_missing_connect_utility: VariableFloat
+    min_area_size: int
+    max_area_size: int
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
     frontier_neighbor_count: int
     frontier_window_size: int
@@ -154,6 +156,8 @@ class FeatureConfig(StrictBaseModel):
     frontier_neighbor_flags: bool
     connection_reachability: int
     frontier_connection_reachability: bool
+    area_state: bool
+    frontier_area: int
     missing_connect_query: bool
     save_utility_query: bool
     refill_utility_query: bool
@@ -184,6 +188,8 @@ class FeatureConfig(StrictBaseModel):
             frontier_neighbor_flags=self.frontier_neighbor_flags,
             connection_reachability=self.connection_reachability > 0,
             frontier_connection_reachability=self.frontier_connection_reachability,
+            area_state=self.area_state,
+            frontier_area=self.frontier_area > 0,
             missing_connect_query=self.missing_connect_query,
             save_utility_query=self.save_utility_query,
             refill_utility_query=self.refill_utility_query,
@@ -214,6 +220,8 @@ class EngineFeatureConfig(StrictBaseModel):
     frontier_neighbor_flags: bool
     connection_reachability: bool
     frontier_connection_reachability: bool
+    area_state: bool
+    frontier_area: bool
     missing_connect_query: bool
     save_utility_query: bool
     refill_utility_query: bool
@@ -238,6 +246,11 @@ class TrainConfig(StrictBaseModel):
     save_distance_weight: float
     refill_distance_weight: float
     missing_connect_utility_weight: float
+    area_used_weight: float
+    area_excess_components_weight: float
+    area_crossing_weight: float
+    area_size_weight: float
+    area_map_station_weight: float
     proposal_weight: float
     ema_decay: ScheduleableFloat
     pipeline_groups: int
@@ -409,6 +422,7 @@ def validate_config(config: Config) -> None:
         config.features.room_part_frontier_distance,
     )
     validate_feature_width("connection_reachability", config.features.connection_reachability)
+    validate_feature_width("frontier_area", config.features.frontier_area)
     validate_feature_width("frontier_position", config.features.frontier_position)
     validate_feature_width("frontier_orientation", config.features.frontier_orientation)
     validate_feature_width("frontier_kind", config.features.frontier_kind)
@@ -464,6 +478,10 @@ def validate_config(config: Config) -> None:
         raise ValueError("generation.area_bounding_box_width must be greater than zero")
     if config.generation.area_bounding_box_height <= 0:
         raise ValueError("generation.area_bounding_box_height must be greater than zero")
+    if config.generation.min_area_size <= 0:
+        raise ValueError("generation.min_area_size must be greater than zero")
+    if config.generation.max_area_size < config.generation.min_area_size:
+        raise ValueError("generation.max_area_size must be at least generation.min_area_size")
     validate_positive_variable_float(
         config.generation.temperature,
         "generation.temperature",
@@ -531,6 +549,18 @@ def validate_config(config: Config) -> None:
         raise ValueError(
             "train.missing_connect_utility_weight must be greater than or equal to zero"
         )
+    if config.train.area_used_weight < 0:
+        raise ValueError("train.area_used_weight must be greater than or equal to zero")
+    if config.train.area_excess_components_weight < 0:
+        raise ValueError(
+            "train.area_excess_components_weight must be greater than or equal to zero"
+        )
+    if config.train.area_crossing_weight < 0:
+        raise ValueError("train.area_crossing_weight must be greater than or equal to zero")
+    if config.train.area_size_weight < 0:
+        raise ValueError("train.area_size_weight must be greater than or equal to zero")
+    if config.train.area_map_station_weight < 0:
+        raise ValueError("train.area_map_station_weight must be greater than or equal to zero")
     validate_ema_decay_config(config.train.ema_decay, "train.ema_decay", config.knot_episodes)
     if (
         config.generation.num_threads is not None
@@ -542,6 +572,7 @@ def validate_config(config: Config) -> None:
         or config.features.frontier_orientation
         or config.features.frontier_kind
         or config.features.frontier_door_variant
+        or config.features.frontier_area
         or config.features.frontier_occupancy
         or config.features.frontier_neighbor
         or config.features.frontier_connection_reachability

@@ -1667,8 +1667,18 @@ pub struct FeatureBuffers {
     known_save_to_room_distance: Py<PyArray2<u8>>,
     known_refill_from_room_distance: Py<PyArray2<u8>>,
     known_refill_to_room_distance: Py<PyArray2<u8>>,
+    area_used: Py<PyArray2<u8>>,
+    area_min_x: Py<PyArray2<Coord>>,
+    area_max_x: Py<PyArray2<Coord>>,
+    area_min_y: Py<PyArray2<Coord>>,
+    area_max_y: Py<PyArray2<Coord>>,
+    area_connected_components: Py<PyArray2<u8>>,
+    area_crossings: Py<PyArray2<u16>>,
+    area_size: Py<PyArray2<u16>>,
+    area_map_station_count: Py<PyArray2<u8>>,
     frontier: Py<PyArray2<i8>>,
     frontier_door_variant: Py<PyArray1<DoorVariantIdx>>,
+    frontier_area: Py<PyArray1<AreaIdx>>,
     frontier_occupancy: Py<PyArray2<u8>>,
     frontier_neighbor: Py<PyArray2<i16>>,
     frontier_neighbor_pair: Py<PyArray2<u8>>,
@@ -1798,8 +1808,18 @@ impl FeatureBuffers {
                 fields,
                 "known_refill_to_room_distance"
             ),
+            area_used: required_py_field!(fields, "area_used"),
+            area_min_x: required_py_field!(fields, "area_min_x"),
+            area_max_x: required_py_field!(fields, "area_max_x"),
+            area_min_y: required_py_field!(fields, "area_min_y"),
+            area_max_y: required_py_field!(fields, "area_max_y"),
+            area_connected_components: required_py_field!(fields, "area_connected_components"),
+            area_crossings: required_py_field!(fields, "area_crossings"),
+            area_size: required_py_field!(fields, "area_size"),
+            area_map_station_count: required_py_field!(fields, "area_map_station_count"),
             frontier: required_py_field!(fields, "frontier"),
             frontier_door_variant: required_py_field!(fields, "frontier_door_variant"),
+            frontier_area: required_py_field!(fields, "frontier_area"),
             frontier_occupancy: required_py_field!(fields, "frontier_occupancy"),
             frontier_neighbor: required_py_field!(fields, "frontier_neighbor"),
             frontier_neighbor_pair: required_py_field!(fields, "frontier_neighbor_pair"),
@@ -2272,6 +2292,15 @@ struct GlobalFeatureOutputShards {
     known_save_to_room_distance: OutputShard<u8>,
     known_refill_from_room_distance: OutputShard<u8>,
     known_refill_to_room_distance: OutputShard<u8>,
+    area_used: OutputShard<u8>,
+    area_min_x: OutputShard<Coord>,
+    area_max_x: OutputShard<Coord>,
+    area_min_y: OutputShard<Coord>,
+    area_max_y: OutputShard<Coord>,
+    area_connected_components: OutputShard<u8>,
+    area_crossings: OutputShard<u16>,
+    area_size: OutputShard<u16>,
+    area_map_station_count: OutputShard<u8>,
     connection_reachability: OutputShard<u8>,
     toilet_crossed_room_idx: OutputShard<i16>,
     inventory_count: usize,
@@ -2281,6 +2310,8 @@ struct GlobalFeatureOutputShards {
     room_part_refill_distance_count: usize,
     room_part_frontier_distance_count: usize,
     known_distance_count: usize,
+    area_count: usize,
+    area_crossings_count: usize,
     connection_count: usize,
     toilet_crossed_room_count: usize,
 }
@@ -2288,6 +2319,7 @@ struct GlobalFeatureOutputShards {
 struct FrontierFeatureOutputShards {
     frontier: OutputShard<i8>,
     frontier_door_variant: OutputShard<DoorVariantIdx>,
+    frontier_area: OutputShard<AreaIdx>,
     frontier_occupancy: OutputShard<u8>,
     frontier_neighbor: OutputShard<i16>,
     frontier_neighbor_pair: OutputShard<u8>,
@@ -2314,6 +2346,15 @@ struct GlobalFeatureOutputSlices<'a> {
     known_save_to_room_distance: &'a mut [u8],
     known_refill_from_room_distance: &'a mut [u8],
     known_refill_to_room_distance: &'a mut [u8],
+    area_used: &'a mut [u8],
+    area_min_x: &'a mut [Coord],
+    area_max_x: &'a mut [Coord],
+    area_min_y: &'a mut [Coord],
+    area_max_y: &'a mut [Coord],
+    area_connected_components: &'a mut [u8],
+    area_crossings: &'a mut [u16],
+    area_size: &'a mut [u16],
+    area_map_station_count: &'a mut [u8],
     connection_reachability: &'a mut [u8],
     toilet_crossed_room_idx: &'a mut [i16],
     inventory_count: usize,
@@ -2323,6 +2364,8 @@ struct GlobalFeatureOutputSlices<'a> {
     room_part_refill_distance_count: usize,
     room_part_frontier_distance_count: usize,
     known_distance_count: usize,
+    area_count: usize,
+    area_crossings_count: usize,
     connection_count: usize,
     toilet_crossed_room_count: usize,
 }
@@ -2330,6 +2373,7 @@ struct GlobalFeatureOutputSlices<'a> {
 struct FrontierFeatureOutputSlices<'a> {
     frontier: &'a mut [i8],
     frontier_door_variant: &'a mut [DoorVariantIdx],
+    frontier_area: &'a mut [AreaIdx],
     frontier_occupancy: &'a mut [u8],
     frontier_neighbor: &'a mut [i16],
     frontier_neighbor_pair: &'a mut [u8],
@@ -2380,6 +2424,17 @@ impl GlobalFeatureOutputShards {
             known_refill_to_room_distance: unsafe {
                 self.known_refill_to_room_distance.into_mut_slice()
             },
+            area_used: unsafe { self.area_used.into_mut_slice() },
+            area_min_x: unsafe { self.area_min_x.into_mut_slice() },
+            area_max_x: unsafe { self.area_max_x.into_mut_slice() },
+            area_min_y: unsafe { self.area_min_y.into_mut_slice() },
+            area_max_y: unsafe { self.area_max_y.into_mut_slice() },
+            area_connected_components: unsafe {
+                self.area_connected_components.into_mut_slice()
+            },
+            area_crossings: unsafe { self.area_crossings.into_mut_slice() },
+            area_size: unsafe { self.area_size.into_mut_slice() },
+            area_map_station_count: unsafe { self.area_map_station_count.into_mut_slice() },
             connection_reachability: unsafe { self.connection_reachability.into_mut_slice() },
             toilet_crossed_room_idx: unsafe { self.toilet_crossed_room_idx.into_mut_slice() },
             inventory_count: self.inventory_count,
@@ -2389,6 +2444,8 @@ impl GlobalFeatureOutputShards {
             room_part_refill_distance_count: self.room_part_refill_distance_count,
             room_part_frontier_distance_count: self.room_part_frontier_distance_count,
             known_distance_count: self.known_distance_count,
+            area_count: self.area_count,
+            area_crossings_count: self.area_crossings_count,
             connection_count: self.connection_count,
             toilet_crossed_room_count: self.toilet_crossed_room_count,
         }
@@ -2400,6 +2457,7 @@ impl FrontierFeatureOutputShards {
         FrontierFeatureOutputSlices {
             frontier: unsafe { self.frontier.into_mut_slice() },
             frontier_door_variant: unsafe { self.frontier_door_variant.into_mut_slice() },
+            frontier_area: unsafe { self.frontier_area.into_mut_slice() },
             frontier_occupancy: unsafe { self.frontier_occupancy.into_mut_slice() },
             frontier_neighbor: unsafe { self.frontier_neighbor.into_mut_slice() },
             frontier_neighbor_pair: unsafe { self.frontier_neighbor_pair.into_mut_slice() },
@@ -2526,6 +2584,30 @@ impl GlobalFeatureOutputSlices<'_> {
             idx,
             self.known_distance_count,
         );
+        copy_output_row(&mut self.area_used, &plan.area_used, idx, self.area_count);
+        copy_output_row(&mut self.area_min_x, &plan.area_min_x, idx, self.area_count);
+        copy_output_row(&mut self.area_max_x, &plan.area_max_x, idx, self.area_count);
+        copy_output_row(&mut self.area_min_y, &plan.area_min_y, idx, self.area_count);
+        copy_output_row(&mut self.area_max_y, &plan.area_max_y, idx, self.area_count);
+        copy_output_row(
+            &mut self.area_connected_components,
+            &plan.area_connected_components,
+            idx,
+            self.area_count,
+        );
+        copy_output_row(
+            &mut self.area_crossings,
+            &plan.area_crossings,
+            idx,
+            self.area_crossings_count,
+        );
+        copy_output_row(&mut self.area_size, &plan.area_size, idx, self.area_count);
+        copy_output_row(
+            &mut self.area_map_station_count,
+            &plan.area_map_station_count,
+            idx,
+            self.area_count,
+        );
         copy_output_row(
             &mut self.connection_reachability,
             &plan.connection_reachability,
@@ -2628,6 +2710,30 @@ impl GlobalFeatureOutputSlices<'_> {
             idx,
             self.known_distance_count,
         );
+        copy_output_row(&mut self.area_used, &features.area_used, idx, self.area_count);
+        copy_output_row(&mut self.area_min_x, &features.area_min_x, idx, self.area_count);
+        copy_output_row(&mut self.area_max_x, &features.area_max_x, idx, self.area_count);
+        copy_output_row(&mut self.area_min_y, &features.area_min_y, idx, self.area_count);
+        copy_output_row(&mut self.area_max_y, &features.area_max_y, idx, self.area_count);
+        copy_output_row(
+            &mut self.area_connected_components,
+            &features.area_connected_components,
+            idx,
+            self.area_count,
+        );
+        copy_output_row(
+            &mut self.area_crossings,
+            &features.area_crossings,
+            idx,
+            self.area_crossings_count,
+        );
+        copy_output_row(&mut self.area_size, &features.area_size, idx, self.area_count);
+        copy_output_row(
+            &mut self.area_map_station_count,
+            &features.area_map_station_count,
+            idx,
+            self.area_count,
+        );
         copy_output_row(
             &mut self.connection_reachability,
             &features.connection_reachability,
@@ -2669,6 +2775,9 @@ impl FrontierFeatureOutputSlices<'_> {
         );
         if !features.frontier_door_variant.is_empty() {
             self.frontier_door_variant[dst_idx] = features.frontier_door_variant[src_idx];
+        }
+        if !features.frontier_area.is_empty() {
+            self.frontier_area[dst_idx] = features.frontier_area[src_idx];
         }
         copy_row(
             &mut self.frontier_occupancy,
@@ -3008,6 +3117,9 @@ impl FeatureOutputSlices<'_> {
             if !self.frontier_rows.frontier_door_variant.is_empty() {
                 self.frontier_rows.frontier_door_variant[frontier_row_idx] =
                     frontier.door_variant_idx;
+            }
+            if !self.frontier_rows.frontier_area.is_empty() {
+                self.frontier_rows.frontier_area[frontier_row_idx] = frontier.area;
             }
             let detail_start = profile.then(Instant::now);
             write_frontier_occupancy_row(
@@ -3476,6 +3588,15 @@ mod tests {
             known_save_to_room_distance: OutputShard::empty(),
             known_refill_from_room_distance: OutputShard::empty(),
             known_refill_to_room_distance: OutputShard::empty(),
+            area_used: OutputShard::empty(),
+            area_min_x: OutputShard::empty(),
+            area_max_x: OutputShard::empty(),
+            area_min_y: OutputShard::empty(),
+            area_max_y: OutputShard::empty(),
+            area_connected_components: OutputShard::empty(),
+            area_crossings: OutputShard::empty(),
+            area_size: OutputShard::empty(),
+            area_map_station_count: OutputShard::empty(),
             connection_reachability: OutputShard::empty(),
             toilet_crossed_room_idx: OutputShard::empty(),
             inventory_count: 0,
@@ -3485,6 +3606,8 @@ mod tests {
             room_part_refill_distance_count: 0,
             room_part_frontier_distance_count: 0,
             known_distance_count: 0,
+            area_count: 0,
+            area_crossings_count: 0,
             connection_count: 0,
             toilet_crossed_room_count: 0,
         }
@@ -3494,6 +3617,7 @@ mod tests {
         FrontierFeatureOutputShards {
             frontier: OutputShard::empty(),
             frontier_door_variant: OutputShard::empty(),
+            frontier_area: OutputShard::empty(),
             frontier_occupancy: OutputShard::empty(),
             frontier_neighbor: OutputShard::empty(),
             frontier_neighbor_pair: OutputShard::empty(),
@@ -4869,8 +4993,19 @@ impl EnvironmentGroup {
             buffers.known_refill_from_room_distance.bind(py).readwrite();
         let mut known_refill_to_room_distance =
             buffers.known_refill_to_room_distance.bind(py).readwrite();
+        let mut area_used = buffers.area_used.bind(py).readwrite();
+        let mut area_min_x = buffers.area_min_x.bind(py).readwrite();
+        let mut area_max_x = buffers.area_max_x.bind(py).readwrite();
+        let mut area_min_y = buffers.area_min_y.bind(py).readwrite();
+        let mut area_max_y = buffers.area_max_y.bind(py).readwrite();
+        let mut area_connected_components =
+            buffers.area_connected_components.bind(py).readwrite();
+        let mut area_crossings = buffers.area_crossings.bind(py).readwrite();
+        let mut area_size = buffers.area_size.bind(py).readwrite();
+        let mut area_map_station_count = buffers.area_map_station_count.bind(py).readwrite();
         let mut frontier = buffers.frontier.bind(py).readwrite();
         let mut frontier_door_variant = buffers.frontier_door_variant.bind(py).readwrite();
+        let mut frontier_area = buffers.frontier_area.bind(py).readwrite();
         let mut frontier_occupancy = buffers.frontier_occupancy.bind(py).readwrite();
         let mut frontier_neighbor = buffers.frontier_neighbor.bind(py).readwrite();
         let mut frontier_neighbor_pair = buffers.frontier_neighbor_pair.bind(py).readwrite();
@@ -4969,6 +5104,8 @@ impl EnvironmentGroup {
         let room_part_frontier_distance_width =
             room_part_count * usize::from(self.features.room_part_frontier_distance);
         let known_distance_width = room_part_count;
+        let area_width = AREA_COUNT * usize::from(self.features.area_state);
+        let area_crossings_width = usize::from(self.features.area_state);
         let frontier_occupancy_width = (self.frontier_window_size * self.frontier_window_size)
             .div_ceil(8)
             * usize::from(self.features.frontier_occupancy);
@@ -5021,8 +5158,19 @@ impl EnvironmentGroup {
             known_refill_from_room_distance.as_array().shape().to_vec();
         let known_refill_to_room_distance_shape =
             known_refill_to_room_distance.as_array().shape().to_vec();
+        let area_used_shape = area_used.as_array().shape().to_vec();
+        let area_min_x_shape = area_min_x.as_array().shape().to_vec();
+        let area_max_x_shape = area_max_x.as_array().shape().to_vec();
+        let area_min_y_shape = area_min_y.as_array().shape().to_vec();
+        let area_max_y_shape = area_max_y.as_array().shape().to_vec();
+        let area_connected_components_shape =
+            area_connected_components.as_array().shape().to_vec();
+        let area_crossings_shape = area_crossings.as_array().shape().to_vec();
+        let area_size_shape = area_size.as_array().shape().to_vec();
+        let area_map_station_count_shape = area_map_station_count.as_array().shape().to_vec();
         let frontier_shape = frontier.as_array().shape().to_vec();
         let frontier_door_variant_shape = frontier_door_variant.as_array().shape().to_vec();
+        let frontier_area_shape = frontier_area.as_array().shape().to_vec();
         let frontier_occupancy_shape = frontier_occupancy.as_array().shape().to_vec();
         let frontier_neighbor_shape = frontier_neighbor.as_array().shape().to_vec();
         let frontier_neighbor_pair_shape = frontier_neighbor_pair.as_array().shape().to_vec();
@@ -5118,10 +5266,20 @@ impl EnvironmentGroup {
             || known_save_to_room_distance_shape[0] < snapshot_count
             || known_refill_from_room_distance_shape[0] < snapshot_count
             || known_refill_to_room_distance_shape[0] < snapshot_count
+            || area_used_shape[0] < snapshot_count
+            || area_min_x_shape[0] < snapshot_count
+            || area_max_x_shape[0] < snapshot_count
+            || area_min_y_shape[0] < snapshot_count
+            || area_max_y_shape[0] < snapshot_count
+            || area_connected_components_shape[0] < snapshot_count
+            || area_crossings_shape[0] < snapshot_count
+            || area_size_shape[0] < snapshot_count
+            || area_map_station_count_shape[0] < snapshot_count
             || connection_reachability_shape[0] < snapshot_count
             || toilet_crossed_room_shape[0] < snapshot_count
             || frontier_shape[0] < frontier_row_count
             || frontier_door_variant_shape[0] < frontier_row_count
+            || frontier_area_shape[0] < frontier_row_count
             || frontier_occupancy_shape[0] < frontier_row_count
             || frontier_neighbor_shape[0] < frontier_row_count
             || frontier_neighbor_pair_shape[0] < frontier_row_count
@@ -5219,6 +5377,23 @@ impl EnvironmentGroup {
             "known_refill_to_room_distance",
             known_refill_to_room_distance_shape[1],
             known_distance_width,
+        )?;
+        check_dim("area_used", area_used_shape[1], area_width)?;
+        check_dim("area_min_x", area_min_x_shape[1], area_width)?;
+        check_dim("area_max_x", area_max_x_shape[1], area_width)?;
+        check_dim("area_min_y", area_min_y_shape[1], area_width)?;
+        check_dim("area_max_y", area_max_y_shape[1], area_width)?;
+        check_dim(
+            "area_connected_components",
+            area_connected_components_shape[1],
+            area_width,
+        )?;
+        check_dim("area_crossings", area_crossings_shape[1], area_crossings_width)?;
+        check_dim("area_size", area_size_shape[1], area_width)?;
+        check_dim(
+            "area_map_station_count",
+            area_map_station_count_shape[1],
+            area_width,
         )?;
         check_dim("frontier", frontier_shape[1], FEATURE_FRONTIER_WIDTH)?;
         check_dim(
@@ -5337,12 +5512,42 @@ impl EnvironmentGroup {
             known_refill_to_room_distance.as_slice_mut().map_err(|_| {
                 PyValueError::new_err("known_refill_to_room_distance must be contiguous")
             })?;
+        let area_used = area_used
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_used must be contiguous"))?;
+        let area_min_x = area_min_x
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_min_x must be contiguous"))?;
+        let area_max_x = area_max_x
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_max_x must be contiguous"))?;
+        let area_min_y = area_min_y
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_min_y must be contiguous"))?;
+        let area_max_y = area_max_y
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_max_y must be contiguous"))?;
+        let area_connected_components = area_connected_components
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_connected_components must be contiguous"))?;
+        let area_crossings = area_crossings
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_crossings must be contiguous"))?;
+        let area_size = area_size
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_size must be contiguous"))?;
+        let area_map_station_count = area_map_station_count
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_map_station_count must be contiguous"))?;
         let frontier = frontier
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("frontier must be contiguous"))?;
         let frontier_door_variant = frontier_door_variant
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("frontier_door_variant must be contiguous"))?;
+        let frontier_area = frontier_area
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("frontier_area must be contiguous"))?;
         let frontier_occupancy = frontier_occupancy
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("frontier_occupancy must be contiguous"))?;
@@ -5583,6 +5788,42 @@ impl EnvironmentGroup {
                             &mut known_refill_to_room_distance[snapshot_start * known_distance_width
                                 ..(snapshot_start + snapshot_count) * known_distance_width],
                         ),
+                        area_used: OutputShard::from_slice(
+                            &mut area_used[snapshot_start * area_width
+                                ..(snapshot_start + snapshot_count) * area_width],
+                        ),
+                        area_min_x: OutputShard::from_slice(
+                            &mut area_min_x[snapshot_start * area_width
+                                ..(snapshot_start + snapshot_count) * area_width],
+                        ),
+                        area_max_x: OutputShard::from_slice(
+                            &mut area_max_x[snapshot_start * area_width
+                                ..(snapshot_start + snapshot_count) * area_width],
+                        ),
+                        area_min_y: OutputShard::from_slice(
+                            &mut area_min_y[snapshot_start * area_width
+                                ..(snapshot_start + snapshot_count) * area_width],
+                        ),
+                        area_max_y: OutputShard::from_slice(
+                            &mut area_max_y[snapshot_start * area_width
+                                ..(snapshot_start + snapshot_count) * area_width],
+                        ),
+                        area_connected_components: OutputShard::from_slice(
+                            &mut area_connected_components[snapshot_start * area_width
+                                ..(snapshot_start + snapshot_count) * area_width],
+                        ),
+                        area_crossings: OutputShard::from_slice(
+                            &mut area_crossings[snapshot_start * area_crossings_width
+                                ..(snapshot_start + snapshot_count) * area_crossings_width],
+                        ),
+                        area_size: OutputShard::from_slice(
+                            &mut area_size[snapshot_start * area_width
+                                ..(snapshot_start + snapshot_count) * area_width],
+                        ),
+                        area_map_station_count: OutputShard::from_slice(
+                            &mut area_map_station_count[snapshot_start * area_width
+                                ..(snapshot_start + snapshot_count) * area_width],
+                        ),
                         connection_reachability: OutputShard::from_slice(
                             &mut connection_reachability[snapshot_start
                                 * connection_reachability_width
@@ -5600,6 +5841,8 @@ impl EnvironmentGroup {
                         room_part_refill_distance_count: room_part_refill_distance_width,
                         room_part_frontier_distance_count: room_part_frontier_distance_width,
                         known_distance_count: known_distance_width,
+                        area_count: area_width,
+                        area_crossings_count: area_crossings_width,
                         connection_count: connection_reachability_width,
                         toilet_crossed_room_count: toilet_crossed_room_width,
                     },
@@ -5611,6 +5854,10 @@ impl EnvironmentGroup {
                         ),
                         frontier_door_variant: OutputShard::from_slice(
                             &mut frontier_door_variant[frontier_row_start
+                                ..frontier_row_start + worker_frontier_row_count],
+                        ),
+                        frontier_area: OutputShard::from_slice(
+                            &mut frontier_area[frontier_row_start
                                 ..frontier_row_start + worker_frontier_row_count],
                         ),
                         frontier_occupancy: OutputShard::from_slice(

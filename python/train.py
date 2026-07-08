@@ -1360,6 +1360,15 @@ class TrainingSession:
         missing_connect_utility_loss_pct = (
             100.0 * loss.missing_connect_utility_contribution / loss_denominator
         )
+        area_used_loss_pct = 100.0 * loss.area_used_contribution / loss_denominator
+        area_excess_components_loss_pct = (
+            100.0 * loss.area_excess_components_contribution / loss_denominator
+        )
+        area_crossings_loss_pct = 100.0 * loss.area_crossings_contribution / loss_denominator
+        area_size_loss_pct = 100.0 * loss.area_size_contribution / loss_denominator
+        area_map_station_loss_pct = (
+            100.0 * loss.area_map_station_contribution / loss_denominator
+        )
         proposal_loss_pct = 100.0 * loss.proposal_contribution / loss_denominator
 
         metrics = {
@@ -1386,6 +1395,16 @@ class TrainingSession:
             "refill_distance_loss_pct": refill_distance_loss_pct,
             "missing_connect_utility_loss": loss.missing_connect_utility,
             "missing_connect_utility_loss_pct": missing_connect_utility_loss_pct,
+            "area_used_loss": loss.area_used,
+            "area_used_loss_pct": area_used_loss_pct,
+            "area_excess_components_loss": loss.area_excess_components,
+            "area_excess_components_loss_pct": area_excess_components_loss_pct,
+            "area_crossings_loss": loss.area_crossings,
+            "area_crossings_loss_pct": area_crossings_loss_pct,
+            "area_size_loss": loss.area_size,
+            "area_size_loss_pct": area_size_loss_pct,
+            "area_map_station_loss": loss.area_map_station,
+            "area_map_station_loss_pct": area_map_station_loss_pct,
             "proposal_loss": loss.proposal,
             "proposal_loss_pct": proposal_loss_pct,
             "candidate_target_entropy": candidate_diagnostics.target_entropy,
@@ -1486,6 +1505,11 @@ class TrainingSession:
             "save_distance_weight": step_config.train.save_distance_weight,
             "refill_distance_weight": step_config.train.refill_distance_weight,
             "missing_connect_utility_weight": step_config.train.missing_connect_utility_weight,
+            "area_used_weight": step_config.train.area_used_weight,
+            "area_excess_components_weight": step_config.train.area_excess_components_weight,
+            "area_crossing_weight": step_config.train.area_crossing_weight,
+            "area_size_weight": step_config.train.area_size_weight,
+            "area_map_station_weight": step_config.train.area_map_station_weight,
             "door_match_left_top1": left_topk[0],
             "door_match_left_top2": left_topk[1],
             "door_match_left_top3": left_topk[2],
@@ -1978,6 +2002,11 @@ def build_session(args: Args) -> TrainingSession:
             save_distance_weight=config.train.save_distance_weight,
             refill_distance_weight=config.train.refill_distance_weight,
             missing_connect_utility_weight=config.train.missing_connect_utility_weight,
+            area_used_weight=config.train.area_used_weight,
+            area_excess_components_weight=config.train.area_excess_components_weight,
+            area_crossing_weight=config.train.area_crossing_weight,
+            area_size_weight=config.train.area_size_weight,
+            area_map_station_weight=config.train.area_map_station_weight,
             distance_proximity_scale=config.distance_proximity_scale,
         ),
         experience=ExperienceStorage(

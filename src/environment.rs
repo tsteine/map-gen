@@ -310,6 +310,8 @@ pub struct FeatureConfig {
     pub frontier_neighbor_flags: bool,
     pub connection_reachability: bool,
     pub frontier_connection_reachability: bool,
+    pub area_state: bool,
+    pub frontier_area: bool,
     pub missing_connect_query: bool,
     pub save_utility_query: bool,
     pub refill_utility_query: bool,
@@ -328,6 +330,7 @@ impl FeatureConfig {
             && !self.room_part_refill_distance
             && !self.room_part_frontier_distance
             && !self.connection_reachability
+            && !self.area_state
             && !self.toilet_crossed_room
             && !self.missing_connect_query
             && !self.save_utility_query
@@ -344,6 +347,7 @@ impl FeatureConfig {
             || self.frontier_orientation
             || self.frontier_kind
             || self.frontier_door_variant
+            || self.frontier_area
             || self.frontier_occupancy
             || self.frontier_neighbor
             || self.frontier_connection_reachability
@@ -393,6 +397,8 @@ impl FeatureConfig {
             missing_connect_query: true,
             save_utility_query: true,
             refill_utility_query: true,
+            area_state: true,
+            frontier_area: true,
             toilet_crossed_room: true,
         }
     }
@@ -425,6 +431,8 @@ impl FeatureConfig {
             missing_connect_query: false,
             save_utility_query: false,
             refill_utility_query: false,
+            area_state: false,
+            frontier_area: false,
             toilet_crossed_room: false,
         }
     }
@@ -449,10 +457,21 @@ pub struct Features {
     pub known_save_to_room_distance: Vec<u8>,
     pub known_refill_from_room_distance: Vec<u8>,
     pub known_refill_to_room_distance: Vec<u8>,
+    pub area_used: Vec<u8>,
+    pub area_min_x: Vec<Coord>,
+    pub area_max_x: Vec<Coord>,
+    pub area_min_y: Vec<Coord>,
+    pub area_max_y: Vec<Coord>,
+    pub area_connected_components: Vec<u8>,
+    pub area_crossings: Vec<u16>,
+    pub area_size: Vec<u16>,
+    pub area_map_station_count: Vec<u8>,
     // mask, x, y, vertical, kind
     pub frontier: Vec<i8>,
     // Door variant index for each frontier row, keyed by the unmatched door variant.
     pub frontier_door_variant: Vec<DoorVariantIdx>,
+    // Area of the placed room containing each frontier row.
+    pub frontier_area: Vec<AreaIdx>,
     // Global door output index for each frontier row, or -1 when unavailable.
     pub row_door_output_idx: Vec<i16>,
     // Occupied tiles in a square window centered on each frontier, packed row-major.
@@ -505,6 +524,7 @@ pub struct FeatureExtraOccupied {
 pub struct FeatureFrontierPlanRow {
     pub location: DoorLocation,
     pub door_variant_idx: DoorVariantIdx,
+    pub area: AreaIdx,
     pub row_door_output_idx: i16,
     pub component: usize,
     pub kind: DoorKind,
@@ -529,6 +549,15 @@ pub struct FeaturePlan {
     pub known_save_to_room_distance: Vec<u8>,
     pub known_refill_from_room_distance: Vec<u8>,
     pub known_refill_to_room_distance: Vec<u8>,
+    pub area_used: Vec<u8>,
+    pub area_min_x: Vec<Coord>,
+    pub area_max_x: Vec<Coord>,
+    pub area_min_y: Vec<Coord>,
+    pub area_max_y: Vec<Coord>,
+    pub area_connected_components: Vec<u8>,
+    pub area_crossings: Vec<u16>,
+    pub area_size: Vec<u16>,
+    pub area_map_station_count: Vec<u8>,
     pub frontiers: Vec<FeatureFrontierPlanRow>,
     pub connection_reachability: Vec<u8>,
     pub frontier_connection_reachability: Vec<u8>,
@@ -607,6 +636,15 @@ impl FeaturePlan {
         self.known_save_to_room_distance.clear();
         self.known_refill_from_room_distance.clear();
         self.known_refill_to_room_distance.clear();
+        self.area_used.clear();
+        self.area_min_x.clear();
+        self.area_max_x.clear();
+        self.area_min_y.clear();
+        self.area_max_y.clear();
+        self.area_connected_components.clear();
+        self.area_crossings.clear();
+        self.area_size.clear();
+        self.area_map_station_count.clear();
         self.frontiers.clear();
         self.connection_reachability.clear();
         self.frontier_connection_reachability.clear();
@@ -652,8 +690,18 @@ impl Features {
         self.known_save_to_room_distance.clear();
         self.known_refill_from_room_distance.clear();
         self.known_refill_to_room_distance.clear();
+        self.area_used.clear();
+        self.area_min_x.clear();
+        self.area_max_x.clear();
+        self.area_min_y.clear();
+        self.area_max_y.clear();
+        self.area_connected_components.clear();
+        self.area_crossings.clear();
+        self.area_size.clear();
+        self.area_map_station_count.clear();
         self.frontier.clear();
         self.frontier_door_variant.clear();
+        self.frontier_area.clear();
         self.row_door_output_idx.clear();
         self.frontier_occupancy.clear();
         self.frontier_neighbor.clear();
@@ -1957,6 +2005,44 @@ impl Environment {
             size: self.area_size,
             map_station_count: self.area_map_station_count,
         }
+    }
+
+    fn write_area_state_features(
+        &self,
+        area_used: &mut Vec<u8>,
+        area_min_x: &mut Vec<Coord>,
+        area_max_x: &mut Vec<Coord>,
+        area_min_y: &mut Vec<Coord>,
+        area_max_y: &mut Vec<Coord>,
+        area_connected_components: &mut Vec<u8>,
+        area_crossings: &mut Vec<u16>,
+        area_size: &mut Vec<u16>,
+        area_map_station_count: &mut Vec<u8>,
+    ) {
+        area_used.extend(self.area_used.iter().copied().map(u8::from));
+        area_min_x.extend(self.area_min_x);
+        area_max_x.extend(self.area_max_x);
+        area_min_y.extend(self.area_min_y);
+        area_max_y.extend(self.area_max_y);
+        area_connected_components.extend(
+            self.area_connected_components
+                .iter()
+                .copied()
+                .map(|value| value as u8),
+        );
+        area_crossings.push(self.area_crossings as u16);
+        area_size.extend(self.area_size.iter().copied().map(|value| value as u16));
+        area_map_station_count.extend(
+            self.area_map_station_count
+                .iter()
+                .copied()
+                .map(|value| value as u8),
+        );
+    }
+
+    fn frontier_area(&self, common: &CommonData, room_part_idx: RoomPartIdx) -> AreaIdx {
+        let room_idx = common.room_part[room_part_idx as usize].0;
+        self.room_area[room_idx as usize]
     }
 
     fn candidate_area_bounds_valid(&self, common: &CommonData, action: Action) -> bool {
@@ -4276,6 +4362,19 @@ impl Environment {
             &mut plan.known_refill_from_room_distance,
             &mut plan.known_refill_to_room_distance,
         );
+        if config.area_state {
+            self.write_area_state_features(
+                &mut plan.area_used,
+                &mut plan.area_min_x,
+                &mut plan.area_max_x,
+                &mut plan.area_min_y,
+                &mut plan.area_max_y,
+                &mut plan.area_connected_components,
+                &mut plan.area_crossings,
+                &mut plan.area_size,
+                &mut plan.area_map_station_count,
+            );
+        }
         if config.connection_reachability {
             plan.connection_reachability
                 .resize(common.room_connection.len(), 0);
@@ -4305,6 +4404,7 @@ impl Environment {
             plan.frontiers.push(FeatureFrontierPlanRow {
                 location: **location,
                 door_variant_idx: data.door_variant_idx,
+                area: self.frontier_area(common, data.room_part_idx),
                 row_door_output_idx: data.door_output_idx,
                 component: data.component,
                 kind: data.kind,
@@ -4677,11 +4777,38 @@ impl Environment {
             &mut known_refill_from_room_distance,
             &mut known_refill_to_room_distance,
         );
+        let mut area_used = std::mem::take(&mut output.area_used);
+        let mut area_min_x = std::mem::take(&mut output.area_min_x);
+        let mut area_max_x = std::mem::take(&mut output.area_max_x);
+        let mut area_min_y = std::mem::take(&mut output.area_min_y);
+        let mut area_max_y = std::mem::take(&mut output.area_max_y);
+        let mut area_connected_components =
+            std::mem::take(&mut output.area_connected_components);
+        let mut area_crossings = std::mem::take(&mut output.area_crossings);
+        let mut area_size = std::mem::take(&mut output.area_size);
+        let mut area_map_station_count = std::mem::take(&mut output.area_map_station_count);
+        if config.area_state {
+            self.write_area_state_features(
+                &mut area_used,
+                &mut area_min_x,
+                &mut area_max_x,
+                &mut area_min_y,
+                &mut area_max_y,
+                &mut area_connected_components,
+                &mut area_crossings,
+                &mut area_size,
+                &mut area_map_station_count,
+            );
+        }
         let mut frontier = std::mem::take(&mut output.frontier);
         frontier.resize(frontier_count * FEATURE_FRONTIER_WIDTH, 0);
         let mut frontier_door_variant = std::mem::take(&mut output.frontier_door_variant);
         if config.frontier_door_variant {
             frontier_door_variant.resize(frontier_count, 0);
+        }
+        let mut frontier_area = std::mem::take(&mut output.frontier_area);
+        if config.frontier_area {
+            frontier_area.resize(frontier_count, 0);
         }
         let frontier_window_area = frontier_window_size * frontier_window_size;
         let packed_frontier_window_size = frontier_window_area.div_ceil(8);
@@ -4777,6 +4904,9 @@ impl Environment {
             }
             if config.frontier_door_variant {
                 frontier_door_variant[idx] = data.door_variant_idx;
+            }
+            if config.frontier_area {
+                frontier_area[idx] = self.frontier_area(common, data.room_part_idx);
             }
             if !config.frontier_occupancy {
                 continue;
@@ -5232,8 +5362,18 @@ impl Environment {
             known_save_to_room_distance,
             known_refill_from_room_distance,
             known_refill_to_room_distance,
+            area_used,
+            area_min_x,
+            area_max_x,
+            area_min_y,
+            area_max_y,
+            area_connected_components,
+            area_crossings,
+            area_size,
+            area_map_station_count,
             frontier,
             frontier_door_variant,
+            frontier_area,
             row_door_output_idx,
             frontier_occupancy,
             frontier_neighbor,

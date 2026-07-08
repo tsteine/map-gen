@@ -317,11 +317,13 @@ Model predictions:
 
 Training config:
 
-- Add required train weights: `area_connected_weight`, `area_crossing_weight`,
-  and `area_size_weight` or names matching the existing loss conventions.
-- Add required generation reward fields: `reward_area_connected`
-  `reward_area_used` `reward_area_crossing` `reward_area_size_valid`
-- Add required area size config: `min_area_size` `max_area_size`
+- Add required train weights: `area_used_weight`,
+  `area_excess_components_weight`, `area_crossing_weight`,
+  `area_size_weight`, and `area_map_station_weight`.
+- Add required area size config: `min_area_size` `max_area_size`.
+- Defer generation reward fields (`reward_area_connected`,
+  `reward_area_used`, `reward_area_crossing`, `reward_area_size_valid`) to
+  Phase 8, where prediction outputs are incorporated into candidate reward.
 - Defer `target_area_size` and `reward_area_size` to a later follow-up. When
   added, `target_area_size` should be ordered as
   `[Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian]`.

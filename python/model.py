@@ -52,6 +52,11 @@ class Predictions:
     refill_from_room_utility: torch.Tensor
     # Predicted utility for each required missing connection:
     missing_connect_utility: torch.Tensor
+    area_used: torch.Tensor
+    area_excess_components: torch.Tensor
+    area_crossings: torch.Tensor
+    area_size: torch.Tensor
+    area_map_station_count: torch.Tensor
     # Frontier-local proposal logits for door variants:
     proposal_score: torch.Tensor
     # Optional frontier-local state before global pooling:
@@ -90,6 +95,15 @@ def get_predictions(raw_preds, output_sizes):
         refill_to_room_utility=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         refill_from_room_utility=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         missing_connect_utility=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
+        area_used=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], AREA_COUNT]),
+        area_excess_components=raw_preds.new_empty(
+            [raw_preds.shape[0], raw_preds.shape[1], AREA_COUNT]
+        ),
+        area_crossings=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1]]),
+        area_size=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], AREA_COUNT, 3]),
+        area_map_station_count=raw_preds.new_empty(
+            [raw_preds.shape[0], raw_preds.shape[1], AREA_COUNT, 3]
+        ),
         proposal_score=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_state=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_row_snapshot_idx=raw_preds.new_empty([0], dtype=torch.int64),
@@ -727,6 +741,11 @@ class FrontierModel(torch.nn.Module):
             embedding_width,
             self.num_connection_outputs,
         )
+        self.area_used_output = torch.nn.Linear(embedding_width, AREA_COUNT)
+        self.area_excess_components_output = torch.nn.Linear(embedding_width, AREA_COUNT)
+        self.area_crossings_output = torch.nn.Linear(embedding_width, 1)
+        self.area_size_output = torch.nn.Linear(embedding_width, AREA_COUNT * 3)
+        self.area_map_station_count_output = torch.nn.Linear(embedding_width, AREA_COUNT * 3)
         self.proposal_output = ProposalOutput(
             embedding_width,
             proposal_hidden_widths,
@@ -876,6 +895,21 @@ class FrontierModel(torch.nn.Module):
         refill_to_room_utility = self.refill_to_room_utility_output(X).to(torch.float32)
         refill_from_room_utility = self.refill_from_room_utility_output(X).to(torch.float32)
         missing_connect_utility = self.missing_connect_utility_output(X).to(torch.float32)
+        area_used = self.area_used_output(X).to(torch.float32)
+        area_excess_components = self.area_excess_components_output(X).to(torch.float32)
+        area_crossings = self.area_crossings_output(X).squeeze(-1).to(torch.float32)
+        area_size = self.area_size_output(X).reshape(
+            X.shape[0],
+            X.shape[1],
+            AREA_COUNT,
+            3,
+        ).to(torch.float32)
+        area_map_station_count = self.area_map_station_count_output(X).reshape(
+            X.shape[0],
+            X.shape[1],
+            AREA_COUNT,
+            3,
+        ).to(torch.float32)
         preds = get_predictions(
             torch.cat(
                 [door, connection, toilet, phantoon, balance_score, toilet_balance_score],
@@ -1001,6 +1035,11 @@ class FrontierModel(torch.nn.Module):
             refill_to_room_utility=refill_to_room_utility,
             refill_from_room_utility=refill_from_room_utility,
             missing_connect_utility=missing_connect_utility,
+            area_used=area_used,
+            area_excess_components=area_excess_components,
+            area_crossings=area_crossings,
+            area_size=area_size,
+            area_map_station_count=area_map_station_count,
             proposal_score=X.new_empty([row_count, 0]),
             proposal_state=proposal_state,
             proposal_row_snapshot_idx=(

@@ -32,6 +32,8 @@ def disabled_features() -> FeatureConfig:
         frontier_neighbor_flags=False,
         connection_reachability=0,
         frontier_connection_reachability=False,
+        area_state=False,
+        frontier_area=0,
         missing_connect_query=False,
         save_utility_query=False,
         refill_utility_query=False,

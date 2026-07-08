@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from env import Features, OutputMetadata
+from env import AREA_COUNT, Features, OutputMetadata
 from train_config import GENERATION_VARIABLE_FLOAT_FIELDS
 
 if TYPE_CHECKING:
@@ -551,6 +551,35 @@ class KnownDistanceFeature(DistanceSlotFeature):
         )
 
 
+class AreaStateFeature(GlobalFeature):
+    @classmethod
+    def is_enabled(cls, config: FeatureConfig) -> bool:
+        return config.area_state
+
+    @classmethod
+    def tensor_width(cls, context: FeatureContext) -> int:
+        return AREA_COUNT * 8 + 1
+
+    @classmethod
+    def build(cls, context: FeatureContext) -> AreaStateFeature:
+        return cls()
+
+    def forward(self, features: Features, dtype: torch.dtype) -> torch.Tensor:
+        area = features.global_features
+        values = [
+            area.area_used.to(dtype),
+            area.area_min_x.to(dtype),
+            area.area_max_x.to(dtype),
+            area.area_min_y.to(dtype),
+            area.area_max_y.to(dtype),
+            area.area_connected_components.to(dtype),
+            area.area_size.to(dtype),
+            area.area_map_station_count.to(dtype),
+            area.area_crossings.to(dtype),
+        ]
+        return torch.cat(values, dim=-1)
+
+
 GLOBAL_FEATURES: list[type[GlobalFeature]] = [
     InventoryFeature,
     TemperatureFeature,
@@ -565,6 +594,7 @@ GLOBAL_FEATURES: list[type[GlobalFeature]] = [
     RoomPartRefillDistanceFeature,
     RoomPartFrontierDistanceFeature,
     KnownDistanceFeature,
+    AreaStateFeature,
 ]
 
 
@@ -735,6 +765,27 @@ class FrontierDoorVariantFeature(FrontierNodeFeature):
         ).to(dtype)
 
 
+class FrontierAreaFeature(FrontierNodeFeature):
+    def __init__(self, width: int):
+        super().__init__()
+        self.embedding = torch.nn.Embedding(AREA_COUNT, width)
+
+    @classmethod
+    def is_enabled(cls, config: FeatureConfig) -> bool:
+        return config.frontier_area > 0
+
+    @classmethod
+    def tensor_width(cls, context: FeatureContext) -> int:
+        return context.features.frontier_area
+
+    @classmethod
+    def build(cls, context: FeatureContext) -> FrontierAreaFeature:
+        return cls(context.features.frontier_area)
+
+    def forward(self, features: Features, dtype: torch.dtype) -> torch.Tensor:
+        return self.embedding(features.frontier_features.frontier_area.to(torch.int64)).to(dtype)
+
+
 class FrontierNeighborFlagsFeature(FrontierPairFeature):
     @classmethod
     def is_enabled(cls, config: FeatureConfig) -> bool:
@@ -809,6 +860,7 @@ FRONTIER_NODE_FEATURES: list[type[FrontierNodeFeature]] = [
     FrontierOrientationFeature,
     FrontierKindFeature,
     FrontierDoorVariantFeature,
+    FrontierAreaFeature,
 ]
 
 FRONTIER_PAIR_FEATURES: list[type[FrontierPairFeature]] = [
