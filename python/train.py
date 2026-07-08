@@ -1317,6 +1317,20 @@ class TrainingSession:
             missing_connect_utility = torch.sum(missing_connect_utility_values)
         else:
             missing_connect_utility = torch.mean(missing_connect_utility_values)
+        area_connected_components = end_outcomes.area_connected_components
+        avg_area_connected = torch.mean((area_connected_components == 1).to(torch.float32))
+        avg_area_used = torch.mean((area_connected_components > 0).to(torch.float32))
+        avg_area_crossing = torch.mean(end_outcomes.area_crossings.to(torch.float32))
+        area_size = end_outcomes.area_size
+        avg_area_size_valid = torch.mean(
+            (
+                (area_size >= step_config.generation.min_area_size)
+                & (area_size <= step_config.generation.max_area_size)
+            ).to(torch.float32)
+        )
+        avg_area_map_station = torch.mean(
+            (end_outcomes.area_map_station_count == 1).to(torch.float32)
+        )
 
         success = total_invalid == 0
         success_rate = torch.mean(success.to(torch.float32))
@@ -1455,6 +1469,11 @@ class TrainingSession:
             "missing_connect_distance": missing_connect_distance,
             "missing_connect_distance_mask_fraction": missing_connect_distance_mask_fraction,
             "missing_connect_utility": missing_connect_utility,
+            "avg_area_connected": avg_area_connected,
+            "avg_area_used": avg_area_used,
+            "avg_area_crossing": avg_area_crossing,
+            "avg_area_size_valid": avg_area_size_valid,
+            "avg_area_map_station": avg_area_map_station,
             "avg_door": avg_door,
             "avg_conn": avg_conn,
             "avg_toilet": avg_toilet,
