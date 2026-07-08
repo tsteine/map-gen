@@ -48,6 +48,11 @@ class GenerateConfig:
     reward_save_distance: float | torch.Tensor
     reward_refill_distance: float | torch.Tensor
     reward_missing_connect_utility: float | torch.Tensor
+    reward_area_connected: float | torch.Tensor
+    reward_area_used: float | torch.Tensor
+    reward_area_crossing: float | torch.Tensor
+    reward_area_size_valid: float | torch.Tensor
+    reward_area_map_station: float | torch.Tensor
     generation_variable_floats: torch.Tensor
     log_temperature_model: torch.Tensor
     log_recommended_candidates_model: torch.Tensor

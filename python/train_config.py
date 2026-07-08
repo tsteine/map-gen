@@ -46,6 +46,11 @@ GENERATION_VARIABLE_FLOAT_FIELDS = (
     "reward_save_distance",
     "reward_refill_distance",
     "reward_missing_connect_utility",
+    "reward_area_connected",
+    "reward_area_used",
+    "reward_area_crossing",
+    "reward_area_size_valid",
+    "reward_area_map_station",
 )
 
 
@@ -122,6 +127,11 @@ class GenerationConfig(StrictBaseModel):
     reward_save_distance: VariableFloat
     reward_refill_distance: VariableFloat
     reward_missing_connect_utility: VariableFloat
+    reward_area_connected: VariableFloat
+    reward_area_used: VariableFloat
+    reward_area_crossing: VariableFloat
+    reward_area_size_valid: VariableFloat
+    reward_area_map_station: VariableFloat
     min_area_size: int
     max_area_size: int
     frontier_neighbor_algorithm: Literal["delaunay", "nearest", "nearest-exclusive"]
@@ -513,6 +523,26 @@ def validate_config(config: Config) -> None:
     validate_nonnegative_variable_float(
         config.generation.reward_missing_connect_utility,
         "generation.reward_missing_connect_utility",
+    )
+    validate_nonnegative_variable_float(
+        config.generation.reward_area_connected,
+        "generation.reward_area_connected",
+    )
+    validate_nonnegative_variable_float(
+        config.generation.reward_area_used,
+        "generation.reward_area_used",
+    )
+    validate_nonnegative_variable_float(
+        config.generation.reward_area_crossing,
+        "generation.reward_area_crossing",
+    )
+    validate_nonnegative_variable_float(
+        config.generation.reward_area_size_valid,
+        "generation.reward_area_size_valid",
+    )
+    validate_nonnegative_variable_float(
+        config.generation.reward_area_map_station,
+        "generation.reward_area_map_station",
     )
     if config.generation.num_threads is not None and config.generation.num_threads <= 0:
         raise ValueError("generation.num_threads must be greater than zero")

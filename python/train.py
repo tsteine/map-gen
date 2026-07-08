@@ -511,6 +511,26 @@ def create_generate_config(
             config.generation.reward_missing_connect_utility,
             "generation.reward_missing_connect_utility",
         ),
+        "reward_area_connected": variable_float_tensor(
+            config.generation.reward_area_connected,
+            "generation.reward_area_connected",
+        ),
+        "reward_area_used": variable_float_tensor(
+            config.generation.reward_area_used,
+            "generation.reward_area_used",
+        ),
+        "reward_area_crossing": variable_float_tensor(
+            config.generation.reward_area_crossing,
+            "generation.reward_area_crossing",
+        ),
+        "reward_area_size_valid": variable_float_tensor(
+            config.generation.reward_area_size_valid,
+            "generation.reward_area_size_valid",
+        ),
+        "reward_area_map_station": variable_float_tensor(
+            config.generation.reward_area_map_station,
+            "generation.reward_area_map_station",
+        ),
     }
     generation_variable_floats = torch.stack(
         [
@@ -566,6 +586,11 @@ def create_generate_config(
         reward_missing_connect_utility=(
             generation_variable_floats_by_name["reward_missing_connect_utility"]
         ),
+        reward_area_connected=generation_variable_floats_by_name["reward_area_connected"],
+        reward_area_used=generation_variable_floats_by_name["reward_area_used"],
+        reward_area_crossing=generation_variable_floats_by_name["reward_area_crossing"],
+        reward_area_size_valid=generation_variable_floats_by_name["reward_area_size_valid"],
+        reward_area_map_station=generation_variable_floats_by_name["reward_area_map_station"],
         generation_variable_floats=generation_variable_floats,
         log_temperature_model=log_temperature_model,
         log_recommended_candidates_model=log_recommended_candidates_model,
@@ -1493,6 +1518,32 @@ class TrainingSession:
                 variable_float_metric_value(
                     step_config.generation.reward_missing_connect_utility,
                     "generation.reward_missing_connect_utility",
+                )
+            ),
+            "reward_area_connected": (
+                variable_float_metric_value(
+                    step_config.generation.reward_area_connected,
+                    "generation.reward_area_connected",
+                )
+            ),
+            "reward_area_used": variable_float_metric_value(
+                step_config.generation.reward_area_used,
+                "generation.reward_area_used",
+            ),
+            "reward_area_crossing": variable_float_metric_value(
+                step_config.generation.reward_area_crossing,
+                "generation.reward_area_crossing",
+            ),
+            "reward_area_size_valid": (
+                variable_float_metric_value(
+                    step_config.generation.reward_area_size_valid,
+                    "generation.reward_area_size_valid",
+                )
+            ),
+            "reward_area_map_station": (
+                variable_float_metric_value(
+                    step_config.generation.reward_area_map_station,
+                    "generation.reward_area_map_station",
                 )
             ),
             "distance_proximity_scale": step_config.distance_proximity_scale,
