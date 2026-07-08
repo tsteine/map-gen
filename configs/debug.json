@@ -63,6 +63,8 @@
     "frontier_neighbor_count": 1,
     "frontier_window_size": 16,
     "candidate_spatial_cell_size": 8,
+    "area_bounding_box_width": 10,
+    "area_bounding_box_height": 10,
     "num_threads": 32
   },
   "features": {

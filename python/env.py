@@ -787,6 +787,8 @@ class Engine:
         map_size: tuple[int, int],
         num_envs: int,
         candidate_spatial_cell_size: int,
+        area_bounding_box_width: int,
+        area_bounding_box_height: int,
         seed: Optional[int] = None,
         frontier_neighbor_count: int = 4,
         frontier_window_size: int = 16,
@@ -804,6 +806,8 @@ class Engine:
             frontier_neighbor_count,
             frontier_window_size,
             candidate_spatial_cell_size,
+            area_bounding_box_width,
+            area_bounding_box_height,
             num_threads,
             frontier_neighbor_algorithm,
         )

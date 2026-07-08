@@ -368,6 +368,8 @@ def create_generation_environment_groups(
                 config.map_size,
                 generation_group_environments,
                 config.generation.candidate_spatial_cell_size,
+                config.generation.area_bounding_box_width,
+                config.generation.area_bounding_box_height,
                 seed=device_index * config.generation.pipeline_groups + group_index,
                 frontier_neighbor_algorithm=config.generation.frontier_neighbor_algorithm,
                 frontier_neighbor_count=config.generation.frontier_neighbor_count,

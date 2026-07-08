@@ -256,6 +256,8 @@ def create_environment_groups(
             training_config.map_size,
             group_environments,
             generation_config.candidate_spatial_cell_size,
+            generation_config.area_bounding_box_width,
+            generation_config.area_bounding_box_height,
             seed=None if seed is None else seed + group_index,
             frontier_neighbor_algorithm=generation_config.frontier_neighbor_algorithm,
             frontier_neighbor_count=generation_config.frontier_neighbor_count,

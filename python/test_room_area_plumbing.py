@@ -63,6 +63,8 @@ def test_environment_group_round_trips_room_area() -> None:
         map_size=(4, 4),
         num_envs=1,
         candidate_spatial_cell_size=4,
+        area_bounding_box_width=4,
+        area_bounding_box_height=4,
         seed=0,
         num_threads=1,
     )

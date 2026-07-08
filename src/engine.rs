@@ -3070,7 +3070,7 @@ impl Engine {
         })
     }
 
-    #[pyo3(signature = (map_size, num_environments, seed, frontier_neighbor_count, frontier_window_size, candidate_spatial_cell_size, num_threads=None, frontier_neighbor_algorithm="delaunay"))]
+    #[pyo3(signature = (map_size, num_environments, seed, frontier_neighbor_count, frontier_window_size, candidate_spatial_cell_size, area_bounding_box_width, area_bounding_box_height, num_threads=None, frontier_neighbor_algorithm="delaunay"))]
     fn create_environment_group(
         &self,
         map_size: (Coord, Coord),
@@ -3079,6 +3079,8 @@ impl Engine {
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
         candidate_spatial_cell_size: usize,
+        area_bounding_box_width: Coord,
+        area_bounding_box_height: Coord,
         num_threads: Option<usize>,
         frontier_neighbor_algorithm: &str,
     ) -> PyResult<EnvironmentGroup> {
@@ -3102,6 +3104,8 @@ impl Engine {
             frontier_neighbor_count,
             frontier_window_size,
             candidate_spatial_cell_size,
+            area_bounding_box_width,
+            area_bounding_box_height,
             num_threads,
         )
     }
@@ -3168,11 +3172,23 @@ impl EnvironmentGroup {
         frontier_neighbor_count: usize,
         frontier_window_size: usize,
         candidate_spatial_cell_size: usize,
+        area_bounding_box_width: Coord,
+        area_bounding_box_height: Coord,
         num_threads: Option<usize>,
     ) -> PyResult<Self> {
         if candidate_spatial_cell_size == 0 {
             return Err(PyValueError::new_err(
                 "candidate_spatial_cell_size must be greater than 0",
+            ));
+        }
+        if area_bounding_box_width <= 0 {
+            return Err(PyValueError::new_err(
+                "area_bounding_box_width must be greater than 0",
+            ));
+        }
+        if area_bounding_box_height <= 0 {
+            return Err(PyValueError::new_err(
+                "area_bounding_box_height must be greater than 0",
             ));
         }
         let requested_threads = requested_num_threads(num_threads)?;
@@ -3191,6 +3207,8 @@ impl EnvironmentGroup {
                     &common_data,
                     map_size,
                     candidate_spatial_cell_size,
+                    area_bounding_box_width,
+                    area_bounding_box_height,
                     seed ^ env_idx as u64,
                 ));
             }

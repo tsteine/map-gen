@@ -53,7 +53,7 @@ pub struct Room {
     #[serde(default)]
     refill: bool,
     #[serde(default, rename = "map_station")]
-    _map_station: bool,
+    map_station: bool,
     map: Vec<Vec<u8>>,
     toilet_crossing_x: Vec<Coord>,
     special_type: Option<SpecialType>,
@@ -204,6 +204,7 @@ pub struct OutputData {
 pub struct RoomData {
     pub geometry_idx: GeometryIdx,
     pub connection_variant_idx: ConnectionVariantIdx,
+    pub map_station: bool,
     pub doors: Vec<RoomDoorData>,
     pub door_group_offset: usize,
     pub door_group_count: usize,
@@ -754,6 +755,7 @@ impl CommonData {
             room_data.push(RoomData {
                 geometry_idx,
                 connection_variant_idx,
+                map_station: room.map_station,
                 doors: door_data,
                 door_group_offset: door_group_count,
                 door_group_count: room.doors.len(),

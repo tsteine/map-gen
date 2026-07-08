@@ -126,6 +126,8 @@ class GenerationConfig(StrictBaseModel):
     frontier_neighbor_count: int
     frontier_window_size: int
     candidate_spatial_cell_size: int
+    area_bounding_box_width: int
+    area_bounding_box_height: int
     num_threads: int | None
 
 
@@ -458,6 +460,10 @@ def validate_config(config: Config) -> None:
         raise ValueError("generation.frontier_window_size must be greater than or equal to zero")
     if config.generation.candidate_spatial_cell_size <= 0:
         raise ValueError("generation.candidate_spatial_cell_size must be greater than zero")
+    if config.generation.area_bounding_box_width <= 0:
+        raise ValueError("generation.area_bounding_box_width must be greater than zero")
+    if config.generation.area_bounding_box_height <= 0:
+        raise ValueError("generation.area_bounding_box_height must be greater than zero")
     validate_positive_variable_float(
         config.generation.temperature,
         "generation.temperature",
