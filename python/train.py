@@ -465,8 +465,17 @@ def create_generate_config(
             "generation.proposal_temperature",
         )
     )
+    frontier_temperature = (
+        torch.full([num_envs], IGNORE_SCORES_TEMPERATURE, dtype=torch.float32, device=device)
+        if ignore_scores
+        else variable_float_tensor(
+            config.generation.frontier_temperature,
+            "generation.frontier_temperature",
+        )
+    )
     generation_variable_floats_by_name = {
         "temperature": temperature,
+        "frontier_temperature": frontier_temperature,
         "proposal_temperature": proposal_temperature,
         "reward_door": variable_float_tensor(
             config.generation.reward_door,
@@ -576,6 +585,7 @@ def create_generate_config(
         ),
         gpu_prefetch_batches=config.generation.gpu_prefetch_batches,
         temperature=temperature,
+        frontier_temperature=frontier_temperature,
         proposal_temperature=proposal_temperature,
         reward_door=generation_variable_floats_by_name["reward_door"],
         reward_connection=generation_variable_floats_by_name["reward_connection"],
@@ -1164,6 +1174,12 @@ class TrainingSession:
                 target_logits=torch.cat(
                     [proposal_data.target_logits for proposal_data in proposal_data_iterations]
                 ),
+                frontier_value_target=torch.cat(
+                    [
+                        proposal_data.frontier_value_target
+                        for proposal_data in proposal_data_iterations
+                    ]
+                ),
             ),
             generation_stats,
             merge_profile_reports(profile_reports),
@@ -1418,6 +1434,7 @@ class TrainingSession:
             100.0 * loss.area_map_station_contribution / loss_denominator
         )
         proposal_loss_pct = 100.0 * loss.proposal_contribution / loss_denominator
+        frontier_value_loss_pct = 100.0 * loss.frontier_value_contribution / loss_denominator
 
         metrics = {
             "loss": loss.total,
@@ -1453,6 +1470,8 @@ class TrainingSession:
             "area_map_station_loss_pct": area_map_station_loss_pct,
             "proposal_loss": loss.proposal,
             "proposal_loss_pct": proposal_loss_pct,
+            "frontier_value_loss": loss.frontier_value,
+            "frontier_value_loss_pct": frontier_value_loss_pct,
             "candidate_target_entropy": candidate_diagnostics.target_entropy,
             "candidate_uniform_kl": candidate_diagnostics.uniform_kl,
             "candidate_selected_probability": candidate_diagnostics.selected_probability,

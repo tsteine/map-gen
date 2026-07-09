@@ -34,6 +34,7 @@ type VariableFloat = float | VariableSchedule
 
 GENERATION_VARIABLE_FLOAT_FIELDS = (
     "temperature",
+    "frontier_temperature",
     "proposal_temperature",
     "reward_door",
     "reward_connection",
@@ -62,6 +63,7 @@ class ModelConfig(StrictBaseModel):
     global_embedding_width: int
     hidden_width: int
     proposal_hidden_widths: list[int]
+    frontier_value_hidden_widths: list[int]
     missing_connect_query_hidden_width: int
     missing_connect_query_frontier_width: int
     missing_connect_query_distance_width: int
@@ -116,6 +118,7 @@ class GenerationConfig(StrictBaseModel):
     shortlist_candidates: ScheduleableInt
     max_candidate_areas_per_placement: int
     temperature: VariableFloat
+    frontier_temperature: VariableFloat
     proposal_temperature: VariableFloat
     reward_door: VariableFloat
     reward_connection: VariableFloat
@@ -263,6 +266,7 @@ class TrainConfig(StrictBaseModel):
     area_size_weight: float
     area_map_station_weight: float
     proposal_weight: float
+    frontier_value_weight: float
     ema_decay: ScheduleableFloat
     pipeline_groups: int
     gradient_accumulation_steps: int
@@ -410,6 +414,11 @@ def validate_config(config: Config) -> None:
             raise ValueError(
                 f"model.proposal_hidden_widths[{index}] must be greater than zero"
             )
+    for index, width in enumerate(config.model.frontier_value_hidden_widths):
+        if width <= 0:
+            raise ValueError(
+                f"model.frontier_value_hidden_widths[{index}] must be greater than zero"
+            )
     if config.model.missing_connect_query_hidden_width <= 0:
         raise ValueError("model.missing_connect_query_hidden_width must be greater than zero")
     if config.model.missing_connect_query_frontier_width <= 0:
@@ -506,6 +515,10 @@ def validate_config(config: Config) -> None:
         "generation.temperature",
     )
     validate_positive_variable_float(
+        config.generation.frontier_temperature,
+        "generation.frontier_temperature",
+    )
+    validate_positive_variable_float(
         config.generation.proposal_temperature,
         "generation.proposal_temperature",
     )
@@ -570,6 +583,8 @@ def validate_config(config: Config) -> None:
         raise ValueError("train.shuffle_buffer_batches must be greater than zero")
     if config.train.proposal_weight < 0:
         raise ValueError("train.proposal_weight must be greater than or equal to zero")
+    if config.train.frontier_value_weight < 0:
+        raise ValueError("train.frontier_value_weight must be greater than or equal to zero")
     if config.train.toilet_weight < 0:
         raise ValueError("train.toilet_weight must be greater than or equal to zero")
     if config.train.phantoon_weight < 0:

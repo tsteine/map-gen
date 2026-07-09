@@ -298,6 +298,7 @@ class CandidateScoreSuccess:
     proposal_action_idx: torch.Tensor
     selected_candidate: torch.Tensor
     target_logits: torch.Tensor
+    frontier_value_target: torch.Tensor
 
 
 @dataclass
@@ -357,6 +358,7 @@ class GroupPipelineOutput:
     proposal_action_idx: list[torch.Tensor]
     selected_candidate: list[torch.Tensor]
     target_logits: list[torch.Tensor]
+    frontier_value_target: list[torch.Tensor]
 
 
 @dataclass
@@ -377,7 +379,6 @@ class PipelineThreadFailure:
 @dataclass
 class ProposalInputs:
     features: Features | None
-    mask: ProposalCandidateMask
 
 
 def create_generation_environment_groups(
@@ -487,6 +488,111 @@ def row_scores_for_mask(
     return result
 
 
+def row_scores_for_frontier(
+    output_head: torch.nn.Module,
+    proposal_state: torch.Tensor,
+    row_snapshot_idx: torch.Tensor,
+    row_frontier_idx: torch.Tensor,
+    frontier_idx: torch.Tensor,
+    device: torch.device,
+) -> torch.Tensor:
+    frontier_idx = frontier_idx.to(device=device, dtype=torch.int64)
+    result = torch.full(
+        (frontier_idx.shape[0], output_head.out_features),
+        float("-inf"),
+        dtype=output_head.output_dtype,
+        device=device,
+    )
+    if proposal_state.shape[0] == 0:
+        return result
+    row_snapshot_idx = row_snapshot_idx.to(device=device, dtype=torch.int64)
+    row_frontier_idx = row_frontier_idx.to(device=device, dtype=torch.int64)
+    row_valid = (
+        (row_snapshot_idx >= 0)
+        & (row_snapshot_idx < frontier_idx.shape[0])
+        & (row_frontier_idx == frontier_idx[row_snapshot_idx])
+    )
+    if torch.any(row_valid):
+        result[row_snapshot_idx[row_valid]] = output_head(
+            proposal_state[row_valid].to(output_head.output_dtype)
+        )
+    return result
+
+
+def sample_frontier_from_packed_scores(
+    frontier_value_score: torch.Tensor,
+    row_snapshot_idx: torch.Tensor,
+    environment_count: int,
+    frontier_temperature: torch.Tensor,
+    device: torch.device,
+) -> torch.Tensor:
+    if frontier_value_score.shape[0] == 0:
+        return torch.full([environment_count], -1, dtype=torch.int16, device=device)
+    row_snapshot_idx = row_snapshot_idx.to(device=device, dtype=torch.int64)
+    row_count = torch.bincount(row_snapshot_idx, minlength=environment_count)
+    max_frontiers = int(row_count.max().item()) if row_count.shape[0] > 0 else 0
+    if max_frontiers == 0:
+        return torch.full([environment_count], -1, dtype=torch.int16, device=device)
+    row_start = row_count.cumsum(0) - row_count
+    local_frontier_idx = torch.arange(max_frontiers, device=device, dtype=torch.int64)
+    row_idx = row_start.unsqueeze(1) + local_frontier_idx.unsqueeze(0)
+    valid = local_frontier_idx.unsqueeze(0) < row_count.unsqueeze(1)
+    safe_row_idx = row_idx.clamp_max(frontier_value_score.shape[0] - 1)
+    logits = frontier_value_score[safe_row_idx].squeeze(-1).to(torch.float32)
+    logits.div_(frontier_temperature.to(device).view(-1, 1).clamp_min(1e-6))
+    logits.masked_fill_(~valid, float("-inf"))
+    gumbel = torch.empty_like(logits).exponential_().log_().neg_()
+    sampled = torch.argmax(logits + gumbel, dim=1).to(torch.int16)
+    return torch.where(
+        row_count > 0,
+        sampled,
+        torch.full_like(sampled, -1),
+    )
+
+
+def sample_frontier_from_cache(
+    group: GenerationGroup,
+    model,
+    cache: ProposalCache,
+    environment_count: int,
+    frontier_temperature: torch.Tensor,
+    device: torch.device,
+) -> torch.Tensor:
+    if cache.state.shape[0] == 0:
+        return torch.full([environment_count], -1, dtype=torch.int16, device=device)
+    row_start_idx = cache.row_start_idx.to(device)
+    row_count = cache.row_count.to(device)
+    action_index = cache.action_index.to(device)
+    selected_snapshot_idx = (
+        torch.arange(environment_count, device=device) * cache.candidate_count + action_index
+    )
+    selected_row_start = row_start_idx[selected_snapshot_idx]
+    selected_row_count = row_count[selected_snapshot_idx]
+    max_frontiers = int(selected_row_count.max().item()) if selected_row_count.numel() > 0 else 0
+    if max_frontiers == 0:
+        return torch.full([environment_count], -1, dtype=torch.int16, device=device)
+    local_frontier_idx = torch.arange(max_frontiers, device=device, dtype=torch.int64)
+    row_idx = selected_row_start.unsqueeze(1) + local_frontier_idx.unsqueeze(0)
+    valid = local_frontier_idx.unsqueeze(0) < selected_row_count.unsqueeze(1)
+    safe_row_idx = row_idx.clamp_max(cache.state.shape[0] - 1)
+    with torch.amp.autocast(
+        "cuda",
+        dtype=torch.bfloat16,
+        enabled=device.type == "cuda" and group.config.autocast,
+    ):
+        logits = model.frontier_value_output(cache.state[safe_row_idx]).squeeze(-1)
+    logits = logits.to(torch.float32)
+    logits.div_(frontier_temperature.to(device).view(-1, 1).clamp_min(1e-6))
+    logits.masked_fill_(~valid, float("-inf"))
+    gumbel = torch.empty_like(logits).exponential_().log_().neg_()
+    sampled = torch.argmax(logits + gumbel, dim=1).to(torch.int16)
+    return torch.where(
+        selected_row_count > 0,
+        sampled,
+        torch.full_like(sampled, -1),
+    )
+
+
 def sample_proposal_shortlist(
     proposal_scores: torch.Tensor,
     proposal_mask: ProposalCandidateMask,
@@ -589,12 +695,32 @@ def select_outcomes(outcomes: StepOutcomes, index: torch.Tensor) -> StepOutcomes
     )
 
 
-def prepare_proposal_inputs(group: GenerationGroup) -> ProposalInputs:
-    proposal_mask = group.env.get_proposal_candidate_mask(
-        torch.device("cpu"),
+def frontier_value_target_from_rewards(
+    target_rewards: torch.Tensor,
+    target_logits: torch.Tensor,
+    proposal_action_idx: torch.Tensor,
+    frontier_idx: torch.Tensor,
+) -> torch.Tensor:
+    valid = (frontier_idx >= 0).unsqueeze(1) & (proposal_action_idx >= 0) & torch.isfinite(
+        target_rewards
     )
+    row_valid = torch.any(valid, dim=1)
+    safe_logits = torch.where(valid, target_logits, torch.full_like(target_logits, float("-inf")))
+    target_probs = torch.softmax(safe_logits, dim=1)
+    expected_value = torch.sum(
+        torch.where(valid, target_probs * target_rewards, torch.zeros_like(target_rewards)),
+        dim=1,
+    )
+    return torch.where(
+        row_valid,
+        expected_value,
+        torch.full_like(expected_value, float("nan")),
+    )
+
+
+def prepare_proposal_inputs(group: GenerationGroup) -> ProposalInputs:
     if group.previous_proposal_scores is not None:
-        return ProposalInputs(features=None, mask=proposal_mask)
+        return ProposalInputs(features=None)
     if group.previous_lookahead_outcomes is None:
         raise ValueError("proposal features require previous lookahead outcomes")
     environment_count = group.config.temperature.shape[0]
@@ -615,7 +741,6 @@ def prepare_proposal_inputs(group: GenerationGroup) -> ProposalInputs:
             group.previous_lookahead_outcomes,
             group.env.engine.features.lookahead_outcomes,
         ),
-        mask=proposal_mask,
     )
 
 
@@ -683,7 +808,7 @@ def select_candidate_actions(
     device: torch.device,
     num_rooms: int,
     profiler: GenerationProfiler,
-) -> tuple[torch.Tensor, Actions, torch.Tensor, torch.Tensor | None]:
+) -> tuple[torch.Tensor, Actions, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     environment_count, candidate_count = candidates.room_idx.shape
     profile = profiler.enabled
     sync_profile_device(device, profile)
@@ -773,6 +898,7 @@ def select_candidate_actions(
                 3,
             ),
             proposal_score=preds.proposal_score,
+            frontier_value_score=preds.frontier_value_score,
             proposal_state=preds.proposal_state,
             proposal_row_snapshot_idx=preds.proposal_row_snapshot_idx,
             proposal_row_frontier_idx=preds.proposal_row_frontier_idx,
@@ -826,14 +952,14 @@ def select_candidate_actions(
         )
         sync_profile_device(device, profile)
     profiler.add("python.score.cache_proposal", profile_time)
-    return action_index, selected_actions, candidate_logits, selected_proposal_scores
+    return action_index, selected_actions, expected_reward, candidate_logits, selected_proposal_scores
 
 
 def compute_proposal_scores(
     group: GenerationGroup,
     model,
     features: Features,
-    proposal_mask: ProposalCandidateMask,
+    sampled_frontier_idx: torch.Tensor,
     device: torch.device,
     transfer_stream: torch.cuda.Stream | None,
 ) -> torch.Tensor:
@@ -847,12 +973,12 @@ def compute_proposal_scores(
             env_features,
             return_proposal_state=True,
         )
-    return row_scores_for_mask(
+    return row_scores_for_frontier(
         model.proposal_output,
         preds.proposal_state,
         preds.proposal_row_snapshot_idx,
         preds.proposal_row_frontier_idx,
-        proposal_mask,
+        sampled_frontier_idx,
         device,
     )
 
@@ -861,10 +987,10 @@ def compute_cached_proposal_scores(
     group: GenerationGroup,
     model,
     cache: ProposalCache,
-    proposal_mask: ProposalCandidateMask,
+    sampled_frontier_idx: torch.Tensor,
     device: torch.device,
 ) -> torch.Tensor:
-    proposal_frontier_idx = proposal_mask.proposal_frontier_idx.to(
+    proposal_frontier_idx = sampled_frontier_idx.to(
         device=device,
         dtype=torch.int64,
     )
@@ -1023,11 +1149,13 @@ def score_staged_candidate_request(
             dtype=torch.float32,
             device=device,
         )
+        candidate_rewards = torch.zeros_like(candidate_logits)
         selected_proposal_scores = None
     else:
         (
             action_index,
             selected_actions,
+            candidate_rewards,
             candidate_logits,
             selected_proposal_scores,
         ) = select_candidate_actions(
@@ -1069,6 +1197,7 @@ def score_staged_candidate_request(
         )
     if candidate_logits.shape[1] == max_candidates:
         target_logits = candidate_logits.to(torch.float32)
+        target_rewards = candidate_rewards.to(torch.float32)
     else:
         target_logits = torch.full(
             [candidates.room_idx.shape[0], max_candidates],
@@ -1076,7 +1205,15 @@ def score_staged_candidate_request(
             dtype=torch.float32,
             device=device,
         )
+        target_rewards = torch.full_like(target_logits, float("nan"))
         target_logits[:, : candidate_logits.shape[1]] = candidate_logits.to(torch.float32)
+        target_rewards[:, : candidate_rewards.shape[1]] = candidate_rewards.to(torch.float32)
+    frontier_value_target = frontier_value_target_from_rewards(
+        target_rewards,
+        target_logits,
+        proposal_action_idx,
+        frontier_idx,
+    )
     selected_outcomes = select_outcomes(
         candidate_batch.post_candidate_outcomes,
         action_index,
@@ -1091,6 +1228,7 @@ def score_staged_candidate_request(
         proposal_action_idx=proposal_action_idx.to(device="cpu", copy=True),
         selected_candidate=action_index.to(device="cpu", copy=True),
         target_logits=target_logits.to(device="cpu", copy=True),
+        frontier_value_target=frontier_value_target.to(device="cpu", copy=True),
     )
     profiler.add("python.record_proposal_data", profile_time)
     return result
@@ -1225,49 +1363,90 @@ def compute_group_proposal_shortlist(
     proposal_inputs = prepare_proposal_inputs(group)
     shared.profiler.add("python.wait_proposal_features", profile_time)
     before_shortlist_time = profile_start(profile)
-    valid_counts = proposal_inputs.mask.valid_counts
-    row_valid_counts = valid_counts
-    add_stat_totals(
-        shared,
-        {
-            "proposal_mask_rows": float(row_valid_counts.numel()),
-            "proposal_valid_cells": float(row_valid_counts.sum().item()),
-            "proposal_full_set_rows": float(
-                (row_valid_counts <= group.config.shortlist_candidates).sum().item()
-            ),
-            "proposal_clean_candidates": 0.0,
-            "proposal_evaluated_candidates": 0.0,
-            "proposal_rejected_candidates": 0.0,
-            "proposal_exhausted_rows": 0.0,
-        },
-    )
-    shortlist_limited = row_valid_counts > group.config.shortlist_candidates
     with shared.gpu_lock:
         if group.previous_proposal_scores is not None:
             profile_time = profile_start(profile)
-            proposal_scores = compute_cached_proposal_scores(
+            sampled_frontier_idx = sample_frontier_from_cache(
                 group,
                 model,
                 group.previous_proposal_scores,
-                proposal_inputs.mask,
+                group.config.temperature.shape[0],
+                group.config.frontier_temperature,
                 device,
             )
+            sampled_frontier_idx_cpu = sampled_frontier_idx.to(torch.device("cpu"))
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                mask_future = executor.submit(
+                    group.env.get_proposal_candidate_mask,
+                    sampled_frontier_idx_cpu,
+                    torch.device("cpu"),
+                )
+                proposal_scores = compute_cached_proposal_scores(
+                    group,
+                    model,
+                    group.previous_proposal_scores,
+                    sampled_frontier_idx,
+                    device,
+                )
+                proposal_mask = mask_future.result()
             sync_profile_device(device, profile)
             shared.profiler.add("python.proposal.compute_cached_scores", profile_time)
         else:
             if proposal_inputs.features is None:
                 raise ValueError("proposal scores require proposal features")
             profile_time = profile_start(profile)
-            proposal_scores = compute_proposal_scores(
-                group,
-                model,
-                proposal_inputs.features,
-                proposal_inputs.mask,
+            env_features = transfer_features(proposal_inputs.features, device, None)
+            with torch.amp.autocast(
+                "cuda",
+                dtype=torch.bfloat16,
+                enabled=device.type == "cuda" and group.config.autocast,
+            ):
+                preds = model(
+                    env_features,
+                    return_proposal_state=True,
+                )
+            sampled_frontier_idx = sample_frontier_from_packed_scores(
+                preds.frontier_value_score,
+                preds.proposal_row_snapshot_idx,
+                group.config.temperature.shape[0],
+                group.config.frontier_temperature,
                 device,
-                None,
             )
+            sampled_frontier_idx_cpu = sampled_frontier_idx.to(torch.device("cpu"))
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                mask_future = executor.submit(
+                    group.env.get_proposal_candidate_mask,
+                    sampled_frontier_idx_cpu,
+                    torch.device("cpu"),
+                )
+                proposal_scores = row_scores_for_frontier(
+                    model.proposal_output,
+                    preds.proposal_state,
+                    preds.proposal_row_snapshot_idx,
+                    preds.proposal_row_frontier_idx,
+                    sampled_frontier_idx,
+                    device,
+                )
+                proposal_mask = mask_future.result()
             sync_profile_device(device, profile)
             shared.profiler.add("python.proposal.compute_fresh_scores", profile_time)
+        valid_counts = proposal_mask.valid_counts
+        row_valid_counts = valid_counts
+        add_stat_totals(
+            shared,
+            {
+                "proposal_mask_rows": float(row_valid_counts.numel()),
+                "proposal_valid_cells": float(row_valid_counts.sum().item()),
+                "proposal_full_set_rows": float(
+                    (row_valid_counts <= group.config.shortlist_candidates).sum().item()
+                ),
+                "proposal_clean_candidates": 0.0,
+                "proposal_evaluated_candidates": 0.0,
+                "proposal_rejected_candidates": 0.0,
+                "proposal_exhausted_rows": 0.0,
+            },
+        )
+        shortlist_limited = row_valid_counts > group.config.shortlist_candidates
         shared.profiler.add("python.proposal.total_before_shortlist", before_shortlist_time)
         profile_time = profile_start(profile)
         (
@@ -1275,7 +1454,7 @@ def compute_group_proposal_shortlist(
             sampled_proposal_action_idx,
         ) = sample_proposal_shortlist(
             proposal_scores,
-            proposal_inputs.mask,
+            proposal_mask,
             group.config,
             device,
         )
@@ -1379,6 +1558,7 @@ def run_group_producer(
             output.proposal_action_idx.append(result.proposal_action_idx)
             output.selected_candidate.append(result.selected_candidate)
             output.target_logits.append(result.target_logits)
+            output.frontier_value_target.append(result.frontier_value_target)
             profile_time = profile_start(shared.profiler.enabled)
             group.previous_lookahead_outcomes = result.selected_outcomes
             group.previous_proposal_scores = result.selected_proposal_scores
@@ -1610,6 +1790,9 @@ def merge_generation_results(
                 [proposal.selected_candidate for _, _, _, proposal in results]
             ),
             target_logits=torch.cat([proposal.target_logits for _, _, _, proposal in results]),
+            frontier_value_target=torch.cat(
+                [proposal.frontier_value_target for _, _, _, proposal in results]
+            ),
         ),
     )
 
@@ -1628,6 +1811,7 @@ def empty_proposal_data(
         target_logits=torch.empty(
             (environment_count, 0, max_candidates), dtype=torch.float32, device=device
         ),
+        frontier_value_target=torch.empty((environment_count, 0), dtype=torch.float32, device=device),
     )
 
 
@@ -1680,6 +1864,7 @@ def run_generation_groups(
             proposal_action_idx=[],
             selected_candidate=[],
             target_logits=[],
+            frontier_value_target=[],
         )
         for _ in groups
     ]
@@ -1799,6 +1984,10 @@ def run_generation_groups(
                             ),
                             target_logits=torch.stack(
                                 group_outputs[group_index].target_logits, dim=1
+                            ),
+                            frontier_value_target=torch.stack(
+                                group_outputs[group_index].frontier_value_target,
+                                dim=1,
                             ),
                         )
                         if group_outputs[group_index].proposal_frontier_idx

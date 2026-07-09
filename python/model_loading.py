@@ -38,6 +38,7 @@ def frontier_model_kwargs(
         "global_embedding_width": config.model.global_embedding_width,
         "hidden_width": config.model.hidden_width,
         "proposal_hidden_widths": config.model.proposal_hidden_widths,
+        "frontier_value_hidden_widths": config.model.frontier_value_hidden_widths,
         "missing_connect_query_hidden_width": config.model.missing_connect_query_hidden_width,
         "missing_connect_query_frontier_width": config.model.missing_connect_query_frontier_width,
         "missing_connect_query_distance_width": config.model.missing_connect_query_distance_width,

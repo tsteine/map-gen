@@ -49,6 +49,7 @@ class GenerateConfig:
     max_candidate_areas_per_placement: int
     gpu_prefetch_batches: int
     temperature: torch.Tensor
+    frontier_temperature: torch.Tensor
     proposal_temperature: torch.Tensor
     reward_door: float | torch.Tensor
     reward_connection: float | torch.Tensor
@@ -143,6 +144,7 @@ class ProposalData:
     action_idx: torch.Tensor
     selected_candidate: torch.Tensor
     target_logits: torch.Tensor
+    frontier_value_target: torch.Tensor
 
     def to(self, device: torch.device) -> "ProposalData":
         return ProposalData(
@@ -150,6 +152,7 @@ class ProposalData:
             action_idx=self.action_idx.to(device),
             selected_candidate=self.selected_candidate.to(device),
             target_logits=self.target_logits.to(device),
+            frontier_value_target=self.frontier_value_target.to(device),
         )
 
     def slice(self, start: int, end: int) -> "ProposalData":
@@ -158,6 +161,7 @@ class ProposalData:
             action_idx=self.action_idx[start:end],
             selected_candidate=self.selected_candidate[start:end],
             target_logits=self.target_logits[start:end],
+            frontier_value_target=self.frontier_value_target[start:end],
         )
 
 
@@ -975,9 +979,12 @@ class EnvironmentGroup:
 
     def get_proposal_candidate_mask(
         self,
+        sampled_frontier_idx: torch.Tensor,
         device: torch.device,
     ) -> ProposalCandidateMask:
-        result = self.env.get_proposal_candidate_mask()
+        result = self.env.get_proposal_candidate_mask(
+            sampled_frontier_idx.contiguous().cpu().numpy(),
+        )
         return ProposalCandidateMask(
             proposal_frontier_idx=torch.from_numpy(result.proposal_frontier_idx).to(device),
             mask=torch.from_numpy(result.mask).to(device),

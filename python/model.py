@@ -58,6 +58,7 @@ class Predictions:
     area_map_station_count: torch.Tensor
     # Frontier-local proposal logits for door variants:
     proposal_score: torch.Tensor
+    frontier_value_score: torch.Tensor
     # Optional frontier-local state before global pooling:
     proposal_state: torch.Tensor
     proposal_row_snapshot_idx: torch.Tensor
@@ -103,6 +104,7 @@ def get_predictions(raw_preds, output_sizes):
             [raw_preds.shape[0], raw_preds.shape[1], AREA_COUNT, 3]
         ),
         proposal_score=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
+        frontier_value_score=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_state=raw_preds.new_empty([raw_preds.shape[0], raw_preds.shape[1], 0]),
         proposal_row_snapshot_idx=raw_preds.new_empty([0], dtype=torch.int64),
         proposal_row_frontier_idx=raw_preds.new_empty([0], dtype=torch.int16),
@@ -521,6 +523,7 @@ class FrontierModel(torch.nn.Module):
         global_embedding_width,
         hidden_width,
         proposal_hidden_widths,
+        frontier_value_hidden_widths,
         missing_connect_query_hidden_width,
         missing_connect_query_frontier_width,
         missing_connect_query_distance_width,
@@ -759,6 +762,11 @@ class FrontierModel(torch.nn.Module):
             proposal_hidden_widths,
             output_metadata.num_door_variants * AREA_COUNT,
         )
+        self.frontier_value_output = ProposalOutput(
+            embedding_width,
+            frontier_value_hidden_widths,
+            1,
+        )
 
     def _pair_features(self, features, neighbor, dtype):
         values = []
@@ -879,6 +887,11 @@ class FrontierModel(torch.nn.Module):
         frontier_door_invalid = self.frontier_door_invalid_output(X)
         frontier_balance_score = self.frontier_balance_score_output(X)
         proposal_state = X if return_proposal_state else X.new_empty([row_count, 0])
+        frontier_value_score = (
+            self.frontier_value_output(X).to(torch.float32)
+            if return_proposal_state
+            else X.new_empty([row_count, 0])
+        )
         frontier_state = X
         # mean_pool, max_pool, pooled_state: [s, e]
         pooled_inputs = [global_state]
@@ -1052,6 +1065,7 @@ class FrontierModel(torch.nn.Module):
             area_size=area_size,
             area_map_station_count=area_map_station_count,
             proposal_score=X.new_empty([row_count, 0]),
+            frontier_value_score=frontier_value_score,
             proposal_state=proposal_state,
             proposal_row_snapshot_idx=(
                 row_snapshot_idx if return_proposal_state else row_snapshot_idx.new_empty([0])

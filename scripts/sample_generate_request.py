@@ -21,6 +21,7 @@ def main() -> int:
         "recommended_candidates": 4,
         "shortlist_candidates": 16,
         "temperature": 0.03,
+        "frontier_temperature": 1.0,
         "proposal_temperature": 0.3,
         "reward_door": 1.0,
         "reward_connection": 1.0,

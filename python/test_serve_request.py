@@ -21,6 +21,7 @@ def base_payload() -> dict:
         "shortlist_candidates": 1,
         "max_candidate_areas_per_placement": 2,
         "temperature": 1.0,
+        "frontier_temperature": 1.0,
         "proposal_temperature": 1.0,
         "reward_door": 1.0,
         "reward_connection": 1.0,
@@ -498,6 +499,7 @@ def main() -> None:
     assert warmup_request.shortlist_candidates == 16
     assert warmup_request.max_candidate_areas_per_placement == 2
     assert warmup_request.temperature == 0.03
+    assert warmup_request.frontier_temperature == 0.3
     assert warmup_request.proposal_temperature == 0.3
     assert warmup_request.reward_balance == 0.1
     assert warmup_request.reward_toilet_balance == 0.1

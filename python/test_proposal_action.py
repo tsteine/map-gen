@@ -7,6 +7,7 @@ from env import (
     proposal_action_room_area,
 )
 from learn import proposal_batch_loss
+from generate import frontier_value_target_from_rewards
 
 
 def test_proposal_action_helpers_flatten_area_variants() -> None:
@@ -53,9 +54,29 @@ def test_proposal_loss_indexes_flattened_area_actions() -> None:
     assert aligned_loss < reversed_loss
 
 
+def test_frontier_value_target_uses_raw_rewards_weighted_by_logits() -> None:
+    rewards = torch.tensor([[1.0, 3.0]], dtype=torch.float32)
+    logits = torch.tensor([[0.0, 10.0]], dtype=torch.float32)
+    proposal_action_idx_tensor = torch.tensor([[0, 1]], dtype=torch.int16)
+    frontier_idx = torch.tensor([0], dtype=torch.int16)
+
+    target = frontier_value_target_from_rewards(
+        rewards,
+        logits,
+        proposal_action_idx_tensor,
+        frontier_idx,
+    )
+
+    probabilities = torch.softmax(logits, dim=1)
+    expected = torch.sum(probabilities * rewards, dim=1)
+    assert torch.allclose(target, expected)
+    assert target.item() < logits.max().item()
+
+
 def main() -> None:
     test_proposal_action_helpers_flatten_area_variants()
     test_proposal_loss_indexes_flattened_area_actions()
+    test_frontier_value_target_uses_raw_rewards_weighted_by_logits()
 
 
 if __name__ == "__main__":

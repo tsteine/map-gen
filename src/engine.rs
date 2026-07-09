@@ -290,6 +290,7 @@ enum WorkerCommand {
     GetProposalCandidateMask {
         proposal_action_count: usize,
         proposal_mask_byte_count: usize,
+        sampled_frontier_idx: InputShard<FrontierIdx>,
         proposal_frontier_idx: OutputShard<FrontierIdx>,
         mask: OutputShard<u8>,
         valid_counts: OutputShard<usize>,
@@ -608,13 +609,16 @@ fn worker_loop(
             WorkerCommand::GetProposalCandidateMask {
                 proposal_action_count,
                 proposal_mask_byte_count,
+                sampled_frontier_idx,
                 proposal_frontier_idx,
                 mask,
                 valid_counts,
             } => {
+                let sampled_frontier_idx = unsafe { sampled_frontier_idx.into_slice() };
                 let proposal_frontier_idx = unsafe { proposal_frontier_idx.into_mut_slice() };
                 let mask = unsafe { mask.into_mut_slice() };
                 let valid_counts = unsafe { valid_counts.into_mut_slice() };
+                debug_assert_eq!(sampled_frontier_idx.len(), environments.len());
                 debug_assert_eq!(proposal_frontier_idx.len(), environments.len());
                 debug_assert_eq!(mask.len(), environments.len() * proposal_mask_byte_count);
                 debug_assert_eq!(valid_counts.len(), environments.len());
@@ -622,10 +626,11 @@ fn worker_loop(
                 for (env_idx, env) in environments.iter().enumerate() {
                     let mask_start = env_idx * proposal_mask_byte_count;
                     let mask_end = mask_start + proposal_mask_byte_count;
+                    proposal_frontier_idx[env_idx] = sampled_frontier_idx[env_idx];
                     env.proposal_candidate_mask(
                         &common_data,
                         proposal_action_count,
-                        &mut proposal_frontier_idx[env_idx],
+                        sampled_frontier_idx[env_idx],
                         &mut mask[mask_start..mask_end],
                         &mut valid_counts[env_idx],
                     );
@@ -3941,9 +3946,21 @@ impl EnvironmentGroup {
     fn get_proposal_candidate_mask<'py>(
         &mut self,
         py: Python<'py>,
+        sampled_frontier_idx: PyReadonlyArray1<'py, FrontierIdx>,
     ) -> PyResult<ProposalCandidateMask> {
         let proposal_action_count = self.common_data.num_door_output_variants * AREA_COUNT;
         let mask_byte_count = proposal_action_count.div_ceil(8);
+        let sampled_len = sampled_frontier_idx.len()?;
+        if sampled_len != self.num_environments {
+            return Err(PyValueError::new_err(format!(
+                "sampled_frontier_idx must have length {}, got {}",
+                self.num_environments,
+                sampled_len
+            )));
+        }
+        let sampled_frontier_idx = sampled_frontier_idx
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("sampled_frontier_idx must be contiguous"))?;
         let mut proposal_frontier_idx = vec![-1; self.num_environments];
         let mut mask = vec![0; self.num_environments * mask_byte_count];
         let mut valid_counts = vec![0; self.num_environments];
@@ -3957,6 +3974,9 @@ impl EnvironmentGroup {
                 if let Err(err) = worker.send(WorkerCommand::GetProposalCandidateMask {
                     proposal_action_count,
                     proposal_mask_byte_count: mask_byte_count,
+                    sampled_frontier_idx: InputShard::from_slice(
+                        &sampled_frontier_idx[worker.start..worker.end()],
+                    ),
                     proposal_frontier_idx: OutputShard::from_slice(
                         &mut proposal_frontier_idx[worker.start..worker.end()],
                     ),
