@@ -396,6 +396,14 @@ enum WorkerCommand {
         environment_start: usize,
         environment_count: usize,
     },
+    GetReplayActionFeatures {
+        frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
+        frontier_neighbor_count: usize,
+        frontier_window_size: usize,
+        environment_start: usize,
+        environment_count: usize,
+        room_idx: InputShard<RoomIdx>,
+    },
     PackFeatures {
         frontier_neighbor_algorithm: FrontierNeighborAlgorithm,
         outputs: FeatureOutputShards,
@@ -422,6 +430,7 @@ impl WorkerCommand {
             }
             WorkerCommand::GetDoorMatches { .. } => Some(ProfileMetric::WorkerGetDoorMatches),
             WorkerCommand::GetFeatures { .. } => Some(ProfileMetric::WorkerGetFeatures),
+            WorkerCommand::GetReplayActionFeatures { .. } => Some(ProfileMetric::WorkerGetFeatures),
             WorkerCommand::PackFeatures { .. } => Some(ProfileMetric::WorkerPackFeatures),
             WorkerCommand::StepKnown { .. } => Some(ProfileMetric::WorkerStepKnown),
             WorkerCommand::GetCandidatesFromProposals { .. } => {
@@ -782,16 +791,8 @@ fn worker_loop(
                         y: 0,
                         area: DUMMY_AREA,
                     };
-                    let dummy_candidate_data = if candidates.len() < recommended_candidates {
-                        Some(env.outcomes_and_features_after_candidate(
-                            &common_data,
-                            dummy_candidate,
-                            &features,
-                            frontier_neighbor_algorithm,
-                            frontier_neighbor_count,
-                            frontier_window_size,
-                            &mut feature_scratch,
-                        ))
+                    let dummy_candidate_outcomes = if candidates.len() < recommended_candidates {
+                        Some(env.outcomes_after_candidate(&common_data, dummy_candidate))
                     } else {
                         None
                     };
@@ -815,23 +816,22 @@ fn worker_loop(
                         let outcome = outcomes
                             .get(candidate_idx)
                             .or_else(|| {
-                                dummy_candidate_data.as_ref().map(|(outcome, _, _)| outcome)
+                                dummy_candidate_outcomes
+                                    .as_ref()
+                                    .map(|outcomes| &outcomes.step_outcomes)
                             })
                             .expect("dummy outcome must exist for padded candidates");
                         let match_values = door_matches
                             .get(candidate_idx)
                             .or_else(|| {
-                                dummy_candidate_data
+                                dummy_candidate_outcomes
                                     .as_ref()
-                                    .map(|(_, door_match, _)| door_match)
+                                    .map(|outcomes| &outcomes.door_match)
                             })
                             .expect("dummy door match must exist for padded candidates");
                         if candidate_idx >= candidate_plans.len() {
-                            let mut plan = dummy_candidate_data
-                                .as_ref()
-                                .expect("dummy feature plan must exist for padded candidates")
-                                .2
-                                .clone();
+                            let mut plan = FeaturePlan::default();
+                            plan.kind = FeaturePlanKind::Padding;
                             plan.environment_idx = env_idx;
                             candidate_plans.push(plan);
                         }
@@ -1331,6 +1331,44 @@ fn worker_loop(
                         &mut feature_scratch,
                     );
                     plan.environment_idx = env_idx;
+                    pending_feature_plans.push(plan);
+                }
+                WorkerResponse::FeatureInfo(feature_info(&pending_feature_plans))
+            }
+            WorkerCommand::GetReplayActionFeatures {
+                frontier_neighbor_algorithm,
+                frontier_neighbor_count,
+                frontier_window_size,
+                environment_start,
+                environment_count,
+                room_idx,
+            } => {
+                let room_idx = unsafe { room_idx.into_slice() };
+                debug_assert_eq!(room_idx.len(), environment_count);
+                feature_scratch.recycle_plan_vec(&mut pending_feature_plans);
+                for (local_idx, env) in environments
+                    .iter()
+                    .enumerate()
+                    .skip(environment_start)
+                    .take(environment_count)
+                {
+                    let mut plan = if room_idx[local_idx - environment_start]
+                        >= common_data.room.len() as RoomIdx
+                    {
+                        let mut plan = FeaturePlan::default();
+                        plan.kind = FeaturePlanKind::Padding;
+                        plan
+                    } else {
+                        env.feature_plan_with_scratch(
+                            &common_data,
+                            &features,
+                            frontier_neighbor_algorithm,
+                            frontier_neighbor_count,
+                            frontier_window_size,
+                            &mut feature_scratch,
+                        )
+                    };
+                    plan.environment_idx = local_idx;
                     pending_feature_plans.push(plan);
                 }
                 WorkerResponse::FeatureInfo(feature_info(&pending_feature_plans))
@@ -2171,7 +2209,15 @@ fn feature_plan_candidate(plan: &FeaturePlan, room_count: usize) -> Option<Actio
             Some(action)
         }
         FeaturePlanKind::Candidate(_) => None,
+        FeaturePlanKind::Padding => None,
     }
+}
+
+fn fill_output_row<T: Copy>(dst: &mut [T], idx: usize, stride: usize, value: T) {
+    if stride == 0 {
+        return;
+    }
+    dst[idx * stride..(idx + 1) * stride].fill(value);
 }
 
 fn write_frontier_occupancy_row(
@@ -2469,6 +2515,106 @@ impl GlobalFeatureOutputSlices<'_> {
         common: &CommonData,
         plan: &FeaturePlan,
     ) {
+        if plan.kind == FeaturePlanKind::Padding {
+            fill_output_row(&mut self.inventory, idx, self.inventory_count, 0);
+            fill_output_row(&mut self.room_x, idx, self.room_count, 0);
+            fill_output_row(&mut self.room_y, idx, self.room_count, 0);
+            fill_output_row(&mut self.room_placed, idx, self.room_count, 0);
+            fill_output_row(
+                &mut self.room_part_furthest_destination,
+                idx,
+                self.room_part_furthest_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.room_part_furthest_source,
+                idx,
+                self.room_part_furthest_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.room_part_save_from_room_distance,
+                idx,
+                self.room_part_save_distance_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.room_part_save_to_room_distance,
+                idx,
+                self.room_part_save_distance_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.room_part_refill_from_room_distance,
+                idx,
+                self.room_part_refill_distance_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.room_part_refill_to_room_distance,
+                idx,
+                self.room_part_refill_distance_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.room_part_frontier_from_room_distance,
+                idx,
+                self.room_part_frontier_distance_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.room_part_frontier_to_room_distance,
+                idx,
+                self.room_part_frontier_distance_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.known_save_from_room_distance,
+                idx,
+                self.known_distance_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.known_save_to_room_distance,
+                idx,
+                self.known_distance_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.known_refill_from_room_distance,
+                idx,
+                self.known_distance_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.known_refill_to_room_distance,
+                idx,
+                self.known_distance_count,
+                0,
+            );
+            fill_output_row(&mut self.area_used, idx, self.area_count, 0);
+            fill_output_row(&mut self.area_min_x, idx, self.area_count, 0);
+            fill_output_row(&mut self.area_max_x, idx, self.area_count, 0);
+            fill_output_row(&mut self.area_min_y, idx, self.area_count, 0);
+            fill_output_row(&mut self.area_max_y, idx, self.area_count, 0);
+            fill_output_row(&mut self.area_connected_components, idx, self.area_count, 0);
+            fill_output_row(&mut self.area_crossings, idx, self.area_crossings_count, 0);
+            fill_output_row(&mut self.area_size, idx, self.area_count, 0);
+            fill_output_row(&mut self.area_map_station_count, idx, self.area_count, 0);
+            fill_output_row(
+                &mut self.connection_reachability,
+                idx,
+                self.connection_count,
+                0,
+            );
+            fill_output_row(
+                &mut self.toilet_crossed_room_idx,
+                idx,
+                self.toilet_crossed_room_count,
+                -1,
+            );
+            return;
+        }
         let candidate = feature_plan_candidate(plan, common.room.len());
         if self.inventory_count != 0 {
             let start = idx * self.inventory_count;
@@ -4947,6 +5093,97 @@ impl EnvironmentGroup {
                     frontier_window_size: self.frontier_window_size,
                     environment_start: start - worker.start,
                     environment_count: end - start,
+                }) {
+                    set_first_error(&mut first_error, err);
+                    break;
+                }
+                sent_workers.push(worker_idx);
+            }
+            collect_feature_info(&self.workers, sent_workers, first_error)
+        })?;
+        let frontier_row_count =
+            feature_info.frontier_row_count * usize::from(self.features.has_frontier_features());
+        let missing_connect_query_row_count = feature_info.missing_connect_query_row_count
+            * usize::from(self.features.missing_connect_query);
+        let save_refill_utility_query_enabled =
+            self.features.save_utility_query || self.features.refill_utility_query;
+        let save_refill_utility_query_row_count = feature_info.save_refill_utility_query_row_count
+            * usize::from(save_refill_utility_query_enabled);
+        let worker_frontier_row_counts = worker_feature_info
+            .iter()
+            .map(|info| {
+                info.frontier_row_count * usize::from(self.features.has_frontier_features())
+            })
+            .collect::<Vec<_>>();
+        let worker_missing_connect_query_row_counts = worker_feature_info
+            .iter()
+            .map(|info| {
+                info.missing_connect_query_row_count
+                    * usize::from(self.features.missing_connect_query)
+            })
+            .collect::<Vec<_>>();
+        let worker_save_refill_utility_query_row_counts = worker_feature_info
+            .into_iter()
+            .map(|info| {
+                info.save_refill_utility_query_row_count
+                    * usize::from(save_refill_utility_query_enabled)
+            })
+            .collect::<Vec<_>>();
+        Ok(FeatureRequirements {
+            frontier_row_count,
+            worker_frontier_row_counts,
+            missing_connect_query_row_count,
+            worker_missing_connect_query_row_counts,
+            save_refill_utility_query_row_count,
+            worker_save_refill_utility_query_row_counts,
+        })
+    }
+
+    fn get_replay_action_feature_requirements<'py>(
+        &self,
+        py: Python<'py>,
+        room_idx: PyReadonlyArray1<'py, RoomIdx>,
+        environment_start: usize,
+        environment_count: usize,
+    ) -> PyResult<FeatureRequirements> {
+        let Some(remaining_environments) = self.num_environments.checked_sub(environment_start)
+        else {
+            return Err(PyValueError::new_err(
+                "feature range must fit within the environment group",
+            ));
+        };
+        if environment_count > remaining_environments {
+            return Err(PyValueError::new_err(
+                "feature range must fit within the environment group",
+            ));
+        }
+        let room_idx = room_idx
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("room_idx must be contiguous"))?;
+        if room_idx.len() != environment_count {
+            return Err(PyValueError::new_err(
+                "room_idx must have length environment_count",
+            ));
+        }
+
+        let (feature_info, worker_feature_info) = py.detach(|| {
+            let mut sent_workers = Vec::with_capacity(self.workers.len());
+            let mut first_error = None;
+            for (worker_idx, worker) in self.workers.iter().enumerate() {
+                let start = max(environment_start, worker.start);
+                let end = min(environment_start + environment_count, worker.end());
+                if start >= end {
+                    continue;
+                }
+                let room_idx_start = start - environment_start;
+                let room_idx_end = end - environment_start;
+                if let Err(err) = worker.send(WorkerCommand::GetReplayActionFeatures {
+                    frontier_neighbor_algorithm: self.frontier_neighbor_algorithm,
+                    frontier_neighbor_count: self.frontier_neighbor_count,
+                    frontier_window_size: self.frontier_window_size,
+                    environment_start: start - worker.start,
+                    environment_count: end - start,
+                    room_idx: InputShard::from_slice(&room_idx[room_idx_start..room_idx_end]),
                 }) {
                     set_first_error(&mut first_error, err);
                     break;

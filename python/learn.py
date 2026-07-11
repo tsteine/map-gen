@@ -16,6 +16,7 @@ from env import (
     StepOutcomes,
     ProposalData,
     GeneratedFeatureData,
+    extract_candidate_features,
     slice_features,
 )
 from experience import ExperienceStorage
@@ -465,28 +466,33 @@ def collect_action_prefix_feature_mismatches(
     actions: Actions,
     step: int,
 ) -> tuple[list[FeatureMismatch], int, int]:
+    current_room_idx = actions.room_idx[:, step].to(device="cpu", dtype=torch.int64)
+    current_real = (
+        current_room_idx >= 0
+    ) & (current_room_idx < features.global_features.room_placed.shape[1])
+    if not torch.any(current_real):
+        return [], 0, 0
     generated_values = (
-        features.global_features.room_placed,
-        features.global_features.room_x,
-        features.global_features.room_y,
+        features.global_features.room_placed[current_real],
+        features.global_features.room_x[current_real],
+        features.global_features.room_y[current_real],
     )
     expected_placed = torch.zeros_like(generated_values[0])
     expected_x = torch.zeros_like(generated_values[1])
     expected_y = torch.zeros_like(generated_values[2])
     num_environments, num_rooms = expected_placed.shape
     environment_idx = torch.arange(num_environments, dtype=torch.int64)
+    real_action_room_idx = actions.room_idx[current_real].to(device="cpu", dtype=torch.int64)
+    real_action_room_x = actions.room_x[current_real].to(device="cpu")
+    real_action_room_y = actions.room_y[current_real].to(device="cpu")
     for prefix_step in range(step + 1):
-        room_idx = actions.room_idx[:, prefix_step].to(device="cpu", dtype=torch.int64)
+        room_idx = real_action_room_idx[:, prefix_step]
         valid = (room_idx >= 0) & (room_idx < num_rooms)
         valid_environment_idx = environment_idx[valid]
         valid_room_idx = room_idx[valid]
         expected_placed[valid_environment_idx, valid_room_idx] = 1
-        expected_x[valid_environment_idx, valid_room_idx] = actions.room_x[
-            valid, prefix_step
-        ].to(torch.device("cpu"))
-        expected_y[valid_environment_idx, valid_room_idx] = actions.room_y[
-            valid, prefix_step
-        ].to(torch.device("cpu"))
+        expected_x[valid_environment_idx, valid_room_idx] = real_action_room_x[valid, prefix_step]
+        expected_y[valid_environment_idx, valid_room_idx] = real_action_room_y[valid, prefix_step]
     expected_x = torch.where(expected_placed != 0, expected_x, generated_values[1])
     expected_y = torch.where(expected_placed != 0, expected_y, generated_values[2])
     expected_values = (expected_placed, expected_x, expected_y)
@@ -512,27 +518,37 @@ def collect_generated_feature_continuity_mismatches(
     actions: Actions,
     step: int,
 ) -> tuple[list[FeatureMismatch], int, int]:
+    current_room_idx = actions.room_idx[:, step].to(device="cpu", dtype=torch.int64)
+    current_real = (
+        current_room_idx >= 0
+    ) & (current_room_idx < current_features.global_features.room_placed.shape[1])
+    if not torch.any(current_real):
+        return [], 0, 0
     previous_values = (
-        previous_features.global_features.room_placed,
-        previous_features.global_features.room_x,
-        previous_features.global_features.room_y,
+        previous_features.global_features.room_placed[current_real],
+        previous_features.global_features.room_x[current_real],
+        previous_features.global_features.room_y[current_real],
     )
     current_values = (
-        current_features.global_features.room_placed,
-        current_features.global_features.room_x,
-        current_features.global_features.room_y,
+        current_features.global_features.room_placed[current_real],
+        current_features.global_features.room_x[current_real],
+        current_features.global_features.room_y[current_real],
     )
     expected_values = tuple(value.clone() for value in previous_values)
-    room_idx = actions.room_idx[:, step].to(device="cpu", dtype=torch.int64)
+    room_idx = current_room_idx[current_real]
     num_environments, num_rooms = expected_values[0].shape
     valid = (room_idx >= 0) & (room_idx < num_rooms)
     environment_idx = torch.arange(num_environments, dtype=torch.int64)[valid]
     valid_room_idx = room_idx[valid]
     expected_values[0][environment_idx, valid_room_idx] = 1
-    expected_values[1][environment_idx, valid_room_idx] = actions.room_x[valid, step].to(
+    expected_values[1][environment_idx, valid_room_idx] = actions.room_x[current_real][
+        valid, step
+    ].to(
         torch.device("cpu")
     )
-    expected_values[2][environment_idx, valid_room_idx] = actions.room_y[valid, step].to(
+    expected_values[2][environment_idx, valid_room_idx] = actions.room_y[current_real][
+        valid, step
+    ].to(
         torch.device("cpu")
     )
     expected_values = (
@@ -611,7 +627,41 @@ def prepare_feature_batches(
                 proposal_invalid = proposal_data.invalid[:, step]
                 proposal_target_logits = proposal_data.target_logits[:, step]
             feature_slot = FeatureSlot(env, pin_memory=pin_memory)
-            replay_features = env.extract_features(
+            if generated_feature_batches is not None and next_lookahead_outcomes is not None:
+                replay_feature_requirements = env.get_replay_action_feature_requirements(
+                    next_actions,
+                    0,
+                    train_actions.room_idx.shape[0],
+                )
+                replay_features = extract_candidate_features(
+                    env,
+                    Actions(
+                        room_idx=next_actions.room_idx.unsqueeze(1),
+                        room_x=next_actions.room_x.unsqueeze(1),
+                        room_y=next_actions.room_y.unsqueeze(1),
+                        room_area=next_actions.room_area.unsqueeze(1),
+                    ),
+                    log_temperature.unsqueeze(1),
+                    config.features.temperature,
+                    log_recommended_candidates.unsqueeze(1),
+                    config.features.recommended_candidates,
+                    generation_variable_floats.unsqueeze(1),
+                    config.features.generation_variable_floats,
+                    StepOutcomes(
+                        door_invalid=next_lookahead_outcomes.door_invalid.unsqueeze(1),
+                        connection_invalid=(
+                            next_lookahead_outcomes.connection_invalid.unsqueeze(1)
+                        ),
+                        toilet_invalid=next_lookahead_outcomes.toilet_invalid.unsqueeze(1),
+                        phantoon_invalid=next_lookahead_outcomes.phantoon_invalid.unsqueeze(1),
+                        door_match=next_lookahead_outcomes.door_match.unsqueeze(1),
+                    ),
+                    config.features.lookahead_outcomes,
+                    replay_feature_requirements,
+                    feature_slot,
+                )
+            else:
+                replay_features = env.extract_features(
                         feature_slot,
                         log_temperature,
                         config.features.temperature,

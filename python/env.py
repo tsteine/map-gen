@@ -1402,6 +1402,30 @@ class EnvironmentGroup:
             ),
         )
 
+    def get_replay_action_feature_requirements(
+        self,
+        actions: Actions,
+        environment_start: int,
+        environment_count: int,
+    ) -> FeatureRequirements:
+        result = self.env.get_replay_action_feature_requirements(
+            actions.room_idx.contiguous().cpu().numpy(),
+            environment_start,
+            environment_count,
+        )
+        return FeatureRequirements(
+            frontier_row_count=result.frontier_row_count,
+            worker_frontier_row_counts=result.worker_frontier_row_counts,
+            missing_connect_query_row_count=result.missing_connect_query_row_count,
+            worker_missing_connect_query_row_counts=(
+                result.worker_missing_connect_query_row_counts
+            ),
+            save_refill_utility_query_row_count=result.save_refill_utility_query_row_count,
+            worker_save_refill_utility_query_row_counts=(
+                result.worker_save_refill_utility_query_row_counts
+            ),
+        )
+
     def extract_features(
         self,
         feature_slot: "FeatureSlot",

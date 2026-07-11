@@ -112,7 +112,7 @@ impl StepMode {
         match self {
             StepMode::CommitFull => true,
             StepMode::CommitKnown => false,
-            StepMode::Lookahead => true,
+            StepMode::Lookahead => false,
             #[cfg(test)]
             StepMode::FeatureOnly => false,
         }
@@ -534,6 +534,7 @@ pub struct Features {
 pub enum FeaturePlanKind {
     Current,
     Candidate(Action),
+    Padding,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -641,56 +642,6 @@ impl FeaturePlan {
         self.save_refill_utility_query_refill_from_current_distance
             .push(row.refill_from_current_distance);
     }
-
-    fn clear_all(&mut self) {
-        self.environment_idx = 0;
-        self.kind = FeaturePlanKind::Current;
-        self.extra_occupied = None;
-        self.scc_dag.clear();
-        self.room_part_furthest_destination.clear();
-        self.room_part_furthest_source.clear();
-        self.room_part_save_from_room_distance.clear();
-        self.room_part_save_to_room_distance.clear();
-        self.room_part_refill_from_room_distance.clear();
-        self.room_part_refill_to_room_distance.clear();
-        self.room_part_frontier_from_room_distance.clear();
-        self.room_part_frontier_to_room_distance.clear();
-        self.known_save_from_room_distance.clear();
-        self.known_save_to_room_distance.clear();
-        self.known_refill_from_room_distance.clear();
-        self.known_refill_to_room_distance.clear();
-        self.area_used.clear();
-        self.area_min_x.clear();
-        self.area_max_x.clear();
-        self.area_min_y.clear();
-        self.area_max_y.clear();
-        self.area_connected_components.clear();
-        self.area_crossings.clear();
-        self.area_size.clear();
-        self.area_map_station_count.clear();
-        self.frontiers.clear();
-        self.connection_reachability.clear();
-        self.frontier_connection_reachability.clear();
-        self.missing_connect_query_connection_idx.clear();
-        self.missing_connect_query_source_frontier.clear();
-        self.missing_connect_query_target_frontier.clear();
-        self.missing_connect_query_source_distance.clear();
-        self.missing_connect_query_target_distance.clear();
-        self.missing_connect_query_current_distance.clear();
-        self.save_refill_utility_query_room_part_idx.clear();
-        self.save_refill_utility_query_target_mask.clear();
-        self.save_refill_utility_query_frontier.clear();
-        self.save_refill_utility_query_frontier_distance.clear();
-        self.save_refill_utility_query_save_to_current_distance
-            .clear();
-        self.save_refill_utility_query_save_from_current_distance
-            .clear();
-        self.save_refill_utility_query_refill_to_current_distance
-            .clear();
-        self.save_refill_utility_query_refill_from_current_distance
-            .clear();
-        self.toilet_crossed_room_idx.clear();
-    }
 }
 
 #[cfg(test)]
@@ -757,7 +708,6 @@ impl Features {
 pub struct FeatureScratch {
     #[cfg(test)]
     feature_pool: Vec<Features>,
-    plan_pool: Vec<FeaturePlan>,
     frontier_locations: Vec<DoorLocation>,
     nearest_neighbor_indices: Vec<usize>,
     nearest_neighbor_keys: Vec<(Coord, usize, usize)>,
@@ -778,20 +728,20 @@ impl FeatureScratch {
     }
 
     fn take_plan(&mut self) -> FeaturePlan {
-        let mut plan = self.plan_pool.pop().unwrap_or_default();
-        plan.clear_all();
-        plan
+        FeaturePlan::default()
     }
 
-    pub fn recycle_plan(&mut self, mut plan: FeaturePlan) {
-        plan.clear_all();
-        self.plan_pool.push(plan);
+    pub fn recycle_plan(&mut self, _plan: FeaturePlan) {
+        // Do not pool FeaturePlan values here. Each plan owns many Vec buffers
+        // whose capacities can become very large for ragged features. Generation
+        // workers persist across rounds, so pooling plans retains the high-water
+        // allocation for every recycled plan and can make RSS grow round over
+        // round. Dropping the plan releases those buffers at the cost of
+        // reallocating them on the next feature extraction.
     }
 
     pub fn recycle_plan_vec(&mut self, plans: &mut Vec<FeaturePlan>) {
-        for plan in plans.drain(..) {
-            self.recycle_plan(plan);
-        }
+        plans.clear();
     }
 
     pub fn frontier_locations(&mut self) -> &mut Vec<DoorLocation> {
@@ -3892,8 +3842,7 @@ impl Environment {
         )
     }
 
-    #[cfg(test)]
-    fn outcomes_after_candidate(
+    pub(crate) fn outcomes_after_candidate(
         &mut self,
         common: &CommonData,
         candidate: Action,
