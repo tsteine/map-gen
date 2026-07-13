@@ -123,6 +123,7 @@ profile_metrics! {
     EnvCounterProposalCleanCandidates => "env.counter.proposal.clean_candidates",
     EnvCounterProposalRejectedCandidates => "env.counter.proposal.rejected_candidates",
     EnvCounterProposalInvalidCandidates => "env.counter.proposal.invalid_candidates",
+    EnvCounterProposalNoncanonicalCandidates => "env.counter.proposal.noncanonical_candidates",
     EnvCounterProposalFallbackCandidates => "env.counter.proposal.fallback_candidates",
     EnvCounterProposalOutputCandidates => "env.counter.proposal.output_candidates",
     EnvCounterFeatureCalls => "env.counter.features.calls",
@@ -320,6 +321,7 @@ enum WorkerCommand {
         evaluated_counts: OutputShard<usize>,
         rejected_counts: OutputShard<usize>,
         invalid_counts: OutputShard<usize>,
+        noncanonical_counts: OutputShard<usize>,
     },
     GetActions {
         action_count: usize,
@@ -642,6 +644,7 @@ fn worker_loop(
                 evaluated_counts,
                 rejected_counts,
                 invalid_counts,
+                noncanonical_counts,
             } => {
                 let sampled_frontier_idx = unsafe { sampled_frontier_idx.into_slice() };
                 let sampled_proposal_action_idx =
@@ -670,6 +673,7 @@ fn worker_loop(
                 let evaluated_counts = unsafe { evaluated_counts.into_mut_slice() };
                 let rejected_counts = unsafe { rejected_counts.into_mut_slice() };
                 let invalid_counts = unsafe { invalid_counts.into_mut_slice() };
+                let noncanonical_counts = unsafe { noncanonical_counts.into_mut_slice() };
 
                 debug_assert_eq!(
                     sampled_frontier_idx.len(),
@@ -761,6 +765,7 @@ fn worker_loop(
                     evaluated_counts[env_idx] = proposal_candidates.evaluated_count;
                     rejected_counts[env_idx] = proposal_candidates.rejected_count;
                     invalid_counts[env_idx] = proposal_candidates.invalid_count;
+                    noncanonical_counts[env_idx] = proposal_candidates.noncanonical_count;
                     let invalid_start = env_idx * num_scored_invalid_candidates;
                     let invalid_end = invalid_start + num_scored_invalid_candidates;
                     scored_invalid_frontier_idx[invalid_start..invalid_end]
@@ -1674,6 +1679,7 @@ pub struct ProposalCandidateBuffers {
     evaluated_counts: Py<PyArray1<i64>>,
     rejected_counts: Py<PyArray1<i64>>,
     invalid_counts: Py<PyArray1<i64>>,
+    noncanonical_counts: Py<PyArray1<i64>>,
 }
 
 #[pyclass(module = "map_gen")]
@@ -1792,6 +1798,7 @@ impl ProposalCandidateBuffers {
             evaluated_counts: required_py_field!(fields, "evaluated_counts"),
             rejected_counts: required_py_field!(fields, "rejected_counts"),
             invalid_counts: required_py_field!(fields, "invalid_counts"),
+            noncanonical_counts: required_py_field!(fields, "noncanonical_counts"),
         })
     }
 }
@@ -4164,6 +4171,7 @@ impl EnvironmentGroup {
         let mut evaluated_counts = buffers.evaluated_counts.bind(py).readwrite();
         let mut rejected_counts = buffers.rejected_counts.bind(py).readwrite();
         let mut invalid_counts = buffers.invalid_counts.bind(py).readwrite();
+        let mut noncanonical_counts = buffers.noncanonical_counts.bind(py).readwrite();
         let sampled_shape = sampled_frontier_idx.as_array().shape().to_vec();
         if sampled_shape.len() != 2
             || sampled_proposal_action_idx.as_array().shape() != sampled_shape
@@ -4323,6 +4331,11 @@ impl EnvironmentGroup {
             invalid_counts.as_array().shape(),
             &[self.num_environments],
         )?;
+        check_shape(
+            "noncanonical_counts",
+            noncanonical_counts.as_array().shape(),
+            &[self.num_environments],
+        )?;
 
         let room_idx = room_idx
             .as_slice_mut()
@@ -4389,6 +4402,9 @@ impl EnvironmentGroup {
         let stats_invalid_counts = invalid_counts
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("invalid_counts must be contiguous"))?;
+        let stats_noncanonical_counts = noncanonical_counts
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("noncanonical_counts must be contiguous"))?;
 
         room_idx.fill(dummy_candidate.room_idx);
         room_x.fill(dummy_candidate.x);
@@ -4411,6 +4427,7 @@ impl EnvironmentGroup {
         let mut worker_evaluated_counts = vec![0; self.num_environments];
         let mut worker_rejected_counts = vec![0; self.num_environments];
         let mut worker_invalid_counts = vec![0; self.num_environments];
+        let mut worker_noncanonical_counts = vec![0; self.num_environments];
 
         let (feature_info, worker_feature_info) = py.detach(|| {
             let mut sent_workers = Vec::with_capacity(self.workers.len());
@@ -4510,6 +4527,9 @@ impl EnvironmentGroup {
                     invalid_counts: OutputShard::from_slice(
                         &mut worker_invalid_counts[worker.start..worker.end()],
                     ),
+                    noncanonical_counts: OutputShard::from_slice(
+                        &mut worker_noncanonical_counts[worker.start..worker.end()],
+                    ),
                 }) {
                     set_first_error(&mut first_error, err);
                     break;
@@ -4569,6 +4589,12 @@ impl EnvironmentGroup {
         for (out, count) in stats_invalid_counts
             .iter_mut()
             .zip(worker_invalid_counts.into_iter())
+        {
+            *out = count as i64;
+        }
+        for (out, count) in stats_noncanonical_counts
+            .iter_mut()
+            .zip(worker_noncanonical_counts.into_iter())
         {
             *out = count as i64;
         }

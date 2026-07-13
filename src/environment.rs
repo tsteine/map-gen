@@ -213,6 +213,33 @@ enum ProposalEvaluation {
     Clean(CandidateWithOutcomes),
 }
 
+enum ProposalActionResolution<T> {
+    Invalid,
+    NonCanonical,
+    Resolved(T),
+}
+
+impl<T> ProposalActionResolution<T> {
+    #[cfg(test)]
+    fn is_some(&self) -> bool {
+        matches!(self, Self::Resolved(_))
+    }
+
+    #[cfg(test)]
+    fn is_none(&self) -> bool {
+        !self.is_some()
+    }
+
+    #[cfg(test)]
+    fn unwrap(self) -> T {
+        match self {
+            Self::Resolved(value) => value,
+            Self::Invalid => panic!("called unwrap on an invalid proposal action"),
+            Self::NonCanonical => panic!("called unwrap on a noncanonical proposal action"),
+        }
+    }
+}
+
 pub struct ProposalCandidates {
     pub pre_candidate_outcomes: StepOutcomes,
     pub candidates: Vec<Action>,
@@ -227,6 +254,7 @@ pub struct ProposalCandidates {
     pub evaluated_count: usize,
     pub rejected_count: usize,
     pub invalid_count: usize,
+    pub noncanonical_count: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2082,13 +2110,35 @@ impl Environment {
             && self.candidate_toilet_area_valid(common, action)
     }
 
-    fn candidate_frontier_area_valid(
+    fn proposal_placement_frontier_summary(
         &self,
         common: &CommonData,
-        frontier: &Frontier,
+        sorted_frontier_locations: &[DoorLocation],
+        connection_variant_idx: ConnectionVariantIdx,
+        x: Coord,
+        y: Coord,
         area: AreaIdx,
-    ) -> bool {
-        !self.area_used[area as usize] || area == self.frontier_area(common, frontier.room_part_idx)
+    ) -> Option<(FrontierIdx, bool)> {
+        let &representative_room_idx = common
+            .connection_variant_rooms
+            .get(connection_variant_idx as usize)?
+            .first()?;
+        let mut canonical_frontier_idx: Option<usize> = None;
+        let mut area_matches = !self.area_used[area as usize];
+        for door in &common.room[representative_room_idx as usize].doors {
+            let location = DoorLocation::new(door, x, y);
+            let Ok(frontier_idx) = sorted_frontier_locations.binary_search(&location) else {
+                continue;
+            };
+            canonical_frontier_idx = Some(
+                canonical_frontier_idx.map_or(frontier_idx, |current| current.min(frontier_idx)),
+            );
+            if !area_matches {
+                let frontier = &self.frontier[&location];
+                area_matches = area == self.frontier_area(common, frontier.room_part_idx);
+            }
+        }
+        canonical_frontier_idx.map(|idx| (idx as FrontierIdx, area_matches))
     }
 
     fn action_for_proposal_candidate(
@@ -2097,22 +2147,27 @@ impl Environment {
         sorted_frontier_locations: &[DoorLocation],
         frontier_idx: FrontierIdx,
         proposal_action_idx: ProposalActionIdx,
-    ) -> Option<Action> {
-        let (door_variant_idx, area) = proposal_action_parts(proposal_action_idx)?;
+    ) -> ProposalActionResolution<Action> {
+        let Some((door_variant_idx, area)) = proposal_action_parts(proposal_action_idx) else {
+            return ProposalActionResolution::Invalid;
+        };
         if frontier_idx < 0 {
-            return None;
+            return ProposalActionResolution::Invalid;
         }
         let frontier_idx = frontier_idx as usize;
         let door_variant_idx = door_variant_idx as usize;
-        let &door_variant_direction = common.door_variant_direction.get(door_variant_idx)?;
-        let frontier = self
-            .frontier
-            .get(sorted_frontier_locations.get(frontier_idx)?)?;
+        let Some(&door_variant_direction) = common.door_variant_direction.get(door_variant_idx)
+        else {
+            return ProposalActionResolution::Invalid;
+        };
+        let Some(frontier_location) = sorted_frontier_locations.get(frontier_idx) else {
+            return ProposalActionResolution::Invalid;
+        };
+        let Some(frontier) = self.frontier.get(frontier_location) else {
+            return ProposalActionResolution::Invalid;
+        };
         if door_variant_direction != frontier.direction.opposite() {
-            return None;
-        }
-        if !self.candidate_frontier_area_valid(common, frontier, area) {
-            return None;
+            return ProposalActionResolution::Invalid;
         }
         let mut matching_count = 0usize;
         let mut selected = None;
@@ -2133,6 +2188,24 @@ impl Environment {
                     != door_variant_idx
                 {
                     continue;
+                }
+                let Some((canonical_frontier_idx, area_matches)) = self
+                    .proposal_placement_frontier_summary(
+                        common,
+                        sorted_frontier_locations,
+                        connection_variant_idx,
+                        candidate.x,
+                        candidate.y,
+                        area,
+                    )
+                else {
+                    continue;
+                };
+                if !area_matches {
+                    continue;
+                }
+                if canonical_frontier_idx != frontier_idx as FrontierIdx {
+                    return ProposalActionResolution::NonCanonical;
                 }
                 for &room_idx in
                     common.connection_variant_rooms[connection_variant_idx as usize].iter()
@@ -2156,10 +2229,13 @@ impl Environment {
                 }
             }
         }
-        selected
+        selected.map_or(
+            ProposalActionResolution::Invalid,
+            ProposalActionResolution::Resolved,
+        )
     }
 
-    fn proposal_placement_key(
+    fn proposal_cell_key(
         frontier_idx: FrontierIdx,
         proposal_action_idx: ProposalActionIdx,
     ) -> Option<(FrontierIdx, DoorVariantIdx)> {
@@ -2173,7 +2249,7 @@ impl Environment {
         sorted_frontier_locations: &[DoorLocation],
         frontier_idx: FrontierIdx,
         proposal_action_idx: ProposalActionIdx,
-    ) -> Option<CandidateAction> {
+    ) -> ProposalActionResolution<CandidateAction> {
         let profile = profile_start();
         let action = self.action_for_proposal_candidate(
             common,
@@ -2182,11 +2258,17 @@ impl Environment {
             proposal_action_idx,
         );
         profile_end(ProfileMetric::EnvProposalResolveAction, profile);
-        action.map(|action| CandidateAction {
-            action,
-            frontier_idx,
-            proposal_action_idx,
-        })
+        match action {
+            ProposalActionResolution::Resolved(action) => {
+                ProposalActionResolution::Resolved(CandidateAction {
+                    action,
+                    frontier_idx,
+                    proposal_action_idx,
+                })
+            }
+            ProposalActionResolution::Invalid => ProposalActionResolution::Invalid,
+            ProposalActionResolution::NonCanonical => ProposalActionResolution::NonCanonical,
+        }
     }
 
     fn evaluate_resolved_proposal_action(
@@ -3499,6 +3581,7 @@ impl Environment {
                 evaluated_count: 0,
                 rejected_count: 0,
                 invalid_count: 0,
+                noncanonical_count: 0,
             });
         }
 
@@ -3513,6 +3596,7 @@ impl Environment {
         let mut evaluated_count = 0;
         let mut rejected_count = 0;
         let mut invalid_count = 0;
+        let mut noncanonical_count = 0;
         let mut scored_invalid_frontier_idx = Vec::with_capacity(num_scored_invalid_candidates);
         let mut scored_invalid_proposal_action_idx =
             Vec::with_capacity(num_scored_invalid_candidates);
@@ -3525,20 +3609,27 @@ impl Environment {
             if frontier_idx < 0 || proposal_action_idx < 0 {
                 continue;
             }
-            let Some(candidate) = self.resolve_proposal_action(
+            let candidate = match self.resolve_proposal_action(
                 common,
                 &sorted_frontier_locations,
                 frontier_idx,
                 proposal_action_idx,
-            ) else {
-                invalid_count += 1;
-                if scored_invalid_frontier_idx.len() < num_scored_invalid_candidates {
-                    scored_invalid_frontier_idx.push(frontier_idx);
-                    scored_invalid_proposal_action_idx.push(proposal_action_idx);
+            ) {
+                ProposalActionResolution::Invalid => {
+                    invalid_count += 1;
+                    if scored_invalid_frontier_idx.len() < num_scored_invalid_candidates {
+                        scored_invalid_frontier_idx.push(frontier_idx);
+                        scored_invalid_proposal_action_idx.push(proposal_action_idx);
+                    }
+                    continue;
                 }
-                continue;
+                ProposalActionResolution::NonCanonical => {
+                    noncanonical_count += 1;
+                    continue;
+                }
+                ProposalActionResolution::Resolved(candidate) => candidate,
             };
-            let placement_key = Self::proposal_placement_key(frontier_idx, proposal_action_idx);
+            let placement_key = Self::proposal_cell_key(frontier_idx, proposal_action_idx);
             if placement_key.is_some_and(|key| {
                 clean_count_by_key.iter().any(|(seen_key, count)| {
                     *seen_key == key && *count >= max_candidate_areas_per_placement
@@ -3649,6 +3740,10 @@ impl Environment {
             invalid_count as u64,
         );
         record_profile_count(
+            ProfileMetric::EnvCounterProposalNoncanonicalCandidates,
+            noncanonical_count as u64,
+        );
+        record_profile_count(
             ProfileMetric::EnvCounterProposalCleanCandidates,
             clean_count as u64,
         );
@@ -3685,6 +3780,7 @@ impl Environment {
             evaluated_count,
             rejected_count,
             invalid_count,
+            noncanonical_count,
         })
     }
 
@@ -6494,7 +6590,7 @@ mod tests {
             door_kind: 0,
         };
         env.frontier.insert(
-            door_location(0, 0, false),
+            door_location(5, 1, false),
             Frontier {
                 direction: Direction::Left,
                 dir_door_idx: 0,
@@ -6507,7 +6603,7 @@ mod tests {
             },
         );
         env.frontier.insert(
-            door_location(1, 0, false),
+            door_location(4, 2, false),
             Frontier {
                 direction: Direction::Left,
                 dir_door_idx: 0,
@@ -6522,11 +6618,11 @@ mod tests {
 
         assert!(
             (0..AREA_COUNT as AreaIdx)
-                .all(|area| first_resolvable_proposal_action(&mut env, &common, 0, area).is_none())
+                .all(|area| first_resolvable_proposal_action(&mut env, &common, 1, area).is_none())
         );
         assert!(
             (0..AREA_COUNT as AreaIdx)
-                .any(|area| first_resolvable_proposal_action(&mut env, &common, 1, area).is_some())
+                .any(|area| first_resolvable_proposal_action(&mut env, &common, 0, area).is_some())
         );
     }
 
@@ -6881,7 +6977,7 @@ mod tests {
     }
 
     #[test]
-    fn proposal_resolution_ignores_incidental_door_match_areas() {
+    fn proposal_resolution_accepts_area_matching_any_connected_frontier() {
         let rooms_json = r#"
         [
             {
@@ -6933,7 +7029,7 @@ mod tests {
         );
 
         let sorted_frontier_locations = env.sorted_frontier_locations();
-        let selected_frontier_idx = sorted_frontier_locations
+        let canonical_frontier_idx = sorted_frontier_locations
             .iter()
             .position(|location| {
                 let frontier = &env.frontier[location];
@@ -6941,20 +7037,20 @@ mod tests {
             })
             .unwrap() as FrontierIdx;
         let proposal_action =
-            first_resolvable_proposal_action(&mut env, &common, selected_frontier_idx, 0)
-                .expect("the selected frontier should allow its own area");
+            first_resolvable_proposal_action(&mut env, &common, canonical_frontier_idx, 1)
+                .expect("the canonical placement should allow an area matched by another frontier");
         let action = env
             .action_for_proposal_candidate(
                 &common,
                 &sorted_frontier_locations,
-                selected_frontier_idx,
+                canonical_frontier_idx,
                 proposal_action,
             )
             .unwrap();
 
         assert_eq!(action.room_idx, 2);
         assert_eq!(action.x, 1);
-        assert_eq!(action.area, 0);
+        assert_eq!(action.area, 1);
         assert_eq!(
             common.room[action.room_idx as usize]
                 .doors
@@ -6966,6 +7062,45 @@ mod tests {
                 .count(),
             2
         );
+
+        let noncanonical_frontier_idx = sorted_frontier_locations
+            .iter()
+            .position(|location| {
+                let frontier = &env.frontier[location];
+                env.frontier_area(&common, frontier.room_part_idx) == 1
+            })
+            .unwrap() as FrontierIdx;
+        let noncanonical_door_variant_idx = common.door_variant_idx(
+            common.room[2].connection_variant_idx,
+            Direction::Right,
+            0,
+            0,
+            0,
+        );
+        let mut scratch = FeatureScratch::default();
+        let result = env
+            .get_proposal_candidates_with_outcomes(
+                &common,
+                &[noncanonical_frontier_idx, canonical_frontier_idx],
+                &[
+                    proposal_action_idx(noncanonical_door_variant_idx, 1),
+                    proposal_action,
+                ],
+                1,
+                1,
+                1,
+                &FeatureConfig::all_disabled(),
+                FrontierNeighborAlgorithm::Nearest,
+                1,
+                4,
+                &mut scratch,
+            )
+            .unwrap();
+
+        assert_eq!(result.noncanonical_count, 1);
+        assert_eq!(result.invalid_count, 0);
+        assert_eq!(result.evaluated_count, 1);
+        assert!(result.scored_invalid_frontier_idx.is_empty());
     }
 
     #[test]
@@ -7003,7 +7138,7 @@ mod tests {
             door_kind: 0,
         };
         env.frontier.insert(
-            door_location(0, 0, false),
+            door_location(1, 2, false),
             Frontier {
                 direction: Direction::Left,
                 dir_door_idx: 0,
@@ -7016,7 +7151,7 @@ mod tests {
             },
         );
         env.frontier.insert(
-            door_location(1, 0, false),
+            door_location(2, 2, false),
             Frontier {
                 direction: Direction::Left,
                 dir_door_idx: 0,
@@ -7162,14 +7297,18 @@ mod tests {
             },
             &common,
         );
-        let candidate = GeometryAction {
+        let first_candidate = GeometryAction {
             geometry_idx: common.room[1].geometry_idx,
-            x: 1,
+            x: 0,
             y: 0,
             door_direction: Direction::Left,
             door_x: 0,
             door_y: 0,
             door_kind: 0,
+        };
+        let second_candidate = GeometryAction {
+            x: 1,
+            ..first_candidate
         };
         env.frontier.insert(
             door_location(0, 0, false),
@@ -7181,7 +7320,7 @@ mod tests {
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
-                candidates: vec![candidate],
+                candidates: vec![first_candidate],
             },
         );
         env.frontier.insert(
@@ -7194,7 +7333,7 @@ mod tests {
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
-                candidates: vec![candidate],
+                candidates: vec![second_candidate],
             },
         );
         let door_variant_idx = common.door_variant_idx(
@@ -7265,14 +7404,18 @@ mod tests {
             },
             &common,
         );
-        let candidate = GeometryAction {
+        let first_candidate = GeometryAction {
             geometry_idx: common.room[1].geometry_idx,
-            x: 1,
+            x: 0,
             y: 0,
             door_direction: Direction::Left,
             door_x: 0,
             door_y: 0,
             door_kind: 0,
+        };
+        let second_candidate = GeometryAction {
+            x: 1,
+            ..first_candidate
         };
         env.frontier.insert(
             door_location(0, 0, false),
@@ -7284,7 +7427,7 @@ mod tests {
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
-                candidates: vec![candidate],
+                candidates: vec![first_candidate],
             },
         );
         env.frontier.insert(
@@ -7297,7 +7440,7 @@ mod tests {
                 room_part_idx: 0,
                 component: 0,
                 kind: 0,
-                candidates: vec![candidate],
+                candidates: vec![second_candidate],
             },
         );
         let door_variant_idx = common.door_variant_idx(

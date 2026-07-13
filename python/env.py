@@ -307,6 +307,7 @@ class CandidateStats:
     evaluated_counts: torch.Tensor
     rejected_counts: torch.Tensor
     invalid_counts: torch.Tensor
+    noncanonical_counts: torch.Tensor
 
     def to(self, device: torch.device, non_blocking: bool = False) -> "CandidateStats":
         return CandidateStats(
@@ -314,6 +315,7 @@ class CandidateStats:
             evaluated_counts=self.evaluated_counts.to(device, non_blocking=non_blocking),
             rejected_counts=self.rejected_counts.to(device, non_blocking=non_blocking),
             invalid_counts=self.invalid_counts.to(device, non_blocking=non_blocking),
+            noncanonical_counts=self.noncanonical_counts.to(device, non_blocking=non_blocking),
         )
 
 
@@ -347,6 +349,7 @@ class CandidateSlot:
         self.evaluated_counts = None
         self.rejected_counts = None
         self.invalid_counts = None
+        self.noncanonical_counts = None
 
     def _empty(self, shape, dtype):
         return torch.empty(shape, dtype=dtype, pin_memory=self.pin_memory)
@@ -405,6 +408,7 @@ class CandidateSlot:
         self.evaluated_counts = self._empty((self.environment_capacity,), torch.int64)
         self.rejected_counts = self._empty((self.environment_capacity,), torch.int64)
         self.invalid_counts = self._empty((self.environment_capacity,), torch.int64)
+        self.noncanonical_counts = self._empty((self.environment_capacity,), torch.int64)
 
     def actions(self, environment_count: int, candidate_count: int) -> Actions:
         return Actions(
@@ -456,6 +460,7 @@ class CandidateSlot:
             evaluated_counts=self.evaluated_counts[:environment_count],
             rejected_counts=self.rejected_counts[:environment_count],
             invalid_counts=self.invalid_counts[:environment_count],
+            noncanonical_counts=self.noncanonical_counts[:environment_count],
         )
 
 
@@ -1219,6 +1224,9 @@ class EnvironmentGroup:
                     "evaluated_counts": candidate_slot.evaluated_counts[: self.num_envs].numpy(),
                     "rejected_counts": candidate_slot.rejected_counts[: self.num_envs].numpy(),
                     "invalid_counts": candidate_slot.invalid_counts[: self.num_envs].numpy(),
+                    "noncanonical_counts": candidate_slot.noncanonical_counts[
+                        : self.num_envs
+                    ].numpy(),
                 }
             )
         )
