@@ -491,9 +491,11 @@ def sample_proposal_shortlist(
         )
         return empty_sampled, empty_sampled, proposal_pair_counts, proposal_possible_counts
 
-    valid_actions = valid_variants.repeat_interleave(AREA_COUNT, dim=1)
     sample_keys = proposal_scores.to(dtype=torch.float32, copy=True)
-    sample_keys.masked_fill_(~valid_actions, float("-inf"))
+    sample_keys.view(-1, valid_variants.shape[1], AREA_COUNT).masked_fill_(
+        ~valid_variants.unsqueeze(2),
+        float("-inf"),
+    )
     row_temperature = proposal_temperature.to(device)[row_snapshot_idx]
     sample_keys.div_(row_temperature.unsqueeze(1).clamp_min(1e-6))
     sample_keys.add_(torch.empty_like(sample_keys).exponential_().log_().neg_())
