@@ -607,6 +607,8 @@ def select_outcomes(outcomes: StepOutcomes, index: torch.Tensor) -> StepOutcomes
         connection_invalid=gather(outcomes.connection_invalid),
         toilet_invalid=gather_scalar(outcomes.toilet_invalid),
         phantoon_invalid=gather_scalar(outcomes.phantoon_invalid),
+        area_size_bucket=gather(outcomes.area_size_bucket),
+        area_map_station_count_bucket=gather(outcomes.area_map_station_count_bucket),
         door_match=gather(outcomes.door_match),
     )
 
@@ -1537,6 +1539,18 @@ def merge_generation_results(
                 phantoon_invalid=torch.cat(
                     [
                         episode_outcomes.step_outcomes.phantoon_invalid
+                        for _, episode_outcomes, _, _, _ in results
+                    ]
+                ),
+                area_size_bucket=torch.cat(
+                    [
+                        episode_outcomes.step_outcomes.area_size_bucket
+                        for _, episode_outcomes, _, _, _ in results
+                    ]
+                ),
+                area_map_station_count_bucket=torch.cat(
+                    [
+                        episode_outcomes.step_outcomes.area_map_station_count_bucket
                         for _, episode_outcomes, _, _, _ in results
                     ]
                 ),

@@ -381,34 +381,38 @@ Reward terms:
 - Deferred area target size: later add
   `-reward_area_size * sum((predicted_area_size - target_area_size)^2)`.
 
-## Phase 9: Semi-Finalized Area Lookahead
+## Phase 9: Finalized Area Lookahead
 
-Add lookahead validity rules for areas that have no remaining frontiers.
+Expose exact area-size and map-station buckets when their final values become
+known, and reject candidates that newly make either outcome invalid.
 
-- Add a "semi-finalized area" concept. An area is semi-finalized when it has at
-  least one placed room but no frontier whose source room is assigned to that
-  area.
-- Once an area is semi-finalized, assigning a later room to that area would make
-  the area disconnected, or increase its connected component count. Reject clean
-  candidates that assign rooms to semi-finalized areas.
-- If a candidate causes an area to become semi-finalized before that area has a
-  map station, then the area cannot later gain a map station without becoming
-  disconnected. Reject clean candidates that create this state.
-- These rules are "semi" final because rejected fallback candidates can still be
-  applied when no clean candidate exists, which may allow the area to exit this
-  state.
-- This phase can be implemented after the initial area-action generation path is
-  working, because it refines candidate validity rather than defining the core
-  action representation.
+- An area is finalized once it has at least one placed room and no usable
+  frontier whose source room belongs to that area. A frontier with no remaining
+  candidates is exhausted and does not keep the area open.
+- A finalized area exposes its exact size bucket (below range, valid range, or
+  above range) and map-station bucket (zero, one, or two-or-more).
+- Size becomes known as above-range immediately after exceeding
+  `max_area_size`, even before finalization. Map-station count likewise becomes
+  known as two-or-more immediately after exceeding one station.
+- Unused areas remain unknown until generation finishes. At finish, all area
+  buckets become exact.
+- Reject candidates that transition either area bucket from unknown to an
+  invalid value. Keep those candidates in the existing fallback pool, and do
+  not repeatedly reject later candidates for an invalid outcome already
+  committed through fallback.
+- Allow second-map-station proposals to reach lookahead instead of filtering
+  them during proposal resolution, so they can be rejected normally and expose
+  the known two-or-more feature value.
+- Add exact categorical area buckets to lookahead model inputs. Do not override
+  area prediction logits or area reward calculations with the known values.
 
 Tests:
 
-- Rust unit test that clean candidates assigning rooms to a semi-finalized area
-  are rejected.
-- Rust unit test that clean candidates creating a semi-finalized area with no
-  map station are rejected.
-- Rust unit test that rejected fallback application can still change
-  semi-finalized state when no clean candidate exists.
+- Rust unit tests for finalized, oversized, and two-or-more-station bucket
+  outcomes, including exhausted frontier candidate lists.
+- Rust unit tests that newly invalid candidates are rejected but remain usable
+  as fallback, and committed invalid outcomes do not trigger repeated rejection.
+- Python tests for outcome buffer plumbing and categorical lookahead encoding.
 
 ## Phase 10: Serving-Time Changes
 

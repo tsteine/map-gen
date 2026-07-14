@@ -24,6 +24,21 @@ const KNOWN_DISTANCE_UNKNOWN: u8 = 0;
 const KNOWN_DISTANCE_UNREACHABLE: u8 = 1;
 pub const FEATURE_FRONTIER_WIDTH: usize = 5;
 
+#[repr(i8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AreaBucketOutcome {
+    Unknown = -1,
+    Low = 0,
+    Valid = 1,
+    High = 2,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AreaSizeLimits {
+    pub min: usize,
+    pub max: usize,
+}
+
 fn encode_known_finalized_distance(
     current_distance: GraphDistance,
     frontier_distance: GraphDistance,
@@ -179,6 +194,23 @@ fn check_outcome_transition_consistency(
     Ok(())
 }
 
+fn check_area_bucket_transition_consistency(
+    before: &[AreaBucketOutcome; AREA_COUNT],
+    after: &[AreaBucketOutcome; AREA_COUNT],
+    outcome_name: &str,
+    stage: &str,
+) -> Result<(), String> {
+    for (idx, (&before, &after)) in before.iter().zip(after).enumerate() {
+        if before != AreaBucketOutcome::Unknown && before != after {
+            return Err(format!(
+                "{outcome_name} outcome changed after becoming known at {stage}: \
+                 area {idx}, before {before:?}, after {after:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn introduces_invalid_outcome(before: &StepOutcomes, after: &StepOutcomes) -> bool {
     before
@@ -199,6 +231,22 @@ fn introduces_invalid_outcome(before: &StepOutcomes, after: &StepOutcomes) -> bo
             && after.toilet_valid == DoorValidOutcome::Invalid)
         || (before.phantoon_valid == DoorValidOutcome::Unknown
             && after.phantoon_valid == DoorValidOutcome::Invalid)
+        || introduces_invalid_area_bucket(&before.area_size_bucket, &after.area_size_bucket)
+        || introduces_invalid_area_bucket(
+            &before.area_map_station_count_bucket,
+            &after.area_map_station_count_bucket,
+        )
+}
+
+fn introduces_invalid_area_bucket(
+    before: &[AreaBucketOutcome; AREA_COUNT],
+    after: &[AreaBucketOutcome; AREA_COUNT],
+) -> bool {
+    before.iter().zip(after).any(|(&before, &after)| {
+        before == AreaBucketOutcome::Unknown
+            && after != AreaBucketOutcome::Unknown
+            && after != AreaBucketOutcome::Valid
+    })
 }
 
 enum CandidateOutcome {
@@ -284,6 +332,10 @@ pub struct StepOutcomes {
     pub toilet_valid: DoorValidOutcome,
     // Whether Phantoon's Room and Wrecked Ship Map Room connect to the same room.
     pub phantoon_valid: DoorValidOutcome,
+    // Final area-size bucket: below range, valid range, or above range.
+    pub area_size_bucket: [AreaBucketOutcome; AREA_COUNT],
+    // Final map-station-count bucket: zero, one, or two-or-more.
+    pub area_map_station_count_bucket: [AreaBucketOutcome; AREA_COUNT],
     // Concrete room crossed by the Toilet when exactly one non-Toilet room crosses it.
     pub toilet_crossed_room_idx: i16,
 }
@@ -1130,6 +1182,7 @@ pub struct Environment {
     room_area: Vec<AreaIdx>, // area of each room (only valid for used rooms)
     area_bounding_box_width: Coord,
     area_bounding_box_height: Coord,
+    area_size_limits: AreaSizeLimits,
     area_used: [bool; AREA_COUNT],
     area_min_x: [Coord; AREA_COUNT],
     area_max_x: [Coord; AREA_COUNT],
@@ -1769,6 +1822,7 @@ impl Environment {
         candidate_spatial_cell_size: usize,
         area_bounding_box_width: Coord,
         area_bounding_box_height: Coord,
+        area_size_limits: AreaSizeLimits,
         seed: u64,
     ) -> Self {
         Self {
@@ -1786,6 +1840,7 @@ impl Environment {
             room_area: vec![DUMMY_AREA; common.room.len()],
             area_bounding_box_width,
             area_bounding_box_height,
+            area_size_limits,
             area_used: [false; AREA_COUNT],
             area_min_x: [0; AREA_COUNT],
             area_max_x: [0; AREA_COUNT],
@@ -1985,6 +2040,68 @@ impl Environment {
         }
     }
 
+    fn exact_area_size_bucket(&self, area: usize) -> AreaBucketOutcome {
+        let size = self.area_size[area];
+        if size < self.area_size_limits.min {
+            AreaBucketOutcome::Low
+        } else if size <= self.area_size_limits.max {
+            AreaBucketOutcome::Valid
+        } else {
+            AreaBucketOutcome::High
+        }
+    }
+
+    fn exact_area_map_station_count_bucket(&self, area: usize) -> AreaBucketOutcome {
+        match self.area_map_station_count[area] {
+            0 => AreaBucketOutcome::Low,
+            1 => AreaBucketOutcome::Valid,
+            _ => AreaBucketOutcome::High,
+        }
+    }
+
+    fn area_bucket_outcomes(
+        &self,
+        common: &CommonData,
+    ) -> (
+        [AreaBucketOutcome; AREA_COUNT],
+        [AreaBucketOutcome; AREA_COUNT],
+    ) {
+        let mut has_usable_frontier = [false; AREA_COUNT];
+        if !self.finished {
+            for frontier in self
+                .frontier
+                .values()
+                .filter(|frontier| !frontier.candidates.is_empty())
+            {
+                let room_idx = common.room_part[frontier.room_part_idx as usize].0;
+                let area = self.room_area[room_idx as usize] as usize;
+                has_usable_frontier[area] = true;
+            }
+        }
+
+        let area_size_bucket = std::array::from_fn(|area| {
+            if self.area_size[area] > self.area_size_limits.max
+                || self.finished
+                || (self.area_used[area] && !has_usable_frontier[area])
+            {
+                self.exact_area_size_bucket(area)
+            } else {
+                AreaBucketOutcome::Unknown
+            }
+        });
+        let area_map_station_count_bucket = std::array::from_fn(|area| {
+            if self.area_map_station_count[area] >= 2
+                || self.finished
+                || (self.area_used[area] && !has_usable_frontier[area])
+            {
+                self.exact_area_map_station_count_bucket(area)
+            } else {
+                AreaBucketOutcome::Unknown
+            }
+        });
+        (area_size_bucket, area_map_station_count_bucket)
+    }
+
     fn write_area_state_features(
         &self,
         area_used: &mut Vec<u8>,
@@ -2046,11 +2163,6 @@ impl Environment {
             && area_max_y - area_min_y <= self.area_bounding_box_height
     }
 
-    fn candidate_map_station_area_valid(&self, common: &CommonData, action: Action) -> bool {
-        !common.room[action.room_idx as usize].map_station
-            || self.area_map_station_count[action.area as usize] == 0
-    }
-
     fn candidate_toilet_area_valid(&self, common: &CommonData, action: Action) -> bool {
         let Some(toilet_room_idx) = common.toilet_room_idx() else {
             return true;
@@ -2079,7 +2191,6 @@ impl Environment {
 
     fn candidate_area_valid(&self, common: &CommonData, action: Action) -> bool {
         self.candidate_area_bounds_valid(common, action)
-            && self.candidate_map_station_area_valid(common, action)
             && self.candidate_toilet_area_valid(common, action)
     }
 
@@ -3833,6 +3944,20 @@ impl Environment {
             pre_candidate_outcomes.phantoon_valid
         };
 
+        let (area_size_bucket, area_map_station_count_bucket) = self.area_bucket_outcomes(common);
+        if introduces_invalid_area_bucket(
+            &pre_candidate_outcomes.area_size_bucket,
+            &area_size_bucket,
+        ) || introduces_invalid_area_bucket(
+            &pre_candidate_outcomes.area_map_station_count_bucket,
+            &area_map_station_count_bucket,
+        ) {
+            let profile = profile_start();
+            self.restore_lookahead_candidate(common, snapshot);
+            profile_end(ProfileMetric::EnvProposalRestore, profile);
+            return Ok(CandidateOutcome::Rejected);
+        }
+
         let profile = profile_start();
         let features = self.feature_plan_for_applied_candidate(
             common,
@@ -3849,6 +3974,8 @@ impl Environment {
             connections_valid: connections_valid.clone(),
             toilet_valid,
             phantoon_valid,
+            area_size_bucket,
+            area_map_station_count_bucket,
             toilet_crossed_room_idx: self.toilet_crossed_room_idx(common),
         };
         let profile = profile_start();
@@ -5566,11 +5693,15 @@ impl Environment {
             ));
         }
 
+        let (area_size_bucket, area_map_station_count_bucket) = self.area_bucket_outcomes(common);
+
         StepOutcomes {
             door_valid,
             connections_valid,
             toilet_valid: self.toilet_outcome(common),
             phantoon_valid: self.phantoon_outcome(common),
+            area_size_bucket,
+            area_map_station_count_bucket,
             toilet_crossed_room_idx: self.toilet_crossed_room_idx(common),
         }
     }
@@ -5820,6 +5951,18 @@ impl Environment {
                 "phantoon",
                 stage,
             )?;
+            check_area_bucket_transition_consistency(
+                &known_outcomes.area_size_bucket,
+                &outcomes.area_size_bucket,
+                "area size",
+                stage,
+            )?;
+            check_area_bucket_transition_consistency(
+                &known_outcomes.area_map_station_count_bucket,
+                &outcomes.area_map_station_count_bucket,
+                "area map station count",
+                stage,
+            )?;
         }
         self.known_outcomes = Some(merge_known_outcomes(
             self.known_outcomes.as_ref(),
@@ -5841,7 +5984,27 @@ fn merge_known_outcomes(known: Option<&StepOutcomes>, current: &StepOutcomes) ->
         ),
         toilet_valid: merge_known_outcome_value(known.toilet_valid, current.toilet_valid),
         phantoon_valid: merge_known_outcome_value(known.phantoon_valid, current.phantoon_valid),
+        area_size_bucket: std::array::from_fn(|area| {
+            merge_known_area_bucket(known.area_size_bucket[area], current.area_size_bucket[area])
+        }),
+        area_map_station_count_bucket: std::array::from_fn(|area| {
+            merge_known_area_bucket(
+                known.area_map_station_count_bucket[area],
+                current.area_map_station_count_bucket[area],
+            )
+        }),
         toilet_crossed_room_idx: current.toilet_crossed_room_idx,
+    }
+}
+
+fn merge_known_area_bucket(
+    known: AreaBucketOutcome,
+    current: AreaBucketOutcome,
+) -> AreaBucketOutcome {
+    if known == AreaBucketOutcome::Unknown {
+        current
+    } else {
+        known
     }
 }
 
@@ -5946,6 +6109,11 @@ mod tests {
     use super::*;
     use crate::common::{Direction, Room, proposal_action_idx};
 
+    const TEST_AREA_SIZE_LIMITS: AreaSizeLimits = AreaSizeLimits {
+        min: 1,
+        max: usize::MAX,
+    };
+
     fn door_location(x: Coord, y: Coord, vertical: bool) -> DoorLocation {
         DoorLocation::from_parts(
             if vertical {
@@ -6019,7 +6187,7 @@ mod tests {
     }
 
     fn feature_outcome_test_env(common: &CommonData) -> Environment {
-        let mut env = Environment::new(common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -6030,6 +6198,124 @@ mod tests {
             common,
         );
         env
+    }
+
+    #[test]
+    fn area_bucket_outcomes_track_irreversible_and_final_values() {
+        let common = feature_outcome_test_common();
+        let limits = AreaSizeLimits { min: 1, max: 2 };
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, limits, 0);
+        assert_eq!(
+            env.outcomes(&common).area_size_bucket,
+            [AreaBucketOutcome::Unknown; AREA_COUNT]
+        );
+
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+                area: 0,
+            },
+            &common,
+        );
+        let growing = env.outcomes(&common);
+        assert_eq!(growing.area_size_bucket[0], AreaBucketOutcome::Unknown);
+        assert_eq!(
+            growing.area_map_station_count_bucket[0],
+            AreaBucketOutcome::Unknown
+        );
+
+        env.area_size[0] = 3;
+        env.area_map_station_count[0] = 2;
+        let irreversible = env.outcomes(&common);
+        assert_eq!(irreversible.area_size_bucket[0], AreaBucketOutcome::High);
+        assert_eq!(
+            irreversible.area_map_station_count_bucket[0],
+            AreaBucketOutcome::High
+        );
+
+        let mut finalized_env = Environment::new(&common, (4, 4), 8, 100, 100, limits, 1);
+        finalized_env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+                area: 0,
+            },
+            &common,
+        );
+        finalized_env.area_map_station_count[0] = 1;
+        for frontier in finalized_env.frontier.values_mut() {
+            frontier.candidates.clear();
+        }
+        let finalized = finalized_env.outcomes(&common);
+        assert_eq!(finalized.area_size_bucket[0], AreaBucketOutcome::Valid);
+        assert_eq!(
+            finalized.area_map_station_count_bucket[0],
+            AreaBucketOutcome::Valid
+        );
+        assert_eq!(finalized.area_size_bucket[1], AreaBucketOutcome::Unknown);
+
+        finalized_env.step(
+            Action {
+                room_idx: common.room.len() as RoomIdx,
+                x: 0,
+                y: 0,
+                area: DUMMY_AREA,
+            },
+            &common,
+        );
+        let finished = finalized_env.outcomes(&common);
+        assert_eq!(finished.area_size_bucket[1], AreaBucketOutcome::Low);
+        assert_eq!(
+            finished.area_map_station_count_bucket[1],
+            AreaBucketOutcome::Low
+        );
+    }
+
+    #[test]
+    fn proposal_lookahead_rejects_oversized_area_and_keeps_it_as_fallback() {
+        let common = feature_outcome_test_common();
+        let limits = AreaSizeLimits { min: 1, max: 1 };
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, limits, 0);
+        env.step(
+            Action {
+                room_idx: 0,
+                x: 0,
+                y: 0,
+                area: 0,
+            },
+            &common,
+        );
+        env.area_map_station_count[0] = 1;
+        let proposal_action = first_resolvable_proposal_action(&mut env, &common, 0, 0)
+            .expect("same-area candidate should resolve");
+        let mut scratch = FeatureScratch::default();
+
+        let result = env
+            .get_proposal_candidates_with_outcomes(
+                &common,
+                &[0],
+                &[proposal_action],
+                1,
+                0,
+                1,
+                &FeatureConfig::all_disabled(),
+                FrontierNeighborAlgorithm::Nearest,
+                1,
+                4,
+                &mut scratch,
+            )
+            .unwrap();
+
+        assert_eq!(result.clean_count, 0);
+        assert_eq!(result.rejected_count, 1);
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(
+            result.post_candidate_outcomes[0].area_size_bucket[0],
+            AreaBucketOutcome::High
+        );
     }
 
     fn spatial_index_test_common() -> CommonData {
@@ -6058,7 +6344,7 @@ mod tests {
     #[test]
     fn initial_actions_sample_all_areas() {
         let common = spatial_index_test_common();
-        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let mut sampled = [false; AREA_COUNT];
 
         for _ in 0..256 {
@@ -6072,7 +6358,7 @@ mod tests {
     #[test]
     fn environment_tracks_room_area_for_step_clear_and_step_known() {
         let common = spatial_index_test_common();
-        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         assert_eq!(env.room_area, [DUMMY_AREA, DUMMY_AREA]);
 
@@ -6105,7 +6391,7 @@ mod tests {
     #[test]
     fn dummy_action_requires_dummy_area_and_does_not_assign_room_area() {
         let common = spatial_index_test_common();
-        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -6124,7 +6410,7 @@ mod tests {
     #[test]
     fn outcomes_after_candidate_restores_room_area() {
         let common = spatial_index_test_common();
-        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -6173,7 +6459,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -6247,7 +6533,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -6346,7 +6632,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (6, 6), 8, 2, 2, 0);
+        let mut env = Environment::new(&common, (6, 6), 8, 2, 2, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -6391,7 +6677,7 @@ mod tests {
     }
 
     #[test]
-    fn proposal_resolution_filters_second_map_station_in_same_area() {
+    fn proposal_lookahead_rejects_second_map_station_and_keeps_it_as_fallback() {
         let rooms_json = r#"
         [
             {
@@ -6420,7 +6706,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (6, 6), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (6, 6), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -6431,24 +6717,36 @@ mod tests {
             &common,
         );
 
-        let valid_action = first_resolvable_proposal_action(&mut env, &common, 0, 4)
-            .expect("different area should be valid");
-        let (door_variant_idx, _) = proposal_action_parts(valid_action).unwrap();
-        let sorted_frontier_locations = env.sorted_frontier_locations();
-
-        assert!(
-            env.action_for_proposal_candidate(
+        let proposal_action = first_resolvable_proposal_action(&mut env, &common, 0, 3)
+            .expect("a second map station should reach lookahead evaluation");
+        let mut scratch = FeatureScratch::default();
+        let result = env
+            .get_proposal_candidates_with_outcomes(
                 &common,
-                &sorted_frontier_locations,
+                &[0],
+                &[proposal_action],
+                1,
                 0,
-                proposal_action_idx(door_variant_idx, 3),
+                1,
+                &FeatureConfig::all_disabled(),
+                FrontierNeighborAlgorithm::Nearest,
+                1,
+                4,
+                &mut scratch,
             )
-            .is_none()
+            .unwrap();
+
+        assert_eq!(result.clean_count, 0);
+        assert_eq!(result.rejected_count, 1);
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(
+            result.post_candidate_outcomes[0].area_map_station_count_bucket[3],
+            AreaBucketOutcome::High,
         );
     }
 
     #[test]
-    fn proposal_resolution_skips_frontier_with_no_valid_area_actions() {
+    fn proposal_resolution_allows_second_station_for_the_matching_area() {
         let rooms_json = r#"
         [
             {
@@ -6524,7 +6822,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (12, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (12, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         for area in 0..AREA_COUNT as AreaIdx {
             env.step(
                 Action {
@@ -6587,8 +6885,9 @@ mod tests {
             },
         );
 
+        assert!(first_resolvable_proposal_action(&mut env, &common, 1, 0).is_some());
         assert!(
-            (0..AREA_COUNT as AreaIdx)
+            (1..AREA_COUNT as AreaIdx)
                 .all(|area| first_resolvable_proposal_action(&mut env, &common, 1, area).is_none())
         );
         assert!(
@@ -6621,7 +6920,8 @@ mod tests {
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
 
-        let mut crossed_first = Environment::new(&common, (8, 12), 8, 100, 100, 0);
+        let mut crossed_first =
+            Environment::new(&common, (8, 12), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         crossed_first.step(
             Action {
                 room_idx: 0,
@@ -6650,7 +6950,8 @@ mod tests {
             },
         ));
 
-        let mut toilet_first = Environment::new(&common, (8, 12), 8, 100, 100, 0);
+        let mut toilet_first =
+            Environment::new(&common, (8, 12), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         toilet_first.step(
             Action {
                 room_idx: 1,
@@ -6683,7 +6984,7 @@ mod tests {
     #[test]
     fn spatial_index_shortlists_without_over_rejecting_coarse_cell_matches() {
         let common = spatial_index_test_common();
-        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -6749,7 +7050,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -6777,7 +7078,7 @@ mod tests {
     #[test]
     fn outcomes_after_candidate_restores_spatial_index() {
         let common = spatial_index_test_common();
-        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 8), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -6851,7 +7152,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -6895,7 +7196,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (6, 2), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (6, 2), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -6979,7 +7280,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 2), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 2), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -7093,7 +7394,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.actions.push(Action {
             room_idx: 0,
             x: 2,
@@ -7167,7 +7468,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -7259,7 +7560,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (6, 2), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (6, 2), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -7269,6 +7570,7 @@ mod tests {
             },
             &common,
         );
+        env.area_map_station_count.fill(1);
         let first_candidate = GeometryAction {
             geometry_idx: common.room[1].geometry_idx,
             x: 0,
@@ -7366,7 +7668,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (6, 2), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (6, 2), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -7376,6 +7678,7 @@ mod tests {
             },
             &common,
         );
+        env.area_map_station_count.fill(1);
         let first_candidate = GeometryAction {
             geometry_idx: common.room[1].geometry_idx,
             x: 0,
@@ -7488,7 +7791,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -7562,6 +7865,8 @@ mod tests {
                 connections_valid: vec![Valid],
                 toilet_valid: Valid,
                 phantoon_valid: Valid,
+                area_size_bucket: [AreaBucketOutcome::Unknown; AREA_COUNT],
+                area_map_station_count_bucket: [AreaBucketOutcome::Unknown; AREA_COUNT],
                 toilet_crossed_room_idx: -1,
             },
             &StepOutcomes {
@@ -7569,6 +7874,8 @@ mod tests {
                 connections_valid: vec![Valid],
                 toilet_valid: Valid,
                 phantoon_valid: Valid,
+                area_size_bucket: [AreaBucketOutcome::Unknown; AREA_COUNT],
+                area_map_station_count_bucket: [AreaBucketOutcome::Unknown; AREA_COUNT],
                 toilet_crossed_room_idx: -1,
             },
         ));
@@ -7578,6 +7885,8 @@ mod tests {
                 connections_valid: vec![Unknown],
                 toilet_valid: Unknown,
                 phantoon_valid: Unknown,
+                area_size_bucket: [AreaBucketOutcome::Unknown; AREA_COUNT],
+                area_map_station_count_bucket: [AreaBucketOutcome::Unknown; AREA_COUNT],
                 toilet_crossed_room_idx: -1,
             },
             &StepOutcomes {
@@ -7585,8 +7894,18 @@ mod tests {
                 connections_valid: vec![Valid],
                 toilet_valid: Unknown,
                 phantoon_valid: Unknown,
+                area_size_bucket: [AreaBucketOutcome::Unknown; AREA_COUNT],
+                area_map_station_count_bucket: [AreaBucketOutcome::Unknown; AREA_COUNT],
                 toilet_crossed_room_idx: -1,
             },
+        ));
+        assert!(introduces_invalid_area_bucket(
+            &[AreaBucketOutcome::Unknown; AREA_COUNT],
+            &[AreaBucketOutcome::High; AREA_COUNT],
+        ));
+        assert!(!introduces_invalid_area_bucket(
+            &[AreaBucketOutcome::High; AREA_COUNT],
+            &[AreaBucketOutcome::High; AREA_COUNT],
         ));
     }
 
@@ -7747,7 +8066,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -7825,7 +8144,7 @@ mod tests {
         let common = CommonData::new(rooms).unwrap();
         assert_eq!(common.save_room_part, vec![0]);
         assert_eq!(common.refill_room_part, vec![1]);
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -7888,7 +8207,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -7945,7 +8264,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (6, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (6, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -8020,7 +8339,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -8108,8 +8427,8 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut fast_env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
-        let mut full_env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut fast_env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
+        let mut full_env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let first_action = Action {
             room_idx: 0,
             x: 0,
@@ -8176,7 +8495,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -8257,7 +8576,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         assert_eq!(env.graph_diameter(), 0);
         env.step(
@@ -8332,7 +8651,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 0,
@@ -8407,7 +8726,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 0,
@@ -8470,7 +8789,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 0,
@@ -8515,7 +8834,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let graph_size = common.room_part.len();
         for (from_part, to_part, distance) in
             [(0, 0, 0), (0, 1, 2), (1, 0, 1), (1, 1, 0), (1, 2, 3)]
@@ -8550,7 +8869,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let graph_size = common.room_part.len();
         for (from_part, to_part, distance) in
             [(0, 0, 0), (0, 1, 4), (0, 2, 2), (1, 2, 4), (2, 2, 0)]
@@ -8600,7 +8919,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let graph_size = common.room_part.len();
         env.active_room_parts = vec![0, 1, 2];
         for part in 0..graph_size {
@@ -8657,7 +8976,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let graph_size = common.room_part.len();
         env.active_room_parts = vec![0, 1, 2];
         for part in 0..graph_size {
@@ -8755,7 +9074,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let graph_size = common.room_part.len();
         env.active_room_parts = vec![0, 1];
         for part in 0..graph_size {
@@ -8817,7 +9136,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.active_room_parts = vec![0];
 
         let features = env.features(
@@ -8865,7 +9184,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let graph_size = common.room_part.len();
         env.active_room_parts = vec![0, 1, 2];
         for part in 0..graph_size {
@@ -8933,7 +9252,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let graph_size = common.room_part.len();
         env.active_room_parts = vec![0, 1, 2];
         for part in 0..graph_size {
@@ -9035,7 +9354,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 5), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let graph_size = common.room_part.len();
         env.active_room_parts = vec![0, 1, 2];
         for part in 0..graph_size {
@@ -9172,7 +9491,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (5, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (5, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -9248,7 +9567,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -9282,7 +9601,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -9339,7 +9658,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let part0 = usize::from(Environment::room_part_idx(&common, 0, 0));
         let part1 = usize::from(Environment::room_part_idx(&common, 0, 1));
         let graph_size = common.room_part.len();
@@ -9378,7 +9697,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -9447,7 +9766,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 1), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 1), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -9493,7 +9812,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -9567,7 +9886,7 @@ mod tests {
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
         assert_eq!(Environment::max_frontiers(&common), 3);
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -9679,7 +9998,7 @@ mod tests {
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
         let config = FeatureConfig::all();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         env.step(
             Action {
@@ -9749,7 +10068,7 @@ mod tests {
         "#;
         let rooms: Vec<Room> = serde_json::from_str(rooms_json).unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -9850,8 +10169,9 @@ mod tests {
                 area: 0,
             },
         ];
-        let mut full_env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
-        let mut known_env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut full_env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
+        let mut known_env =
+            Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         for action in actions {
             full_env.step(action, &common);
@@ -9905,8 +10225,9 @@ mod tests {
                 area: 0,
             },
         ];
-        let mut full_env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
-        let mut replay_env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut full_env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
+        let mut replay_env =
+            Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         for action in actions {
             full_env.step(action, &common);
@@ -9997,7 +10318,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step(
             Action {
                 room_idx: 0,
@@ -10035,7 +10356,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         let features = env.features_after_candidate(
             &common,
             Action {
@@ -10092,7 +10413,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let env = Environment::new(&common, (8, 12), 8, 100, 100, 0);
+        let env = Environment::new(&common, (8, 12), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         assert_eq!(env.outcomes(&common).toilet_valid, DoorValidOutcome::Valid);
         assert_eq!(env.outcomes(&common).toilet_crossed_room_idx, -1);
@@ -10101,7 +10422,7 @@ mod tests {
     #[test]
     fn toilet_outcome_requires_exactly_one_crossing_at_finish() {
         let common = toilet_outcome_test_common();
-        let mut env = Environment::new(&common, (8, 12), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 12), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 2,
@@ -10121,7 +10442,7 @@ mod tests {
             DoorValidOutcome::Invalid
         );
 
-        let mut env = Environment::new(&common, (8, 12), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 12), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 2,
@@ -10153,7 +10474,7 @@ mod tests {
     #[test]
     fn toilet_outcome_is_invalid_after_second_crossing() {
         let common = toilet_outcome_test_common();
-        let mut env = Environment::new(&common, (8, 12), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 12), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 2,
@@ -10205,7 +10526,7 @@ mod tests {
     #[test]
     fn toilet_outcome_ignores_dummy_candidate() {
         let common = toilet_outcome_test_common();
-        let mut env = Environment::new(&common, (8, 12), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 12), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 2,
@@ -10319,7 +10640,7 @@ mod tests {
         )
         .unwrap();
         let common = CommonData::new(rooms).unwrap();
-        let env = Environment::new(&common, (4, 4), 8, 100, 100, 0);
+        let env = Environment::new(&common, (4, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         assert_eq!(
             env.outcomes(&common).phantoon_valid,
@@ -10330,7 +10651,7 @@ mod tests {
     #[test]
     fn phantoon_outcome_requires_placed_rooms_at_finish() {
         let common = phantoon_outcome_test_common();
-        let mut env = Environment::new(&common, (8, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
 
         assert_eq!(
             env.outcomes(&common).phantoon_valid,
@@ -10346,7 +10667,7 @@ mod tests {
     #[test]
     fn phantoon_outcome_accepts_same_neighbor_room() {
         let common = phantoon_outcome_test_common();
-        let mut env = Environment::new(&common, (8, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 0,
@@ -10388,7 +10709,7 @@ mod tests {
     #[test]
     fn phantoon_outcome_rejects_different_neighbor_rooms() {
         let common = phantoon_outcome_test_common();
-        let mut env = Environment::new(&common, (8, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 0,
@@ -10435,7 +10756,7 @@ mod tests {
     #[test]
     fn phantoon_outcome_rejects_partial_match_without_neighbor_frontier() {
         let common = phantoon_outcome_dead_end_test_common();
-        let mut env = Environment::new(&common, (8, 4), 8, 100, 100, 0);
+        let mut env = Environment::new(&common, (8, 4), 8, 100, 100, TEST_AREA_SIZE_LIMITS, 0);
         env.step_known(
             Action {
                 room_idx: 0,

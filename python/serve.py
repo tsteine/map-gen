@@ -353,7 +353,12 @@ def create_serving_state(
         )
         torch.set_float32_matmul_precision("high")
     model_dtype = serving_model_dtype(serving_config)
-    engine = Engine(rooms, model_export.training_config.features)
+    engine = Engine(
+        rooms,
+        model_export.training_config.features,
+        model_export.training_config.generation.min_area_size,
+        model_export.training_config.generation.max_area_size,
+    )
     model = FrontierModel(**frontier_model_kwargs(model_export.training_config, rooms, engine)).to(
         device
     )

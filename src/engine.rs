@@ -8,8 +8,9 @@ use crate::common::{
 #[cfg(test)]
 use crate::environment::Features;
 use crate::environment::{
-    Environment, FEATURE_FRONTIER_WIDTH, FeatureConfig, FeaturePlan, FeaturePlanKind,
-    FeatureScratch, FrontierNeighborAlgorithm, write_frontier_neighbors,
+    AreaBucketOutcome, AreaSizeLimits, Environment, FEATURE_FRONTIER_WIDTH, FeatureConfig,
+    FeaturePlan, FeaturePlanKind, FeatureScratch, FrontierNeighborAlgorithm,
+    write_frontier_neighbors,
 };
 use crossbeam_channel as channel;
 use numpy::{Element, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayMethods, PyReadonlyArray1};
@@ -311,10 +312,14 @@ enum WorkerCommand {
         pre_connections_valid: OutputShard<i8>,
         pre_toilet_valid: OutputShard<i8>,
         pre_phantoon_valid: OutputShard<i8>,
+        pre_area_size_bucket: OutputShard<i8>,
+        pre_area_map_station_count_bucket: OutputShard<i8>,
         door_valid: OutputShard<i8>,
         connections_valid: OutputShard<i8>,
         toilet_valid: OutputShard<i8>,
         phantoon_valid: OutputShard<i8>,
+        area_size_bucket: OutputShard<i8>,
+        area_map_station_count_bucket: OutputShard<i8>,
         door_match: OutputShard<i16>,
         clean_counts: OutputShard<usize>,
         evaluated_counts: OutputShard<usize>,
@@ -336,6 +341,8 @@ enum WorkerCommand {
         connections_valid: OutputShard<i8>,
         toilet_valid: OutputShard<i8>,
         phantoon_valid: OutputShard<i8>,
+        area_size_bucket: OutputShard<i8>,
+        area_map_station_count_bucket: OutputShard<i8>,
         toilet_crossed_room_idx: OutputShard<i16>,
         avg_frontiers: OutputShard<f32>,
         graph_diameter: OutputShard<f32>,
@@ -374,6 +381,8 @@ enum WorkerCommand {
         connections_valid: OutputShard<i8>,
         toilet_valid: OutputShard<i8>,
         phantoon_valid: OutputShard<i8>,
+        area_size_bucket: OutputShard<i8>,
+        area_map_station_count_bucket: OutputShard<i8>,
         door_match: OutputShard<i16>,
     },
     GetDoorMatchCounts {
@@ -633,10 +642,14 @@ fn worker_loop(
                 pre_connections_valid,
                 pre_toilet_valid,
                 pre_phantoon_valid,
+                pre_area_size_bucket,
+                pre_area_map_station_count_bucket,
                 door_valid,
                 connections_valid,
                 toilet_valid,
                 phantoon_valid,
+                area_size_bucket,
+                area_map_station_count_bucket,
                 door_match,
                 clean_counts,
                 evaluated_counts,
@@ -661,10 +674,16 @@ fn worker_loop(
                 let pre_connections_valid = unsafe { pre_connections_valid.into_mut_slice() };
                 let pre_toilet_valid = unsafe { pre_toilet_valid.into_mut_slice() };
                 let pre_phantoon_valid = unsafe { pre_phantoon_valid.into_mut_slice() };
+                let pre_area_size_bucket = unsafe { pre_area_size_bucket.into_mut_slice() };
+                let pre_area_map_station_count_bucket =
+                    unsafe { pre_area_map_station_count_bucket.into_mut_slice() };
                 let door_valid = unsafe { door_valid.into_mut_slice() };
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
                 let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
                 let phantoon_valid = unsafe { phantoon_valid.into_mut_slice() };
+                let area_size_bucket = unsafe { area_size_bucket.into_mut_slice() };
+                let area_map_station_count_bucket =
+                    unsafe { area_map_station_count_bucket.into_mut_slice() };
                 let door_match = unsafe { door_match.into_mut_slice() };
                 let clean_counts = unsafe { clean_counts.into_mut_slice() };
                 let evaluated_counts = unsafe { evaluated_counts.into_mut_slice() };
@@ -710,6 +729,11 @@ fn worker_loop(
                 );
                 debug_assert_eq!(pre_toilet_valid.len(), environments.len());
                 debug_assert_eq!(pre_phantoon_valid.len(), environments.len());
+                debug_assert_eq!(pre_area_size_bucket.len(), environments.len() * AREA_COUNT);
+                debug_assert_eq!(
+                    pre_area_map_station_count_bucket.len(),
+                    environments.len() * AREA_COUNT
+                );
                 debug_assert_eq!(
                     door_valid.len(),
                     environments.len() * recommended_candidates * door_outcome_count
@@ -725,6 +749,14 @@ fn worker_loop(
                 debug_assert_eq!(
                     phantoon_valid.len(),
                     environments.len() * recommended_candidates
+                );
+                debug_assert_eq!(
+                    area_size_bucket.len(),
+                    environments.len() * recommended_candidates * AREA_COUNT
+                );
+                debug_assert_eq!(
+                    area_map_station_count_bucket.len(),
+                    environments.len() * recommended_candidates * AREA_COUNT
                 );
                 debug_assert_eq!(
                     door_match.len(),
@@ -791,6 +823,13 @@ fn worker_loop(
                     pre_toilet_valid[env_idx] = outcome_to_i8(pre_candidate_outcomes.toilet_valid);
                     pre_phantoon_valid[env_idx] =
                         outcome_to_i8(pre_candidate_outcomes.phantoon_valid);
+                    let pre_area_start = env_idx * AREA_COUNT;
+                    for area in 0..AREA_COUNT {
+                        pre_area_size_bucket[pre_area_start + area] =
+                            pre_candidate_outcomes.area_size_bucket[area] as i8;
+                        pre_area_map_station_count_bucket[pre_area_start + area] =
+                            pre_candidate_outcomes.area_map_station_count_bucket[area] as i8;
+                    }
                     let row_start = env_idx * recommended_candidates;
                     let dummy_candidate = Action {
                         room_idx: common_data.room.len() as RoomIdx,
@@ -860,6 +899,13 @@ fn worker_loop(
                         }
                         toilet_valid[idx] = outcome_to_i8(outcome.toilet_valid);
                         phantoon_valid[idx] = outcome_to_i8(outcome.phantoon_valid);
+                        let area_start = idx * AREA_COUNT;
+                        for area in 0..AREA_COUNT {
+                            area_size_bucket[area_start + area] =
+                                outcome.area_size_bucket[area] as i8;
+                            area_map_station_count_bucket[area_start + area] =
+                                outcome.area_map_station_count_bucket[area] as i8;
+                        }
                         for (dst, &value) in door_match[door_start..door_end]
                             .iter_mut()
                             .zip(match_values)
@@ -916,6 +962,8 @@ fn worker_loop(
                 connections_valid,
                 toilet_valid,
                 phantoon_valid,
+                area_size_bucket,
+                area_map_station_count_bucket,
                 toilet_crossed_room_idx,
                 avg_frontiers,
                 graph_diameter,
@@ -945,6 +993,9 @@ fn worker_loop(
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
                 let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
                 let phantoon_valid = unsafe { phantoon_valid.into_mut_slice() };
+                let area_size_bucket = unsafe { area_size_bucket.into_mut_slice() };
+                let area_map_station_count_bucket =
+                    unsafe { area_map_station_count_bucket.into_mut_slice() };
                 let toilet_crossed_room_idx = unsafe { toilet_crossed_room_idx.into_mut_slice() };
                 let avg_frontiers = unsafe { avg_frontiers.into_mut_slice() };
                 let graph_diameter = unsafe { graph_diameter.into_mut_slice() };
@@ -981,6 +1032,11 @@ fn worker_loop(
                 );
                 debug_assert_eq!(toilet_valid.len(), environments.len());
                 debug_assert_eq!(phantoon_valid.len(), environments.len());
+                debug_assert_eq!(area_size_bucket.len(), environments.len() * AREA_COUNT);
+                debug_assert_eq!(
+                    area_map_station_count_bucket.len(),
+                    environments.len() * AREA_COUNT
+                );
                 debug_assert_eq!(toilet_crossed_room_idx.len(), environments.len());
                 debug_assert_eq!(avg_frontiers.len(), environments.len());
                 debug_assert_eq!(graph_diameter.len(), environments.len());
@@ -1159,6 +1215,12 @@ fn worker_loop(
                     }
                     toilet_valid[env_idx] = outcome_to_i8(outcomes.toilet_valid);
                     phantoon_valid[env_idx] = outcome_to_i8(outcomes.phantoon_valid);
+                    for area in 0..AREA_COUNT {
+                        area_size_bucket[area_row_start + area] =
+                            outcomes.area_size_bucket[area] as i8;
+                        area_map_station_count_bucket[area_row_start + area] =
+                            outcomes.area_map_station_count_bucket[area] as i8;
+                    }
                     toilet_crossed_room_idx[env_idx] = outcomes.toilet_crossed_room_idx;
                 }
                 match consistency_error {
@@ -1213,6 +1275,8 @@ fn worker_loop(
                 connections_valid,
                 toilet_valid,
                 phantoon_valid,
+                area_size_bucket,
+                area_map_station_count_bucket,
                 door_match,
             } => {
                 // SAFETY: The main thread guarantees that for the duration of this command,
@@ -1221,6 +1285,9 @@ fn worker_loop(
                 let connections_valid = unsafe { connections_valid.into_mut_slice() };
                 let toilet_valid = unsafe { toilet_valid.into_mut_slice() };
                 let phantoon_valid = unsafe { phantoon_valid.into_mut_slice() };
+                let area_size_bucket = unsafe { area_size_bucket.into_mut_slice() };
+                let area_map_station_count_bucket =
+                    unsafe { area_map_station_count_bucket.into_mut_slice() };
                 let door_match = unsafe { door_match.into_mut_slice() };
                 debug_assert_eq!(door_valid.len(), environment_count * door_outcome_count);
                 debug_assert_eq!(
@@ -1229,6 +1296,11 @@ fn worker_loop(
                 );
                 debug_assert_eq!(toilet_valid.len(), environment_count);
                 debug_assert_eq!(phantoon_valid.len(), environment_count);
+                debug_assert_eq!(area_size_bucket.len(), environment_count * AREA_COUNT);
+                debug_assert_eq!(
+                    area_map_station_count_bucket.len(),
+                    environment_count * AREA_COUNT
+                );
                 debug_assert_eq!(door_match.len(), environment_count * door_outcome_count);
 
                 for (env_idx, env) in environments
@@ -1263,6 +1335,12 @@ fn worker_loop(
                     }
                     toilet_valid[env_idx] = outcome_to_i8(outcomes.toilet_valid);
                     phantoon_valid[env_idx] = outcome_to_i8(outcomes.phantoon_valid);
+                    let area_start = env_idx * AREA_COUNT;
+                    for area in 0..AREA_COUNT {
+                        area_size_bucket[area_start + area] = outcomes.area_size_bucket[area] as i8;
+                        area_map_station_count_bucket[area_start + area] =
+                            outcomes.area_map_station_count_bucket[area] as i8;
+                    }
                 }
                 WorkerResponse::Done
             }
@@ -1564,6 +1642,7 @@ fn check_shape(name: &str, actual: &[usize], expected: &[usize]) -> PyResult<()>
 pub struct Engine {
     common_data: Arc<CommonData>, // pre-computed data that can be shared across environments
     features: FeatureConfig,
+    area_size_limits: AreaSizeLimits,
 }
 
 #[pyclass(module = "map_gen")]
@@ -1584,6 +1663,9 @@ pub struct StepOutcomes {
     connections_valid: Py<PyArray2<i8>>,
     toilet_valid: Py<PyArray1<i8>>,
     phantoon_valid: Py<PyArray1<i8>>,
+    area_size_bucket: Py<PyArray2<i8>>,
+    area_map_station_count_bucket: Py<PyArray2<i8>>,
+    door_match: Py<PyArray2<i16>>,
 }
 
 #[pyclass(module = "map_gen")]
@@ -1665,10 +1747,14 @@ pub struct ProposalCandidateBuffers {
     pre_connections_valid: Py<PyArray2<i8>>,
     pre_toilet_valid: Py<PyArray1<i8>>,
     pre_phantoon_valid: Py<PyArray1<i8>>,
+    pre_area_size_bucket: Py<PyArray2<i8>>,
+    pre_area_map_station_count_bucket: Py<PyArray2<i8>>,
     door_valid: Py<PyArray3<i8>>,
     connections_valid: Py<PyArray3<i8>>,
     toilet_valid: Py<PyArray2<i8>>,
     phantoon_valid: Py<PyArray2<i8>>,
+    area_size_bucket: Py<PyArray3<i8>>,
+    area_map_station_count_bucket: Py<PyArray3<i8>>,
     door_match: Py<PyArray3<i16>>,
     clean_counts: Py<PyArray1<i64>>,
     evaluated_counts: Py<PyArray1<i64>>,
@@ -1783,10 +1869,20 @@ impl ProposalCandidateBuffers {
             pre_connections_valid: required_py_field!(fields, "pre_connections_valid"),
             pre_toilet_valid: required_py_field!(fields, "pre_toilet_valid"),
             pre_phantoon_valid: required_py_field!(fields, "pre_phantoon_valid"),
+            pre_area_size_bucket: required_py_field!(fields, "pre_area_size_bucket"),
+            pre_area_map_station_count_bucket: required_py_field!(
+                fields,
+                "pre_area_map_station_count_bucket"
+            ),
             door_valid: required_py_field!(fields, "door_valid"),
             connections_valid: required_py_field!(fields, "connections_valid"),
             toilet_valid: required_py_field!(fields, "toilet_valid"),
             phantoon_valid: required_py_field!(fields, "phantoon_valid"),
+            area_size_bucket: required_py_field!(fields, "area_size_bucket"),
+            area_map_station_count_bucket: required_py_field!(
+                fields,
+                "area_map_station_count_bucket"
+            ),
             door_match: required_py_field!(fields, "door_match"),
             clean_counts: required_py_field!(fields, "clean_counts"),
             evaluated_counts: required_py_field!(fields, "evaluated_counts"),
@@ -1981,6 +2077,21 @@ impl StepOutcomes {
     fn phantoon_valid(&self, py: Python<'_>) -> Py<PyArray1<i8>> {
         self.phantoon_valid.clone_ref(py)
     }
+
+    #[getter]
+    fn area_size_bucket(&self, py: Python<'_>) -> Py<PyArray2<i8>> {
+        self.area_size_bucket.clone_ref(py)
+    }
+
+    #[getter]
+    fn area_map_station_count_bucket(&self, py: Python<'_>) -> Py<PyArray2<i8>> {
+        self.area_map_station_count_bucket.clone_ref(py)
+    }
+
+    #[getter]
+    fn door_match(&self, py: Python<'_>) -> Py<PyArray2<i16>> {
+        self.door_match.clone_ref(py)
+    }
 }
 
 #[pymethods]
@@ -2128,6 +2239,12 @@ impl EpisodeOutcomes {
             connections_valid: self.step_outcomes.connections_valid.clone_ref(py),
             toilet_valid: self.step_outcomes.toilet_valid.clone_ref(py),
             phantoon_valid: self.step_outcomes.phantoon_valid.clone_ref(py),
+            area_size_bucket: self.step_outcomes.area_size_bucket.clone_ref(py),
+            area_map_station_count_bucket: self
+                .step_outcomes
+                .area_map_station_count_bucket
+                .clone_ref(py),
+            door_match: self.step_outcomes.door_match.clone_ref(py),
         }
     }
 
@@ -3468,8 +3585,23 @@ impl Drop for EnvironmentGroup {
 #[pymethods]
 impl Engine {
     #[new]
-    #[pyo3(signature = (rooms_json, features_json))]
-    fn new(rooms_json: &str, features_json: &str) -> PyResult<Self> {
+    #[pyo3(signature = (rooms_json, features_json, min_area_size, max_area_size))]
+    fn new(
+        rooms_json: &str,
+        features_json: &str,
+        min_area_size: usize,
+        max_area_size: usize,
+    ) -> PyResult<Self> {
+        if min_area_size == 0 {
+            return Err(PyValueError::new_err(
+                "min_area_size must be greater than zero",
+            ));
+        }
+        if max_area_size < min_area_size {
+            return Err(PyValueError::new_err(
+                "max_area_size must be at least min_area_size",
+            ));
+        }
         let rooms: Vec<Room> = serde_json::from_str(rooms_json)
             .map_err(|err| PyValueError::new_err(format!("failed to parse rooms JSON: {err}")))?;
         let features: FeatureConfig = serde_json::from_str(features_json).map_err(|err| {
@@ -3482,6 +3614,10 @@ impl Engine {
         Ok(Self {
             common_data,
             features,
+            area_size_limits: AreaSizeLimits {
+                min: min_area_size,
+                max: max_area_size,
+            },
         })
     }
 
@@ -3521,6 +3657,7 @@ impl Engine {
             candidate_spatial_cell_size,
             area_bounding_box_width,
             area_bounding_box_height,
+            self.area_size_limits,
             num_threads,
         )
     }
@@ -3598,6 +3735,7 @@ impl EnvironmentGroup {
         candidate_spatial_cell_size: usize,
         area_bounding_box_width: Coord,
         area_bounding_box_height: Coord,
+        area_size_limits: AreaSizeLimits,
         num_threads: Option<usize>,
     ) -> PyResult<Self> {
         if candidate_spatial_cell_size == 0 {
@@ -3633,6 +3771,7 @@ impl EnvironmentGroup {
                     candidate_spatial_cell_size,
                     area_bounding_box_width,
                     area_bounding_box_height,
+                    area_size_limits,
                     seed ^ env_idx as u64,
                 ));
             }
@@ -4155,10 +4294,18 @@ impl EnvironmentGroup {
         let mut pre_connections_valid = buffers.pre_connections_valid.bind(py).readwrite();
         let mut pre_toilet_valid = buffers.pre_toilet_valid.bind(py).readwrite();
         let mut pre_phantoon_valid = buffers.pre_phantoon_valid.bind(py).readwrite();
+        let mut pre_area_size_bucket = buffers.pre_area_size_bucket.bind(py).readwrite();
+        let mut pre_area_map_station_count_bucket = buffers
+            .pre_area_map_station_count_bucket
+            .bind(py)
+            .readwrite();
         let mut door_valid = buffers.door_valid.bind(py).readwrite();
         let mut connections_valid = buffers.connections_valid.bind(py).readwrite();
         let mut toilet_valid = buffers.toilet_valid.bind(py).readwrite();
         let mut phantoon_valid = buffers.phantoon_valid.bind(py).readwrite();
+        let mut area_size_bucket = buffers.area_size_bucket.bind(py).readwrite();
+        let mut area_map_station_count_bucket =
+            buffers.area_map_station_count_bucket.bind(py).readwrite();
         let mut door_match = buffers.door_match.bind(py).readwrite();
         let mut clean_counts = buffers.clean_counts.bind(py).readwrite();
         let mut evaluated_counts = buffers.evaluated_counts.bind(py).readwrite();
@@ -4267,6 +4414,16 @@ impl EnvironmentGroup {
             &[self.num_environments],
         )?;
         check_shape(
+            "pre_area_size_bucket",
+            pre_area_size_bucket.as_array().shape(),
+            &[self.num_environments, AREA_COUNT],
+        )?;
+        check_shape(
+            "pre_area_map_station_count_bucket",
+            pre_area_map_station_count_bucket.as_array().shape(),
+            &[self.num_environments, AREA_COUNT],
+        )?;
+        check_shape(
             "door_valid",
             door_valid.as_array().shape(),
             &[
@@ -4293,6 +4450,16 @@ impl EnvironmentGroup {
             "phantoon_valid",
             phantoon_valid.as_array().shape(),
             &[self.num_environments, recommended_candidates],
+        )?;
+        check_shape(
+            "area_size_bucket",
+            area_size_bucket.as_array().shape(),
+            &[self.num_environments, recommended_candidates, AREA_COUNT],
+        )?;
+        check_shape(
+            "area_map_station_count_bucket",
+            area_map_station_count_bucket.as_array().shape(),
+            &[self.num_environments, recommended_candidates, AREA_COUNT],
         )?;
         check_shape(
             "door_match",
@@ -4362,6 +4529,14 @@ impl EnvironmentGroup {
         let pre_phantoon_valid = pre_phantoon_valid
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("pre_phantoon_valid must be contiguous"))?;
+        let pre_area_size_bucket = pre_area_size_bucket
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("pre_area_size_bucket must be contiguous"))?;
+        let pre_area_map_station_count_bucket = pre_area_map_station_count_bucket
+            .as_slice_mut()
+            .map_err(|_| {
+                PyValueError::new_err("pre_area_map_station_count_bucket must be contiguous")
+            })?;
         let door_valid = door_valid
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("door_valid must be contiguous"))?;
@@ -4374,6 +4549,13 @@ impl EnvironmentGroup {
         let phantoon_valid = phantoon_valid
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("phantoon_valid must be contiguous"))?;
+        let area_size_bucket = area_size_bucket
+            .as_slice_mut()
+            .map_err(|_| PyValueError::new_err("area_size_bucket must be contiguous"))?;
+        let area_map_station_count_bucket =
+            area_map_station_count_bucket.as_slice_mut().map_err(|_| {
+                PyValueError::new_err("area_map_station_count_bucket must be contiguous")
+            })?;
         let door_match = door_match
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("door_match must be contiguous"))?;
@@ -4402,10 +4584,14 @@ impl EnvironmentGroup {
         pre_connections_valid.fill(DoorValidOutcome::Unknown as i8);
         pre_toilet_valid.fill(DoorValidOutcome::Unknown as i8);
         pre_phantoon_valid.fill(DoorValidOutcome::Unknown as i8);
+        pre_area_size_bucket.fill(AreaBucketOutcome::Unknown as i8);
+        pre_area_map_station_count_bucket.fill(AreaBucketOutcome::Unknown as i8);
         door_valid.fill(DoorValidOutcome::Unknown as i8);
         connections_valid.fill(DoorValidOutcome::Unknown as i8);
         toilet_valid.fill(DoorValidOutcome::Unknown as i8);
         phantoon_valid.fill(DoorValidOutcome::Unknown as i8);
+        area_size_bucket.fill(AreaBucketOutcome::Unknown as i8);
+        area_map_station_count_bucket.fill(AreaBucketOutcome::Unknown as i8);
         door_match.fill(-1);
         let mut worker_clean_counts = vec![0; self.num_environments];
         let mut worker_evaluated_counts = vec![0; self.num_environments];
@@ -4427,10 +4613,14 @@ impl EnvironmentGroup {
                 let pre_connection_output_start = worker.start * connection_outcome_count;
                 let pre_connection_output_end =
                     pre_connection_output_start + worker.len * connection_outcome_count;
+                let pre_area_output_start = worker.start * AREA_COUNT;
+                let pre_area_output_end = worker.end() * AREA_COUNT;
                 let door_output_start = output_start * door_outcome_count;
                 let door_output_end = output_end * door_outcome_count;
                 let connection_output_start = output_start * connection_outcome_count;
                 let connection_output_end = output_end * connection_outcome_count;
+                let area_output_start = output_start * AREA_COUNT;
+                let area_output_end = output_end * AREA_COUNT;
                 let door_match_output_start = output_start * door_outcome_count;
                 let door_match_output_end =
                     door_match_output_start + (output_end - output_start) * door_outcome_count;
@@ -4483,6 +4673,13 @@ impl EnvironmentGroup {
                     pre_phantoon_valid: OutputShard::from_slice(
                         &mut pre_phantoon_valid[worker.start..worker.end()],
                     ),
+                    pre_area_size_bucket: OutputShard::from_slice(
+                        &mut pre_area_size_bucket[pre_area_output_start..pre_area_output_end],
+                    ),
+                    pre_area_map_station_count_bucket: OutputShard::from_slice(
+                        &mut pre_area_map_station_count_bucket
+                            [pre_area_output_start..pre_area_output_end],
+                    ),
                     door_valid: OutputShard::from_slice(
                         &mut door_valid[door_output_start..door_output_end],
                     ),
@@ -4494,6 +4691,12 @@ impl EnvironmentGroup {
                     ),
                     phantoon_valid: OutputShard::from_slice(
                         &mut phantoon_valid[output_start..output_end],
+                    ),
+                    area_size_bucket: OutputShard::from_slice(
+                        &mut area_size_bucket[area_output_start..area_output_end],
+                    ),
+                    area_map_station_count_bucket: OutputShard::from_slice(
+                        &mut area_map_station_count_bucket[area_output_start..area_output_end],
                     ),
                     door_match: OutputShard::from_slice(
                         &mut door_match[door_match_output_start..door_match_output_end],
@@ -4595,6 +4798,10 @@ impl EnvironmentGroup {
         let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
         let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; self.num_environments];
         let mut phantoon_valid = vec![DoorValidOutcome::Unknown as i8; self.num_environments];
+        let area_outcome_len = self.num_environments * AREA_COUNT;
+        let mut area_size_bucket = vec![AreaBucketOutcome::Unknown as i8; area_outcome_len];
+        let mut area_map_station_count_bucket =
+            vec![AreaBucketOutcome::Unknown as i8; area_outcome_len];
         let mut toilet_crossed_room_idx = vec![-1i16; self.num_environments];
         let mut avg_frontiers = vec![0.0; self.num_environments];
         let mut graph_diameter = vec![0.0; self.num_environments];
@@ -4616,7 +4823,6 @@ impl EnvironmentGroup {
             vec![0.0; self.num_environments * connection_outcome_count];
         let mut missing_connect_distance_mask =
             vec![0; self.num_environments * connection_outcome_count];
-        let area_outcome_len = self.num_environments * AREA_COUNT;
         let mut area_connected_components = vec![0i32; area_outcome_len];
         let mut area_crossings = vec![0i32; self.num_environments];
         let mut area_size = vec![0i32; area_outcome_len];
@@ -4655,6 +4861,12 @@ impl EnvironmentGroup {
                     ),
                     phantoon_valid: OutputShard::from_slice(
                         &mut phantoon_valid[worker.start..worker.end()],
+                    ),
+                    area_size_bucket: OutputShard::from_slice(
+                        &mut area_size_bucket[area_start..area_end],
+                    ),
+                    area_map_station_count_bucket: OutputShard::from_slice(
+                        &mut area_map_station_count_bucket[area_start..area_end],
                     ),
                     toilet_crossed_room_idx: OutputShard::from_slice(
                         &mut toilet_crossed_room_idx[worker.start..worker.end()],
@@ -4750,6 +4962,27 @@ impl EnvironmentGroup {
                 .unbind(),
                 toilet_valid: toilet_valid.into_pyarray(py).unbind(),
                 phantoon_valid: phantoon_valid.into_pyarray(py).unbind(),
+                area_size_bucket: pyarray2_from_flat_vec(
+                    py,
+                    area_size_bucket,
+                    self.num_environments,
+                    AREA_COUNT,
+                )?
+                .unbind(),
+                area_map_station_count_bucket: pyarray2_from_flat_vec(
+                    py,
+                    area_map_station_count_bucket,
+                    self.num_environments,
+                    AREA_COUNT,
+                )?
+                .unbind(),
+                door_match: pyarray2_from_flat_vec(
+                    py,
+                    Vec::<i16>::new(),
+                    self.num_environments,
+                    0,
+                )?
+                .unbind(),
             },
             end_outcomes: EndOutcomes {
                 toilet_crossed_room_idx: toilet_crossed_room_idx.into_pyarray(py).unbind(),
@@ -4891,13 +5124,7 @@ impl EnvironmentGroup {
         py: Python<'py>,
         environment_start: usize,
         environment_count: usize,
-    ) -> PyResult<(
-        Bound<'py, PyArray2<i8>>,
-        Bound<'py, PyArray2<i8>>,
-        Bound<'py, PyArray1<i8>>,
-        Bound<'py, PyArray1<i8>>,
-        Bound<'py, PyArray2<i16>>,
-    )> {
+    ) -> PyResult<StepOutcomes> {
         if environment_start + environment_count > self.num_environments {
             return Err(PyValueError::new_err(
                 "requested environments must fit within the environment group",
@@ -4910,6 +5137,10 @@ impl EnvironmentGroup {
         let mut connections_valid = vec![DoorValidOutcome::Unknown as i8; connection_output_len];
         let mut toilet_valid = vec![DoorValidOutcome::Unknown as i8; environment_count];
         let mut phantoon_valid = vec![DoorValidOutcome::Unknown as i8; environment_count];
+        let area_output_len = environment_count * AREA_COUNT;
+        let mut area_size_bucket = vec![AreaBucketOutcome::Unknown as i8; area_output_len];
+        let mut area_map_station_count_bucket =
+            vec![AreaBucketOutcome::Unknown as i8; area_output_len];
         let mut door_match = vec![-1; door_output_len];
 
         py.detach(|| {
@@ -4931,6 +5162,8 @@ impl EnvironmentGroup {
                 let door_match_output_start = input_start * door_outcome_count;
                 let door_match_output_end =
                     door_match_output_start + environment_count * door_outcome_count;
+                let area_output_start = input_start * AREA_COUNT;
+                let area_output_end = area_output_start + environment_count * AREA_COUNT;
                 if let Err(err) = worker.send(WorkerCommand::GetCurrentFeatureOutcomes {
                     environment_start: start - worker.start,
                     environment_count,
@@ -4948,6 +5181,12 @@ impl EnvironmentGroup {
                     phantoon_valid: OutputShard::from_slice(
                         &mut phantoon_valid[input_start..input_start + environment_count],
                     ),
+                    area_size_bucket: OutputShard::from_slice(
+                        &mut area_size_bucket[area_output_start..area_output_end],
+                    ),
+                    area_map_station_count_bucket: OutputShard::from_slice(
+                        &mut area_map_station_count_bucket[area_output_start..area_output_end],
+                    ),
                     door_match: OutputShard::from_slice(
                         &mut door_match[door_match_output_start..door_match_output_end],
                     ),
@@ -4961,18 +5200,45 @@ impl EnvironmentGroup {
             wait_for_done_responses(&self.workers, sent_workers, first_error)
         })?;
 
-        Ok((
-            pyarray2_from_flat_vec(py, door_valid, environment_count, door_outcome_count)?,
-            pyarray2_from_flat_vec(
+        Ok(StepOutcomes {
+            door_valid: pyarray2_from_flat_vec(
+                py,
+                door_valid,
+                environment_count,
+                door_outcome_count,
+            )?
+            .unbind(),
+            connections_valid: pyarray2_from_flat_vec(
                 py,
                 connections_valid,
                 environment_count,
                 connection_outcome_count,
-            )?,
-            toilet_valid.into_pyarray(py),
-            phantoon_valid.into_pyarray(py),
-            pyarray2_from_flat_vec(py, door_match, environment_count, door_outcome_count)?,
-        ))
+            )?
+            .unbind(),
+            toilet_valid: toilet_valid.into_pyarray(py).unbind(),
+            phantoon_valid: phantoon_valid.into_pyarray(py).unbind(),
+            area_size_bucket: pyarray2_from_flat_vec(
+                py,
+                area_size_bucket,
+                environment_count,
+                AREA_COUNT,
+            )?
+            .unbind(),
+            area_map_station_count_bucket: pyarray2_from_flat_vec(
+                py,
+                area_map_station_count_bucket,
+                environment_count,
+                AREA_COUNT,
+            )?
+            .unbind(),
+            door_match: pyarray2_from_flat_vec(
+                py,
+                door_match,
+                environment_count,
+                door_outcome_count,
+            )?
+            .unbind(),
+        })
     }
 
     fn get_door_match_counts<'py>(

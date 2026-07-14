@@ -627,7 +627,12 @@ def initialize_generation_process(
     if device.type == "cuda":
         torch.cuda.set_device(device)
         torch.set_float32_matmul_precision("high")
-    engine = Engine(rooms, config.features)
+    engine = Engine(
+        rooms,
+        config.features,
+        config.generation.min_area_size,
+        config.generation.max_area_size,
+    )
     envs = create_generation_environment_groups_for_device(
         config,
         engine,
@@ -1010,6 +1015,18 @@ class TrainingSession:
                     phantoon_invalid=torch.cat(
                         [
                             outcomes.step_outcomes.phantoon_invalid
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
+                    area_size_bucket=torch.cat(
+                        [
+                            outcomes.step_outcomes.area_size_bucket
+                            for outcomes in outcome_iterations
+                        ]
+                    ),
+                    area_map_station_count_bucket=torch.cat(
+                        [
+                            outcomes.step_outcomes.area_map_station_count_bucket
                             for outcomes in outcome_iterations
                         ]
                     ),
@@ -2067,7 +2084,12 @@ def build_session(args: Args) -> TrainingSession:
         ", ".join(str(generation_device) for generation_device in generation_devices),
     )
 
-    engine = Engine(rooms, config.features)
+    engine = Engine(
+        rooms,
+        config.features,
+        config.generation.min_area_size,
+        config.generation.max_area_size,
+    )
     train_batch_envs = create_train_batch_environment_groups(config, engine)
     main_model, ema_model, balance_model = create_models(
         config,

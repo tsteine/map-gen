@@ -60,6 +60,8 @@ def test_environment_group_round_trips_room_area() -> None:
             one_tile_room("Left", "left"),
         ],
         disabled_features(),
+        1,
+        100,
     )
     env = engine.create_environment_group(
         map_size=(4, 4),
@@ -110,6 +112,8 @@ def test_environment_group_reports_area_outcome_state() -> None:
             one_tile_room("Left", "left"),
         ],
         disabled_features(),
+        1,
+        100,
     )
     env = engine.create_environment_group(
         map_size=(4, 4),
@@ -155,6 +159,11 @@ def test_environment_group_reports_area_outcome_state() -> None:
     assert outcomes.end_outcomes.area_map_station_count.tolist() == (
         state.area_map_station_count.tolist()
     )
+    assert outcomes.step_outcomes.area_size_bucket.tolist() == [[0, 0, 1, 0, 1, 0]]
+    assert outcomes.step_outcomes.area_map_station_count_bucket.tolist() == [
+        [0, 0, 0, 0, 0, 0]
+    ]
+    assert outcomes.step_outcomes.door_match.shape == (1, 0)
 
 
 def test_experience_storage_round_trips_room_area() -> None:

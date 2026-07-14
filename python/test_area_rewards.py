@@ -87,6 +87,8 @@ def unknown_outcomes() -> StepOutcomes:
         connection_invalid=torch.full([1, 2, 4], -1.0),
         toilet_invalid=torch.full([1, 2], -1.0),
         phantoon_invalid=torch.full([1, 2], -1.0),
+        area_size_bucket=torch.full([1, 2, 6], -1.0),
+        area_map_station_count_bucket=torch.full([1, 2, 6], -1.0),
         door_match=torch.full([1, 2, 3], -1.0),
     )
 

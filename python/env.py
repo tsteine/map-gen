@@ -163,6 +163,10 @@ class StepOutcomes:
     toilet_invalid: torch.Tensor
     # -1 = unknown, 0 = valid (Phantoon rooms connect to the same room), 1 = invalid
     phantoon_invalid: torch.Tensor
+    # -1 = unknown; 0 = below minimum, 1 = valid range, 2 = above maximum.
+    area_size_bucket: torch.Tensor
+    # -1 = unknown; 0 = zero, 1 = one, 2 = two-or-more.
+    area_map_station_count_bucket: torch.Tensor
     # -1 = unknown; for a valid door this is its matched partner's index within
     # the opposite direction; for an invalid door this is the opposite direction
     # door count sentinel.
@@ -174,6 +178,10 @@ class StepOutcomes:
             connection_invalid=self.connection_invalid.to(device, non_blocking=non_blocking),
             toilet_invalid=self.toilet_invalid.to(device, non_blocking=non_blocking),
             phantoon_invalid=self.phantoon_invalid.to(device, non_blocking=non_blocking),
+            area_size_bucket=self.area_size_bucket.to(device, non_blocking=non_blocking),
+            area_map_station_count_bucket=self.area_map_station_count_bucket.to(
+                device, non_blocking=non_blocking
+            ),
             door_match=self.door_match.to(device, non_blocking=non_blocking),
         )
 
@@ -183,6 +191,8 @@ class StepOutcomes:
             connection_invalid=self.connection_invalid[start:end],
             toilet_invalid=self.toilet_invalid[start:end],
             phantoon_invalid=self.phantoon_invalid[start:end],
+            area_size_bucket=self.area_size_bucket[start:end],
+            area_map_station_count_bucket=self.area_map_station_count_bucket[start:end],
             door_match=self.door_match[start:end],
         )
 
@@ -338,10 +348,14 @@ class CandidateSlot:
         self.pre_connection_invalid = None
         self.pre_toilet_invalid = None
         self.pre_phantoon_invalid = None
+        self.pre_area_size_bucket = None
+        self.pre_area_map_station_count_bucket = None
         self.door_invalid = None
         self.connection_invalid = None
         self.toilet_invalid = None
         self.phantoon_invalid = None
+        self.area_size_bucket = None
+        self.area_map_station_count_bucket = None
         self.door_match = None
         self.clean_counts = None
         self.evaluated_counts = None
@@ -390,6 +404,12 @@ class CandidateSlot:
         )
         self.pre_toilet_invalid = self._empty((self.environment_capacity,), torch.int8)
         self.pre_phantoon_invalid = self._empty((self.environment_capacity,), torch.int8)
+        self.pre_area_size_bucket = self._empty(
+            (self.environment_capacity, AREA_COUNT), torch.int8
+        )
+        self.pre_area_map_station_count_bucket = self._empty(
+            (self.environment_capacity, AREA_COUNT), torch.int8
+        )
         self.door_invalid = self._empty(
             (*candidate_shape, self.door_count),
             torch.int8,
@@ -400,6 +420,10 @@ class CandidateSlot:
         )
         self.toilet_invalid = self._empty(candidate_shape, torch.int8)
         self.phantoon_invalid = self._empty(candidate_shape, torch.int8)
+        self.area_size_bucket = self._empty((*candidate_shape, AREA_COUNT), torch.int8)
+        self.area_map_station_count_bucket = self._empty(
+            (*candidate_shape, AREA_COUNT), torch.int8
+        )
         self.door_match = self._empty((*candidate_shape, self.door_count), torch.int16)
         self.clean_counts = self._empty((self.environment_capacity,), torch.int64)
         self.evaluated_counts = self._empty((self.environment_capacity,), torch.int64)
@@ -434,6 +458,10 @@ class CandidateSlot:
             connection_invalid=self.pre_connection_invalid[:environment_count],
             toilet_invalid=self.pre_toilet_invalid[:environment_count],
             phantoon_invalid=self.pre_phantoon_invalid[:environment_count],
+            area_size_bucket=self.pre_area_size_bucket[:environment_count],
+            area_map_station_count_bucket=self.pre_area_map_station_count_bucket[
+                :environment_count
+            ],
             door_match=self.door_match.new_empty((environment_count, 0)),
         )
 
@@ -447,6 +475,10 @@ class CandidateSlot:
             connection_invalid=self.connection_invalid[:environment_count, :candidate_count],
             toilet_invalid=self.toilet_invalid[:environment_count, :candidate_count],
             phantoon_invalid=self.phantoon_invalid[:environment_count, :candidate_count],
+            area_size_bucket=self.area_size_bucket[:environment_count, :candidate_count],
+            area_map_station_count_bucket=self.area_map_station_count_bucket[
+                :environment_count, :candidate_count
+            ],
             door_match=self.door_match[:environment_count, :candidate_count],
         )
 
@@ -530,6 +562,8 @@ class GlobalFeatures:
     lookahead_connection_invalid: torch.Tensor
     lookahead_toilet_invalid: torch.Tensor
     lookahead_phantoon_invalid: torch.Tensor
+    lookahead_area_size_bucket: torch.Tensor
+    lookahead_area_map_station_count_bucket: torch.Tensor
     connection_reachability: torch.Tensor
     toilet_crossed_room_idx: torch.Tensor
 
@@ -608,6 +642,14 @@ class GlobalFeatures:
             lookahead_phantoon_invalid=self.lookahead_phantoon_invalid.to(
                 device, non_blocking=non_blocking
             ),
+            lookahead_area_size_bucket=self.lookahead_area_size_bucket.to(
+                device, non_blocking=non_blocking
+            ),
+            lookahead_area_map_station_count_bucket=(
+                self.lookahead_area_map_station_count_bucket.to(
+                    device, non_blocking=non_blocking
+                )
+            ),
             connection_reachability=self.connection_reachability.to(
                 device, non_blocking=non_blocking
             ),
@@ -657,6 +699,10 @@ class GlobalFeatures:
             lookahead_connection_invalid=self.lookahead_connection_invalid.flatten(0, 1),
             lookahead_toilet_invalid=self.lookahead_toilet_invalid.flatten(0, 1),
             lookahead_phantoon_invalid=self.lookahead_phantoon_invalid.flatten(0, 1),
+            lookahead_area_size_bucket=self.lookahead_area_size_bucket.flatten(0, 1),
+            lookahead_area_map_station_count_bucket=(
+                self.lookahead_area_map_station_count_bucket.flatten(0, 1)
+            ),
             connection_reachability=self.connection_reachability.flatten(0, 1),
             toilet_crossed_room_idx=self.toilet_crossed_room_idx.flatten(0, 1),
         )
@@ -982,9 +1028,20 @@ class Engine:
     features: EngineFeatureConfig
     output_metadata: OutputMetadata
 
-    def __init__(self, rooms: list[dict], features: FeatureConfig):
+    def __init__(
+        self,
+        rooms: list[dict],
+        features: FeatureConfig,
+        min_area_size: int,
+        max_area_size: int,
+    ):
         self.features = features.engine_config()
-        self.engine = map_gen.Engine(json.dumps(rooms), self.features.model_dump_json())
+        self.engine = map_gen.Engine(
+            json.dumps(rooms),
+            self.features.model_dump_json(),
+            min_area_size,
+            max_area_size,
+        )
         self.rooms = rooms
         self.output_metadata = self._load_output_metadata()
 
@@ -1200,6 +1257,12 @@ class EnvironmentGroup:
                     "pre_phantoon_valid": candidate_slot.pre_phantoon_invalid[
                         : self.num_envs
                     ].numpy(),
+                    "pre_area_size_bucket": candidate_slot.pre_area_size_bucket[
+                        : self.num_envs
+                    ].numpy(),
+                    "pre_area_map_station_count_bucket": (
+                        candidate_slot.pre_area_map_station_count_bucket[: self.num_envs].numpy()
+                    ),
                     "door_valid": candidate_slot.door_invalid[
                         : self.num_envs, :candidate_count
                     ].numpy(),
@@ -1212,6 +1275,14 @@ class EnvironmentGroup:
                     "phantoon_valid": candidate_slot.phantoon_invalid[
                         : self.num_envs, :candidate_count
                     ].numpy(),
+                    "area_size_bucket": candidate_slot.area_size_bucket[
+                        : self.num_envs, :candidate_count
+                    ].numpy(),
+                    "area_map_station_count_bucket": (
+                        candidate_slot.area_map_station_count_bucket[
+                            : self.num_envs, :candidate_count
+                        ].numpy()
+                    ),
                     "door_match": candidate_slot.door_match[
                         : self.num_envs, :candidate_count
                     ].numpy(),
@@ -1287,11 +1358,13 @@ class EnvironmentGroup:
                 ),
                 toilet_invalid=torch.from_numpy(result.step_outcomes.toilet_valid).to(device),
                 phantoon_invalid=torch.from_numpy(result.step_outcomes.phantoon_valid).to(device),
-                door_match=torch.empty(
-                    [result.step_outcomes.door_valid.shape[0], 0],
-                    dtype=torch.int16,
-                    device=device,
-                ),
+                area_size_bucket=torch.from_numpy(
+                    result.step_outcomes.area_size_bucket
+                ).to(device),
+                area_map_station_count_bucket=torch.from_numpy(
+                    result.step_outcomes.area_map_station_count_bucket
+                ).to(device),
+                door_match=torch.from_numpy(result.step_outcomes.door_match).to(device),
             ),
             end_outcomes=EndOutcomes(
                 toilet_crossed_room_idx=torch.from_numpy(
@@ -1383,18 +1456,20 @@ class EnvironmentGroup:
         environment_start: int,
         environment_count: int,
     ) -> StepOutcomes:
-        door_invalid, connection_invalid, toilet_invalid, phantoon_invalid, door_match = (
-            self.env.get_current_feature_outcomes(
-                environment_start,
-                environment_count,
-            )
+        result = self.env.get_current_feature_outcomes(
+            environment_start,
+            environment_count,
         )
         return StepOutcomes(
-            door_invalid=torch.from_numpy(door_invalid).to(device),
-            connection_invalid=torch.from_numpy(connection_invalid).to(device),
-            toilet_invalid=torch.from_numpy(toilet_invalid).to(device),
-            phantoon_invalid=torch.from_numpy(phantoon_invalid).to(device),
-            door_match=torch.from_numpy(door_match).to(device),
+            door_invalid=torch.from_numpy(result.door_valid).to(device),
+            connection_invalid=torch.from_numpy(result.connections_valid).to(device),
+            toilet_invalid=torch.from_numpy(result.toilet_valid).to(device),
+            phantoon_invalid=torch.from_numpy(result.phantoon_valid).to(device),
+            area_size_bucket=torch.from_numpy(result.area_size_bucket).to(device),
+            area_map_station_count_bucket=torch.from_numpy(
+                result.area_map_station_count_bucket
+            ).to(device),
+            door_match=torch.from_numpy(result.door_match).to(device),
         )
 
     def get_door_match_counts(self, device: torch.device) -> DoorMatchCounts:
@@ -1953,6 +2028,10 @@ class FeatureSlot:
         lookahead_connection_invalid = lookahead_outcomes.connection_invalid
         lookahead_toilet_invalid = lookahead_outcomes.toilet_invalid
         lookahead_phantoon_invalid = lookahead_outcomes.phantoon_invalid
+        lookahead_area_size_bucket = lookahead_outcomes.area_size_bucket
+        lookahead_area_map_station_count_bucket = (
+            lookahead_outcomes.area_map_station_count_bucket
+        )
         if not include_lookahead_outcomes:
             lookahead_door_invalid = lookahead_door_invalid.new_empty(
                 [
@@ -1983,6 +2062,14 @@ class FeatureSlot:
                     *lookahead_phantoon_invalid.shape,
                     0,
                 ]
+            )
+            lookahead_area_size_bucket = lookahead_area_size_bucket.new_empty(
+                [*lookahead_area_size_bucket.shape[:-1], 0]
+            )
+            lookahead_area_map_station_count_bucket = (
+                lookahead_area_map_station_count_bucket.new_empty(
+                    [*lookahead_area_map_station_count_bucket.shape[:-1], 0]
+                )
             )
         return Features(
             global_features=GlobalFeatures(
@@ -2039,6 +2126,10 @@ class FeatureSlot:
                 lookahead_connection_invalid=lookahead_connection_invalid,
                 lookahead_toilet_invalid=lookahead_toilet_invalid,
                 lookahead_phantoon_invalid=lookahead_phantoon_invalid,
+                lookahead_area_size_bucket=lookahead_area_size_bucket,
+                lookahead_area_map_station_count_bucket=(
+                    lookahead_area_map_station_count_bucket
+                ),
                 connection_reachability=self.connection_reachability[:environment_count],
                 toilet_crossed_room_idx=self.toilet_crossed_room_idx[:environment_count],
             ),
@@ -2142,6 +2233,10 @@ class FeatureSlot:
         lookahead_connection_invalid = lookahead_outcomes.connection_invalid
         lookahead_toilet_invalid = lookahead_outcomes.toilet_invalid
         lookahead_phantoon_invalid = lookahead_outcomes.phantoon_invalid
+        lookahead_area_size_bucket = lookahead_outcomes.area_size_bucket
+        lookahead_area_map_station_count_bucket = (
+            lookahead_outcomes.area_map_station_count_bucket
+        )
         if not include_lookahead_outcomes:
             lookahead_door_invalid = lookahead_door_invalid.new_empty(
                 [environment_count, candidate_count, 0]
@@ -2157,6 +2252,14 @@ class FeatureSlot:
             )
             lookahead_phantoon_invalid = lookahead_phantoon_invalid.new_empty(
                 [environment_count, candidate_count, 0]
+            )
+            lookahead_area_size_bucket = lookahead_area_size_bucket.new_empty(
+                [environment_count, candidate_count, 0]
+            )
+            lookahead_area_map_station_count_bucket = (
+                lookahead_area_map_station_count_bucket.new_empty(
+                    [environment_count, candidate_count, 0]
+                )
             )
         return Features(
             global_features=GlobalFeatures(
@@ -2243,6 +2346,10 @@ class FeatureSlot:
                 lookahead_connection_invalid=lookahead_connection_invalid,
                 lookahead_toilet_invalid=lookahead_toilet_invalid,
                 lookahead_phantoon_invalid=lookahead_phantoon_invalid,
+                lookahead_area_size_bucket=lookahead_area_size_bucket,
+                lookahead_area_map_station_count_bucket=(
+                    lookahead_area_map_station_count_bucket
+                ),
                 connection_reachability=self.connection_reachability[:snapshot_count].view(
                     environment_count, candidate_count, self.connection_reachability_width
                 ),

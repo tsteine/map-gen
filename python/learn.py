@@ -654,6 +654,10 @@ def prepare_feature_batches(
                         ),
                         toilet_invalid=next_lookahead_outcomes.toilet_invalid.unsqueeze(1),
                         phantoon_invalid=next_lookahead_outcomes.phantoon_invalid.unsqueeze(1),
+                        area_size_bucket=next_lookahead_outcomes.area_size_bucket.unsqueeze(1),
+                        area_map_station_count_bucket=(
+                            next_lookahead_outcomes.area_map_station_count_bucket.unsqueeze(1)
+                        ),
                         door_match=next_lookahead_outcomes.door_match.unsqueeze(1),
                     ),
                     config.features.lookahead_outcomes,
@@ -984,6 +988,8 @@ def train_feature_batch_backward(
         connection_invalid=step_outcomes.connection_invalid.unsqueeze(1),
         toilet_invalid=step_outcomes.toilet_invalid.unsqueeze(1),
         phantoon_invalid=step_outcomes.phantoon_invalid.unsqueeze(1),
+        area_size_bucket=step_outcomes.area_size_bucket.unsqueeze(1),
+        area_map_station_count_bucket=step_outcomes.area_map_station_count_bucket.unsqueeze(1),
         door_match=step_outcomes.door_match.unsqueeze(1),
     )
     with torch.no_grad():
