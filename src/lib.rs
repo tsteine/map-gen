@@ -4,7 +4,6 @@ mod common;
 mod engine;
 mod environment;
 mod scc_dag;
-pub mod union_find;
 
 use engine::{
     AreaOutcomeBuffers, EndOutcomes, Engine, EnvironmentGroup, EpisodeOutcomes, FeatureBuffers,

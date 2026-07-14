@@ -16,7 +16,6 @@ use crate::common::{
 };
 use crate::engine::{ProfileMetric, profile_enabled, record_profile_count, record_profile_metric};
 use crate::scc_dag::SccDag;
-use crate::union_find::{UnionFind, UnionFindSnapshot};
 
 const NO_COMPONENT: usize = usize::MAX;
 const UNREACHABLE_DISTANCE: GraphDistance = GraphDistance::MAX;
@@ -1189,10 +1188,8 @@ pub struct Environment {
     area_min_y: [Coord; AREA_COUNT],
     area_max_y: [Coord; AREA_COUNT],
     area_map_station_count: [usize; AREA_COUNT],
-    area_connected_components: [usize; AREA_COUNT],
     area_crossings: usize,
     area_size: [usize; AREA_COUNT],
-    area_room_components: UnionFind,
     geometry_unused_count: Vec<usize>, // number of unused room representatives for each geometry
     connection_variant_unused_count: Vec<usize>, // number of unused room representatives for each connection variant
     room_part_component: Vec<usize>,             // maps placed room door groups to SCC components
@@ -1231,10 +1228,8 @@ struct FeatureSnapshot {
     area_min_y: Coord,
     area_max_y: Coord,
     area_map_station_count: usize,
-    area_connected_components: usize,
     area_size: usize,
     area_crossings: usize,
-    area_room_components: UnionFindSnapshot,
     connection_variant_idx: Option<ConnectionVariantIdx>,
     connection_variant_unused_count: usize,
     room_part_component: Vec<usize>,
@@ -1262,10 +1257,8 @@ struct LookaheadSnapshot {
     area_min_y: Coord,
     area_max_y: Coord,
     area_map_station_count: usize,
-    area_connected_components: usize,
     area_size: usize,
     area_crossings: usize,
-    area_room_components: UnionFindSnapshot,
     geometry_idx: Option<GeometryIdx>,
     geometry_unused_count: usize,
     connection_variant_idx: Option<ConnectionVariantIdx>,
@@ -1847,10 +1840,8 @@ impl Environment {
             area_min_y: [0; AREA_COUNT],
             area_max_y: [0; AREA_COUNT],
             area_map_station_count: [0; AREA_COUNT],
-            area_connected_components: [0; AREA_COUNT],
             area_crossings: 0,
             area_size: [0; AREA_COUNT],
-            area_room_components: UnionFind::new(common.room.len()),
             geometry_unused_count: common
                 .geometry_rooms
                 .iter()
@@ -1904,10 +1895,8 @@ impl Environment {
         self.area_min_y = [0; AREA_COUNT];
         self.area_max_y = [0; AREA_COUNT];
         self.area_map_station_count = [0; AREA_COUNT];
-        self.area_connected_components = [0; AREA_COUNT];
         self.area_crossings = 0;
         self.area_size = [0; AREA_COUNT];
-        self.area_room_components.clear();
         self.geometry_unused_count.clear();
         self.geometry_unused_count
             .extend(common.geometry_rooms.iter().map(|rooms| rooms.len()));
@@ -2001,8 +1990,6 @@ impl Environment {
         if common.room[action.room_idx as usize].map_station {
             self.area_map_station_count[area] += 1;
         }
-        self.area_room_components.reset_node(room_idx);
-        self.area_connected_components[area] += 1;
         let geometry_idx = common.room[room_idx].geometry_idx as usize;
         self.area_size[area] += common.geometry[geometry_idx].occupied_tiles.len();
     }
@@ -2017,23 +2004,15 @@ impl Environment {
         let opposite_dir = door_direction.opposite() as usize;
         let matched_room_idx =
             common.room_dir_door[opposite_dir][matched_dir_door_idx as usize].room_idx;
-        let room_area = action.area;
         let matched_room_area = self.room_area[matched_room_idx as usize];
-        if room_area == matched_room_area {
-            if self
-                .area_room_components
-                .union(action.room_idx as usize, matched_room_idx as usize)
-            {
-                self.area_connected_components[room_area as usize] -= 1;
-            }
-        } else {
+        if action.area != matched_room_area {
             self.area_crossings += 1;
         }
     }
 
     pub fn area_outcome_state(&self) -> AreaOutcomeState {
         AreaOutcomeState {
-            connected_components: self.area_connected_components,
+            connected_components: self.area_used.map(usize::from),
             crossings: self.area_crossings,
             size: self.area_size,
             map_station_count: self.area_map_station_count,
@@ -2119,12 +2098,7 @@ impl Environment {
         area_max_x.extend(self.area_max_x);
         area_min_y.extend(self.area_min_y);
         area_max_y.extend(self.area_max_y);
-        area_connected_components.extend(
-            self.area_connected_components
-                .iter()
-                .copied()
-                .map(|value| value as u8),
-        );
+        area_connected_components.extend(self.area_used.iter().copied().map(u8::from));
         area_crossings.push(self.area_crossings as u16);
         area_size.extend(self.area_size.iter().copied().map(|value| value as u16));
         area_map_station_count.extend(
@@ -4154,11 +4128,8 @@ impl Environment {
             area_min_y: area_idx.map_or(0, |area| self.area_min_y[area]),
             area_max_y: area_idx.map_or(0, |area| self.area_max_y[area]),
             area_map_station_count: area_idx.map_or(0, |area| self.area_map_station_count[area]),
-            area_connected_components: area_idx
-                .map_or(0, |area| self.area_connected_components[area]),
             area_size: area_idx.map_or(0, |area| self.area_size[area]),
             area_crossings: self.area_crossings,
-            area_room_components: self.area_room_components.snapshot(),
             geometry_idx,
             geometry_unused_count: geometry_idx
                 .map_or(0, |idx| self.geometry_unused_count[idx as usize]),
@@ -4199,12 +4170,9 @@ impl Environment {
             self.area_min_y[area] = snapshot.area_min_y;
             self.area_max_y[area] = snapshot.area_max_y;
             self.area_map_station_count[area] = snapshot.area_map_station_count;
-            self.area_connected_components[area] = snapshot.area_connected_components;
             self.area_size[area] = snapshot.area_size;
         }
         self.area_crossings = snapshot.area_crossings;
-        self.area_room_components
-            .restore(snapshot.area_room_components);
         if let Some(geometry_idx) = snapshot.geometry_idx {
             self.geometry_unused_count[geometry_idx as usize] = snapshot.geometry_unused_count;
         }
@@ -4275,11 +4243,8 @@ impl Environment {
             area_min_y: area_idx.map_or(0, |area| self.area_min_y[area]),
             area_max_y: area_idx.map_or(0, |area| self.area_max_y[area]),
             area_map_station_count: area_idx.map_or(0, |area| self.area_map_station_count[area]),
-            area_connected_components: area_idx
-                .map_or(0, |area| self.area_connected_components[area]),
             area_size: area_idx.map_or(0, |area| self.area_size[area]),
             area_crossings: self.area_crossings,
-            area_room_components: self.area_room_components.snapshot(),
             connection_variant_idx,
             connection_variant_unused_count: connection_variant_idx
                 .map_or(0, |idx| self.connection_variant_unused_count[idx as usize]),
@@ -4317,12 +4282,9 @@ impl Environment {
             self.area_min_y[area] = snapshot.area_min_y;
             self.area_max_y[area] = snapshot.area_max_y;
             self.area_map_station_count[area] = snapshot.area_map_station_count;
-            self.area_connected_components[area] = snapshot.area_connected_components;
             self.area_size[area] = snapshot.area_size;
         }
         self.area_crossings = snapshot.area_crossings;
-        self.area_room_components
-            .restore(snapshot.area_room_components);
         if let Some(connection_variant_idx) = snapshot.connection_variant_idx {
             self.connection_variant_unused_count[connection_variant_idx as usize] =
                 snapshot.connection_variant_unused_count;
@@ -6498,7 +6460,7 @@ mod tests {
     }
 
     #[test]
-    fn area_outcome_state_tracks_components_sizes_crossings_and_restore() {
+    fn area_outcome_state_tracks_sizes_crossings_and_restore() {
         let rooms_json = r#"
         [
             {
@@ -6544,7 +6506,6 @@ mod tests {
             },
             &common,
         );
-        assert_eq!(env.area_connected_components[0], 1);
         assert_eq!(env.area_size[0], 1);
         assert_eq!(env.area_crossings, 0);
 
@@ -6557,7 +6518,6 @@ mod tests {
             },
             &common,
         );
-        assert_eq!(env.area_connected_components[0], 1);
         assert_eq!(env.area_size[0], 2);
         assert_eq!(env.area_crossings, 0);
 
@@ -6570,14 +6530,10 @@ mod tests {
             },
             &common,
         );
-        assert_eq!(env.area_connected_components[0], 1);
-        assert_eq!(env.area_connected_components[1], 1);
         assert_eq!(env.area_size[1], 1);
         assert_eq!(env.area_crossings, 1);
         env.restore_lookahead_candidate(&common, snapshot);
 
-        assert_eq!(env.area_connected_components[0], 1);
-        assert_eq!(env.area_connected_components[1], 0);
         assert_eq!(env.area_size[0], 2);
         assert_eq!(env.area_size[1], 0);
         assert_eq!(env.area_crossings, 0);
@@ -6599,7 +6555,6 @@ mod tests {
         assert_eq!(area_state.crossings, 1);
 
         env.clear(&common);
-        assert_eq!(env.area_connected_components, [0; AREA_COUNT]);
         assert_eq!(env.area_size, [0; AREA_COUNT]);
         assert_eq!(env.area_crossings, 0);
     }
