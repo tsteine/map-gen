@@ -1131,12 +1131,6 @@ class TrainingSession:
                             for outcomes in outcome_iterations
                         ]
                     ),
-                    area_connected_components=torch.cat(
-                        [
-                            outcomes.end_outcomes.area_connected_components
-                            for outcomes in outcome_iterations
-                        ]
-                    ),
                     area_crossings=torch.cat(
                         [outcomes.end_outcomes.area_crossings for outcomes in outcome_iterations]
                     ),

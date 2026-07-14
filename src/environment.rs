@@ -347,7 +347,6 @@ pub struct FeatureOutcomes {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AreaOutcomeState {
-    pub connected_components: [usize; AREA_COUNT],
     pub crossings: usize,
     pub size: [usize; AREA_COUNT],
     pub map_station_count: [usize; AREA_COUNT],
@@ -536,7 +535,6 @@ pub struct Features {
     pub area_max_x: Vec<Coord>,
     pub area_min_y: Vec<Coord>,
     pub area_max_y: Vec<Coord>,
-    pub area_connected_components: Vec<u8>,
     pub area_crossings: Vec<u16>,
     pub area_size: Vec<u16>,
     pub area_map_station_count: Vec<u8>,
@@ -629,7 +627,6 @@ pub struct FeaturePlan {
     pub area_max_x: Vec<Coord>,
     pub area_min_y: Vec<Coord>,
     pub area_max_y: Vec<Coord>,
-    pub area_connected_components: Vec<u8>,
     pub area_crossings: Vec<u16>,
     pub area_size: Vec<u16>,
     pub area_map_station_count: Vec<u8>,
@@ -720,7 +717,6 @@ impl Features {
         self.area_max_x.clear();
         self.area_min_y.clear();
         self.area_max_y.clear();
-        self.area_connected_components.clear();
         self.area_crossings.clear();
         self.area_size.clear();
         self.area_map_station_count.clear();
@@ -2012,7 +2008,6 @@ impl Environment {
 
     pub fn area_outcome_state(&self) -> AreaOutcomeState {
         AreaOutcomeState {
-            connected_components: self.area_used.map(usize::from),
             crossings: self.area_crossings,
             size: self.area_size,
             map_station_count: self.area_map_station_count,
@@ -2088,7 +2083,6 @@ impl Environment {
         area_max_x: &mut Vec<Coord>,
         area_min_y: &mut Vec<Coord>,
         area_max_y: &mut Vec<Coord>,
-        area_connected_components: &mut Vec<u8>,
         area_crossings: &mut Vec<u16>,
         area_size: &mut Vec<u16>,
         area_map_station_count: &mut Vec<u8>,
@@ -2098,7 +2092,6 @@ impl Environment {
         area_max_x.extend(self.area_max_x);
         area_min_y.extend(self.area_min_y);
         area_max_y.extend(self.area_max_y);
-        area_connected_components.extend(self.area_used.iter().copied().map(u8::from));
         area_crossings.push(self.area_crossings as u16);
         area_size.extend(self.area_size.iter().copied().map(|value| value as u16));
         area_map_station_count.extend(
@@ -4474,7 +4467,6 @@ impl Environment {
                 &mut plan.area_max_x,
                 &mut plan.area_min_y,
                 &mut plan.area_max_y,
-                &mut plan.area_connected_components,
                 &mut plan.area_crossings,
                 &mut plan.area_size,
                 &mut plan.area_map_station_count,
@@ -4887,7 +4879,6 @@ impl Environment {
         let mut area_max_x = std::mem::take(&mut output.area_max_x);
         let mut area_min_y = std::mem::take(&mut output.area_min_y);
         let mut area_max_y = std::mem::take(&mut output.area_max_y);
-        let mut area_connected_components = std::mem::take(&mut output.area_connected_components);
         let mut area_crossings = std::mem::take(&mut output.area_crossings);
         let mut area_size = std::mem::take(&mut output.area_size);
         let mut area_map_station_count = std::mem::take(&mut output.area_map_station_count);
@@ -4898,7 +4889,6 @@ impl Environment {
                 &mut area_max_x,
                 &mut area_min_y,
                 &mut area_max_y,
-                &mut area_connected_components,
                 &mut area_crossings,
                 &mut area_size,
                 &mut area_map_station_count,
@@ -5471,7 +5461,6 @@ impl Environment {
             area_max_x,
             area_min_y,
             area_max_y,
-            area_connected_components,
             area_crossings,
             area_size,
             area_map_station_count,
@@ -6548,8 +6537,6 @@ mod tests {
             &common,
         );
         let area_state = env.area_outcome_state();
-        assert_eq!(area_state.connected_components[0], 1);
-        assert_eq!(area_state.connected_components[1], 1);
         assert_eq!(area_state.size[0], 2);
         assert_eq!(area_state.size[1], 1);
         assert_eq!(area_state.crossings, 1);

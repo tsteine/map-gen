@@ -217,7 +217,6 @@ class EndOutcomes:
     refill_from_room_distance_mask: torch.Tensor
     missing_connect_distance: torch.Tensor
     missing_connect_distance_mask: torch.Tensor
-    area_connected_components: torch.Tensor
     area_crossings: torch.Tensor
     area_size: torch.Tensor
     area_map_station_count: torch.Tensor
@@ -242,7 +241,6 @@ class EndOutcomes:
             refill_from_room_distance_mask=self.refill_from_room_distance_mask.to(device),
             missing_connect_distance=self.missing_connect_distance.to(device),
             missing_connect_distance_mask=self.missing_connect_distance_mask.to(device),
-            area_connected_components=self.area_connected_components.to(device),
             area_crossings=self.area_crossings.to(device),
             area_size=self.area_size.to(device),
             area_map_station_count=self.area_map_station_count.to(device),
@@ -268,7 +266,6 @@ class EndOutcomes:
             refill_from_room_distance_mask=self.refill_from_room_distance_mask[start:end],
             missing_connect_distance=self.missing_connect_distance[start:end],
             missing_connect_distance_mask=self.missing_connect_distance_mask[start:end],
-            area_connected_components=self.area_connected_components[start:end],
             area_crossings=self.area_crossings[start:end],
             area_size=self.area_size[start:end],
             area_map_station_count=self.area_map_station_count[start:end],
@@ -277,7 +274,6 @@ class EndOutcomes:
 
 @dataclass
 class AreaOutcomeState:
-    area_connected_components: torch.Tensor
     area_crossings: torch.Tensor
     area_size: torch.Tensor
     area_map_station_count: torch.Tensor
@@ -550,7 +546,6 @@ class GlobalFeatures:
     area_max_x: torch.Tensor
     area_min_y: torch.Tensor
     area_max_y: torch.Tensor
-    area_connected_components: torch.Tensor
     area_crossings: torch.Tensor
     area_size: torch.Tensor
     area_map_station_count: torch.Tensor
@@ -614,9 +609,6 @@ class GlobalFeatures:
             area_max_x=self.area_max_x.to(device, non_blocking=non_blocking),
             area_min_y=self.area_min_y.to(device, non_blocking=non_blocking),
             area_max_y=self.area_max_y.to(device, non_blocking=non_blocking),
-            area_connected_components=self.area_connected_components.to(
-                device, non_blocking=non_blocking
-            ),
             area_crossings=self.area_crossings.to(device, non_blocking=non_blocking),
             area_size=self.area_size.to(device, non_blocking=non_blocking),
             area_map_station_count=self.area_map_station_count.to(
@@ -687,7 +679,6 @@ class GlobalFeatures:
             area_max_x=self.area_max_x.flatten(0, 1),
             area_min_y=self.area_min_y.flatten(0, 1),
             area_max_y=self.area_max_y.flatten(0, 1),
-            area_connected_components=self.area_connected_components.flatten(0, 1),
             area_crossings=self.area_crossings.flatten(0, 1),
             area_size=self.area_size.flatten(0, 1),
             area_map_station_count=self.area_map_station_count.flatten(0, 1),
@@ -1416,9 +1407,6 @@ class EnvironmentGroup:
                 missing_connect_distance_mask=torch.from_numpy(
                     result.end_outcomes.missing_connect_distance_mask
                 ).to(device),
-                area_connected_components=torch.from_numpy(
-                    result.end_outcomes.area_connected_components
-                ).to(device=device, dtype=torch.int64),
                 area_crossings=torch.from_numpy(result.end_outcomes.area_crossings).to(
                     device=device,
                     dtype=torch.int64,
@@ -1436,9 +1424,6 @@ class EnvironmentGroup:
     def get_area_outcome_state(self, device: torch.device) -> AreaOutcomeState:
         result = self.env.get_area_outcome_state()
         return AreaOutcomeState(
-            area_connected_components=torch.from_numpy(result.area_connected_components).to(
-                device=device, dtype=torch.int64
-            ),
             area_crossings=torch.from_numpy(result.area_crossings).to(
                 device=device,
                 dtype=torch.int64,
@@ -1621,7 +1606,6 @@ class EnvironmentGroup:
                     "area_max_x": feature_slot.area_max_x.numpy(),
                     "area_min_y": feature_slot.area_min_y.numpy(),
                     "area_max_y": feature_slot.area_max_y.numpy(),
-                    "area_connected_components": (feature_slot.area_connected_components.numpy()),
                     "area_crossings": feature_slot.area_crossings.numpy(),
                     "area_size": feature_slot.area_size.numpy(),
                     "area_map_station_count": feature_slot.area_map_station_count.numpy(),
@@ -1773,7 +1757,6 @@ class FeatureSlot:
         self.area_max_x = None
         self.area_min_y = None
         self.area_max_y = None
-        self.area_connected_components = None
         self.area_crossings = None
         self.area_size = None
         self.area_map_station_count = None
@@ -1879,10 +1862,6 @@ class FeatureSlot:
         self.area_max_x = self._empty((self.snapshot_capacity, self.area_width), torch.int8)
         self.area_min_y = self._empty((self.snapshot_capacity, self.area_width), torch.int8)
         self.area_max_y = self._empty((self.snapshot_capacity, self.area_width), torch.int8)
-        self.area_connected_components = self._empty(
-            (self.snapshot_capacity, self.area_width),
-            torch.uint8,
-        )
         self.area_crossings = self._empty(
             (self.snapshot_capacity, self.area_crossings_width),
             torch.uint16,
@@ -2114,7 +2093,6 @@ class FeatureSlot:
                 area_max_x=self.area_max_x[:environment_count],
                 area_min_y=self.area_min_y[:environment_count],
                 area_max_y=self.area_max_y[:environment_count],
-                area_connected_components=self.area_connected_components[:environment_count],
                 area_crossings=self.area_crossings[:environment_count],
                 area_size=self.area_size[:environment_count],
                 area_map_station_count=self.area_map_station_count[:environment_count],
@@ -2326,9 +2304,7 @@ class FeatureSlot:
                 area_max_y=self.area_max_y[:snapshot_count].view(
                     environment_count, candidate_count, self.area_width
                 ),
-                area_connected_components=self.area_connected_components[:snapshot_count].view(
-                    environment_count, candidate_count, self.area_width
-                ),
+
                 area_crossings=self.area_crossings[:snapshot_count].view(
                     environment_count, candidate_count, self.area_crossings_width
                 ),
@@ -2511,7 +2487,6 @@ def extract_candidate_features(
                 "area_max_x": feature_slot.area_max_x.numpy(),
                 "area_min_y": feature_slot.area_min_y.numpy(),
                 "area_max_y": feature_slot.area_max_y.numpy(),
-                "area_connected_components": (feature_slot.area_connected_components.numpy()),
                 "area_crossings": feature_slot.area_crossings.numpy(),
                 "area_size": feature_slot.area_size.numpy(),
                 "area_map_station_count": feature_slot.area_map_station_count.numpy(),

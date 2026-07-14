@@ -361,13 +361,11 @@ enum WorkerCommand {
         refill_from_room_distance_mask: OutputShard<u8>,
         missing_connect_distance: OutputShard<f32>,
         missing_connect_distance_mask: OutputShard<u8>,
-        area_connected_components: OutputShard<i32>,
         area_crossings: OutputShard<i32>,
         area_size: OutputShard<i32>,
         area_map_station_count: OutputShard<i32>,
     },
     GetAreaOutcomeState {
-        area_connected_components: OutputShard<i32>,
         area_crossings: OutputShard<i32>,
         area_size: OutputShard<i32>,
         area_map_station_count: OutputShard<i32>,
@@ -982,7 +980,6 @@ fn worker_loop(
                 refill_from_room_distance_mask,
                 missing_connect_distance,
                 missing_connect_distance_mask,
-                area_connected_components,
                 area_crossings,
                 area_size,
                 area_map_station_count,
@@ -1020,8 +1017,6 @@ fn worker_loop(
                 let missing_connect_distance = unsafe { missing_connect_distance.into_mut_slice() };
                 let missing_connect_distance_mask =
                     unsafe { missing_connect_distance_mask.into_mut_slice() };
-                let area_connected_components =
-                    unsafe { area_connected_components.into_mut_slice() };
                 let area_crossings = unsafe { area_crossings.into_mut_slice() };
                 let area_size = unsafe { area_size.into_mut_slice() };
                 let area_map_station_count = unsafe { area_map_station_count.into_mut_slice() };
@@ -1100,10 +1095,6 @@ fn worker_loop(
                     missing_connect_distance_mask.len(),
                     environments.len() * connection_outcome_count
                 );
-                debug_assert_eq!(
-                    area_connected_components.len(),
-                    environments.len() * AREA_COUNT
-                );
                 debug_assert_eq!(area_crossings.len(), environments.len());
                 debug_assert_eq!(area_size.len(), environments.len() * AREA_COUNT);
                 debug_assert_eq!(
@@ -1138,8 +1129,6 @@ fn worker_loop(
                     let area_state = env.area_outcome_state();
                     let area_row_start = env_idx * AREA_COUNT;
                     for area in 0..AREA_COUNT {
-                        area_connected_components[area_row_start + area] =
-                            area_state.connected_components[area] as i32;
                         area_size[area_row_start + area] = area_state.size[area] as i32;
                         area_map_station_count[area_row_start + area] =
                             area_state.map_station_count[area] as i32;
@@ -1229,22 +1218,15 @@ fn worker_loop(
                 }
             }
             WorkerCommand::GetAreaOutcomeState {
-                area_connected_components,
                 area_crossings,
                 area_size,
                 area_map_station_count,
             } => {
                 // SAFETY: The main thread guarantees that for the duration of this command,
                 // the output slices remain valid and that no other thread accesses them.
-                let area_connected_components =
-                    unsafe { area_connected_components.into_mut_slice() };
                 let area_crossings = unsafe { area_crossings.into_mut_slice() };
                 let area_size = unsafe { area_size.into_mut_slice() };
                 let area_map_station_count = unsafe { area_map_station_count.into_mut_slice() };
-                debug_assert_eq!(
-                    area_connected_components.len(),
-                    environments.len() * AREA_COUNT
-                );
                 debug_assert_eq!(area_crossings.len(), environments.len());
                 debug_assert_eq!(area_size.len(), environments.len() * AREA_COUNT);
                 debug_assert_eq!(
@@ -1256,8 +1238,6 @@ fn worker_loop(
                     let area_state = env.area_outcome_state();
                     let area_row_start = env_idx * AREA_COUNT;
                     for area in 0..AREA_COUNT {
-                        area_connected_components[area_row_start + area] =
-                            area_state.connected_components[area] as i32;
                         area_size[area_row_start + area] = area_state.size[area] as i32;
                         area_map_station_count[area_row_start + area] =
                             area_state.map_station_count[area] as i32;
@@ -1688,7 +1668,6 @@ pub struct EndOutcomes {
     refill_from_room_distance_mask: Py<PyArray2<u8>>,
     missing_connect_distance: Py<PyArray2<f32>>,
     missing_connect_distance_mask: Py<PyArray2<u8>>,
-    area_connected_components: Py<PyArray2<i32>>,
     area_crossings: Py<PyArray1<i32>>,
     area_size: Py<PyArray2<i32>>,
     area_map_station_count: Py<PyArray2<i32>>,
@@ -1696,7 +1675,6 @@ pub struct EndOutcomes {
 
 #[pyclass(module = "map_gen")]
 pub struct AreaOutcomeBuffers {
-    area_connected_components: Py<PyArray2<i32>>,
     area_crossings: Py<PyArray1<i32>>,
     area_size: Py<PyArray2<i32>>,
     area_map_station_count: Py<PyArray2<i32>>,
@@ -1803,7 +1781,6 @@ pub struct FeatureBuffers {
     area_max_x: Py<PyArray2<Coord>>,
     area_min_y: Py<PyArray2<Coord>>,
     area_max_y: Py<PyArray2<Coord>>,
-    area_connected_components: Py<PyArray2<u8>>,
     area_crossings: Py<PyArray2<u16>>,
     area_size: Py<PyArray2<u16>>,
     area_map_station_count: Py<PyArray2<u8>>,
@@ -1969,7 +1946,6 @@ impl FeatureBuffers {
             area_max_x: required_py_field!(fields, "area_max_x"),
             area_min_y: required_py_field!(fields, "area_min_y"),
             area_max_y: required_py_field!(fields, "area_max_y"),
-            area_connected_components: required_py_field!(fields, "area_connected_components"),
             area_crossings: required_py_field!(fields, "area_crossings"),
             area_size: required_py_field!(fields, "area_size"),
             area_map_station_count: required_py_field!(fields, "area_map_station_count"),
@@ -2187,11 +2163,6 @@ impl EndOutcomes {
     }
 
     #[getter]
-    fn area_connected_components(&self, py: Python<'_>) -> Py<PyArray2<i32>> {
-        self.area_connected_components.clone_ref(py)
-    }
-
-    #[getter]
     fn area_crossings(&self, py: Python<'_>) -> Py<PyArray1<i32>> {
         self.area_crossings.clone_ref(py)
     }
@@ -2209,11 +2180,6 @@ impl EndOutcomes {
 
 #[pymethods]
 impl AreaOutcomeBuffers {
-    #[getter]
-    fn area_connected_components(&self, py: Python<'_>) -> Py<PyArray2<i32>> {
-        self.area_connected_components.clone_ref(py)
-    }
-
     #[getter]
     fn area_crossings(&self, py: Python<'_>) -> Py<PyArray1<i32>> {
         self.area_crossings.clone_ref(py)
@@ -2281,7 +2247,6 @@ impl EpisodeOutcomes {
                 .end_outcomes
                 .missing_connect_distance_mask
                 .clone_ref(py),
-            area_connected_components: self.end_outcomes.area_connected_components.clone_ref(py),
             area_crossings: self.end_outcomes.area_crossings.clone_ref(py),
             area_size: self.end_outcomes.area_size.clone_ref(py),
             area_map_station_count: self.end_outcomes.area_map_station_count.clone_ref(py),
@@ -2461,7 +2426,6 @@ struct GlobalFeatureOutputShards {
     area_max_x: OutputShard<Coord>,
     area_min_y: OutputShard<Coord>,
     area_max_y: OutputShard<Coord>,
-    area_connected_components: OutputShard<u8>,
     area_crossings: OutputShard<u16>,
     area_size: OutputShard<u16>,
     area_map_station_count: OutputShard<u8>,
@@ -2515,7 +2479,6 @@ struct GlobalFeatureOutputSlices<'a> {
     area_max_x: &'a mut [Coord],
     area_min_y: &'a mut [Coord],
     area_max_y: &'a mut [Coord],
-    area_connected_components: &'a mut [u8],
     area_crossings: &'a mut [u16],
     area_size: &'a mut [u16],
     area_map_station_count: &'a mut [u8],
@@ -2593,7 +2556,6 @@ impl GlobalFeatureOutputShards {
             area_max_x: unsafe { self.area_max_x.into_mut_slice() },
             area_min_y: unsafe { self.area_min_y.into_mut_slice() },
             area_max_y: unsafe { self.area_max_y.into_mut_slice() },
-            area_connected_components: unsafe { self.area_connected_components.into_mut_slice() },
             area_crossings: unsafe { self.area_crossings.into_mut_slice() },
             area_size: unsafe { self.area_size.into_mut_slice() },
             area_map_station_count: unsafe { self.area_map_station_count.into_mut_slice() },
@@ -2723,7 +2685,6 @@ impl GlobalFeatureOutputSlices<'_> {
             fill_output_row(&mut self.area_max_x, idx, self.area_count, 0);
             fill_output_row(&mut self.area_min_y, idx, self.area_count, 0);
             fill_output_row(&mut self.area_max_y, idx, self.area_count, 0);
-            fill_output_row(&mut self.area_connected_components, idx, self.area_count, 0);
             fill_output_row(&mut self.area_crossings, idx, self.area_crossings_count, 0);
             fill_output_row(&mut self.area_size, idx, self.area_count, 0);
             fill_output_row(&mut self.area_map_station_count, idx, self.area_count, 0);
@@ -2851,12 +2812,6 @@ impl GlobalFeatureOutputSlices<'_> {
         copy_output_row(&mut self.area_max_x, &plan.area_max_x, idx, self.area_count);
         copy_output_row(&mut self.area_min_y, &plan.area_min_y, idx, self.area_count);
         copy_output_row(&mut self.area_max_y, &plan.area_max_y, idx, self.area_count);
-        copy_output_row(
-            &mut self.area_connected_components,
-            &plan.area_connected_components,
-            idx,
-            self.area_count,
-        );
         copy_output_row(
             &mut self.area_crossings,
             &plan.area_crossings,
@@ -2999,12 +2954,6 @@ impl GlobalFeatureOutputSlices<'_> {
         copy_output_row(
             &mut self.area_max_y,
             &features.area_max_y,
-            idx,
-            self.area_count,
-        );
-        copy_output_row(
-            &mut self.area_connected_components,
-            &features.area_connected_components,
             idx,
             self.area_count,
         );
@@ -3916,7 +3865,6 @@ mod tests {
             area_max_x: OutputShard::empty(),
             area_min_y: OutputShard::empty(),
             area_max_y: OutputShard::empty(),
-            area_connected_components: OutputShard::empty(),
             area_crossings: OutputShard::empty(),
             area_size: OutputShard::empty(),
             area_map_station_count: OutputShard::empty(),
@@ -4163,7 +4111,6 @@ impl EnvironmentGroup {
 
     fn get_area_outcome_state<'py>(&self, py: Python<'py>) -> PyResult<AreaOutcomeBuffers> {
         let area_output_len = self.num_environments * AREA_COUNT;
-        let mut area_connected_components = vec![0i32; area_output_len];
         let mut area_crossings = vec![0i32; self.num_environments];
         let mut area_size = vec![0i32; area_output_len];
         let mut area_map_station_count = vec![0i32; area_output_len];
@@ -4175,9 +4122,6 @@ impl EnvironmentGroup {
                 let area_start = worker.start * AREA_COUNT;
                 let area_end = worker.end() * AREA_COUNT;
                 if let Err(err) = worker.send(WorkerCommand::GetAreaOutcomeState {
-                    area_connected_components: OutputShard::from_slice(
-                        &mut area_connected_components[area_start..area_end],
-                    ),
                     area_crossings: OutputShard::from_slice(
                         &mut area_crossings[worker.start..worker.end()],
                     ),
@@ -4196,13 +4140,6 @@ impl EnvironmentGroup {
         })?;
 
         Ok(AreaOutcomeBuffers {
-            area_connected_components: pyarray2_from_flat_vec(
-                py,
-                area_connected_components,
-                self.num_environments,
-                AREA_COUNT,
-            )?
-            .unbind(),
             area_crossings: area_crossings.into_pyarray(py).unbind(),
             area_size: pyarray2_from_flat_vec(py, area_size, self.num_environments, AREA_COUNT)?
                 .unbind(),
@@ -4823,7 +4760,6 @@ impl EnvironmentGroup {
             vec![0.0; self.num_environments * connection_outcome_count];
         let mut missing_connect_distance_mask =
             vec![0; self.num_environments * connection_outcome_count];
-        let mut area_connected_components = vec![0i32; area_outcome_len];
         let mut area_crossings = vec![0i32; self.num_environments];
         let mut area_size = vec![0i32; area_outcome_len];
         let mut area_map_station_count = vec![0i32; area_outcome_len];
@@ -4923,9 +4859,6 @@ impl EnvironmentGroup {
                     missing_connect_distance_mask: OutputShard::from_slice(
                         &mut missing_connect_distance_mask
                             [connection_output_start..connection_output_end],
-                    ),
-                    area_connected_components: OutputShard::from_slice(
-                        &mut area_connected_components[area_start..area_end],
                     ),
                     area_crossings: OutputShard::from_slice(
                         &mut area_crossings[worker.start..worker.end()],
@@ -5091,13 +5024,6 @@ impl EnvironmentGroup {
                     missing_connect_distance_mask,
                     self.num_environments,
                     connection_outcome_count,
-                )?
-                .unbind(),
-                area_connected_components: pyarray2_from_flat_vec(
-                    py,
-                    area_connected_components,
-                    self.num_environments,
-                    AREA_COUNT,
                 )?
                 .unbind(),
                 area_crossings: area_crossings.into_pyarray(py).unbind(),
@@ -5589,7 +5515,6 @@ impl EnvironmentGroup {
         let mut area_max_x = buffers.area_max_x.bind(py).readwrite();
         let mut area_min_y = buffers.area_min_y.bind(py).readwrite();
         let mut area_max_y = buffers.area_max_y.bind(py).readwrite();
-        let mut area_connected_components = buffers.area_connected_components.bind(py).readwrite();
         let mut area_crossings = buffers.area_crossings.bind(py).readwrite();
         let mut area_size = buffers.area_size.bind(py).readwrite();
         let mut area_map_station_count = buffers.area_map_station_count.bind(py).readwrite();
@@ -5753,7 +5678,6 @@ impl EnvironmentGroup {
         let area_max_x_shape = area_max_x.as_array().shape().to_vec();
         let area_min_y_shape = area_min_y.as_array().shape().to_vec();
         let area_max_y_shape = area_max_y.as_array().shape().to_vec();
-        let area_connected_components_shape = area_connected_components.as_array().shape().to_vec();
         let area_crossings_shape = area_crossings.as_array().shape().to_vec();
         let area_size_shape = area_size.as_array().shape().to_vec();
         let area_map_station_count_shape = area_map_station_count.as_array().shape().to_vec();
@@ -5860,7 +5784,6 @@ impl EnvironmentGroup {
             || area_max_x_shape[0] < snapshot_count
             || area_min_y_shape[0] < snapshot_count
             || area_max_y_shape[0] < snapshot_count
-            || area_connected_components_shape[0] < snapshot_count
             || area_crossings_shape[0] < snapshot_count
             || area_size_shape[0] < snapshot_count
             || area_map_station_count_shape[0] < snapshot_count
@@ -5972,11 +5895,6 @@ impl EnvironmentGroup {
         check_dim("area_max_x", area_max_x_shape[1], area_width)?;
         check_dim("area_min_y", area_min_y_shape[1], area_width)?;
         check_dim("area_max_y", area_max_y_shape[1], area_width)?;
-        check_dim(
-            "area_connected_components",
-            area_connected_components_shape[1],
-            area_width,
-        )?;
         check_dim(
             "area_crossings",
             area_crossings_shape[1],
@@ -6120,9 +6038,6 @@ impl EnvironmentGroup {
         let area_max_y = area_max_y
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("area_max_y must be contiguous"))?;
-        let area_connected_components = area_connected_components
-            .as_slice_mut()
-            .map_err(|_| PyValueError::new_err("area_connected_components must be contiguous"))?;
         let area_crossings = area_crossings
             .as_slice_mut()
             .map_err(|_| PyValueError::new_err("area_crossings must be contiguous"))?;
@@ -6399,10 +6314,6 @@ impl EnvironmentGroup {
                         ),
                         area_max_y: OutputShard::from_slice(
                             &mut area_max_y[snapshot_start * area_width
-                                ..(snapshot_start + snapshot_count) * area_width],
-                        ),
-                        area_connected_components: OutputShard::from_slice(
-                            &mut area_connected_components[snapshot_start * area_width
                                 ..(snapshot_start + snapshot_count) * area_width],
                         ),
                         area_crossings: OutputShard::from_slice(
