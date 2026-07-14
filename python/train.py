@@ -952,7 +952,7 @@ class TrainingSession:
                 episode_data_iterations.append(iteration_episode_data.to(self.device))
                 outcome_iterations.append(iteration_outcomes.to(self.device))
                 door_match_count_iterations.append(iteration_door_match_counts)
-                proposal_data_iterations.append(iteration_proposal_data.to(self.device))
+                proposal_data_iterations.append(iteration_proposal_data)
                 generated_feature_data_iterations.append(iteration_generated_feature_data)
                 generation_stats_iterations.append(iteration_generation_stats)
                 profile_reports.append(iteration_profile_report)
