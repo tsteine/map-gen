@@ -53,7 +53,7 @@
     "num_devices": 2,
     "pipeline_groups": 4,
     "gpu_prefetch_batches": 1,
-    "recommended_candidates": 4,
+    "recommended_candidates": 8,
     "shortlist_candidates": 1024,
     "num_scored_invalid_candidates": 8,
     "max_candidate_areas_per_placement": 2,
@@ -115,7 +115,7 @@
     "known_distance": 1
   },
   "train": {
-    "batch_size": 512,
+    "batch_size": 256,
     "fresh_pass_factor": 2.0,
     "replay_pass_factor": 2.0,
     "sample_period": 16,
@@ -138,7 +138,7 @@
     "area_map_station_weight": 1.0,
     "proposal_weight": 0.005,
     "pipeline_groups": 4,
-    "gradient_accumulation_steps": 4,
+    "gradient_accumulation_steps": 8,
     "shuffle_buffer_batches": 1
   }
 }
